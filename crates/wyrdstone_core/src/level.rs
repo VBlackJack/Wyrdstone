@@ -14,13 +14,16 @@
  * limitations under the License.
  */
 
-//! Level definitions, objective tracking, timed mode, amulet modifiers, and Match-3 session state.
+//! Level definitions, objective tracking, timed mode, frost spread, amulet modifiers, and Match-3 session state.
 
 use crate::balance::BalanceConfig;
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, RuneType};
 use crate::city::{AmuletEffect, CityBonuses, ResourceBundle};
-use rand::Rng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+
+const DAILY_SEED_SALT: u64 = 0x5759_5244_5354_4F4E;
 
 /// Win condition attached to a Match-3 level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,62 +68,131 @@ pub struct LevelDef {
     pub relic_cells: Vec<(usize, usize)>,
     #[serde(default)]
     pub portals: Vec<((usize, usize), (usize, usize))>,
+    #[serde(default)]
+    pub frost_spread: bool,
     pub blocked_cells: Vec<(usize, usize)>,
     pub base_reward: ResourceBundle,
 }
 
 impl LevelDef {
-    /// Deterministically generates today's Daily Trial board from the UTC day index.
+    /// Deterministically generates today's procedural Daily Trial board from the UTC day index.
     pub fn daily_challenge(day_index: u64) -> Self {
-        let variant = (day_index % 3) as usize;
-        let target_rune = RuneType::ALL[(day_index as usize) % RuneType::ALL.len()];
-        let (objectives, ice_cells, chained_cells, crate_cells, relic_cells) = match variant {
-            0 => (
+        let mut rng = StdRng::seed_from_u64(day_index ^ DAILY_SEED_SALT);
+        let archetype = rng.gen_range(0..4usize);
+        let target_rune = RuneType::ALL[rng.gen_range(0..RuneType::ALL.len())];
+
+        let blocked_cells = match rng.gen_range(0..3usize) {
+            0 => vec![(0, 0), (7, 0), (0, 7), (7, 7)],
+            1 => vec![(0, 3), (0, 4), (7, 3), (7, 4)],
+            _ => vec![(3, 0), (4, 0), (3, 7), (4, 7)],
+        };
+
+        let mut ice_cells = Vec::new();
+        let mut chained_cells = Vec::new();
+        let mut crate_cells = Vec::new();
+        let mut relic_cells = Vec::new();
+        let mut portals = Vec::new();
+        let mut time_limit_seconds = None;
+        let mut frost_spread = false;
+
+        let objectives = match archetype {
+            0 => {
+                // Glacial fortress: clear ice + collect rune
+                let ring_rows = [2usize, 5usize];
+                for &r in &ring_rows {
+                    for c in 2..=5 {
+                        let layers = if c == 2 || c == 5 { 2 } else { 1 };
+                        ice_cells.push((c, r, layers));
+                    }
+                }
+                for r in 3..=4 {
+                    ice_cells.push((2, r, 1));
+                    ice_cells.push((5, r, 1));
+                }
+                chained_cells.push((3, 3));
+                chained_cells.push((4, 4));
+                crate_cells.push((1, 3, 1));
+                crate_cells.push((6, 4, 1));
+                frost_spread = rng.gen_bool(0.5);
                 vec![
-                    Objective::ClearIce { target: 12 },
+                    Objective::ClearIce {
+                        target: ice_cells.len() as u32,
+                    },
                     Objective::CollectRune {
                         rune: target_rune,
-                        target: 22,
+                        target: rng.gen_range(20..=26),
                     },
-                ],
+                ]
+            }
+            1 => {
+                // Relic excavation: drop 2-3 relics through crates & ice
+                let relic_count = rng.gen_range(2..=3usize);
+                let cols = if relic_count == 2 {
+                    vec![2, 5]
+                } else {
+                    vec![1, 4, 6]
+                };
+                for c in cols {
+                    relic_cells.push((c, 0));
+                }
+                for c in 2..=5 {
+                    ice_cells.push((c, 4, if c == 2 || c == 5 { 2 } else { 1 }));
+                    ice_cells.push((c, 6, 1));
+                }
+                crate_cells.push((3, 5, 2));
+                crate_cells.push((4, 5, 2));
+                chained_cells.push((2, 2));
+                chained_cells.push((5, 2));
                 vec![
-                    (2, 2, 2), (3, 2, 1), (4, 2, 1), (5, 2, 2),
-                    (2, 3, 1), (5, 3, 1), (2, 4, 1), (5, 4, 1),
-                    (2, 5, 2), (3, 5, 1), (4, 5, 1), (5, 5, 2),
-                ],
-                vec![(3, 3), (4, 4)],
-                vec![(1, 3, 1), (6, 4, 1)],
-                vec![],
-            ),
-            1 => (
-                vec![
-                    Objective::DropRelics { target: 2 },
+                    Objective::DropRelics {
+                        target: relic_count as u32,
+                    },
                     Objective::ClearIce { target: 8 },
-                ],
+                ]
+            }
+            2 => {
+                // Timed Skald's Blitz: score + rune collection
+                time_limit_seconds = Some(rng.gen_range(95..=115));
+                for &(c, r) in &[
+                    (1, 2),
+                    (2, 2),
+                    (5, 2),
+                    (6, 2),
+                    (1, 5),
+                    (2, 5),
+                    (5, 5),
+                    (6, 5),
+                ] {
+                    ice_cells.push((c, r, if c == 2 || c == 5 { 2 } else { 1 }));
+                }
+                chained_cells.extend([(3, 3), (4, 3), (3, 4), (4, 4)]);
                 vec![
-                    (2, 4, 2), (3, 4, 1), (4, 4, 1), (5, 4, 2),
-                    (2, 6, 1), (3, 6, 1), (4, 6, 1), (5, 6, 1),
-                ],
-                vec![(2, 2), (5, 2)],
-                vec![(3, 5, 2), (4, 5, 2)],
-                vec![(2, 0), (5, 0)],
-            ),
-            _ => (
-                vec![
-                    Objective::ReachScore { target: 5000 },
+                    Objective::ReachScore {
+                        target: rng.gen_range(4800..=5600),
+                    },
                     Objective::CollectRune {
                         rune: target_rune,
-                        target: 24,
+                        target: rng.gen_range(22..=26),
                     },
-                ],
+                ]
+            }
+            _ => {
+                // Bifrost Portal Trials: diagonal teleporters + score & ice
+                portals.push(((1, 1), (6, 6)));
+                portals.push(((6, 1), (1, 6)));
+                for c in 2..=5 {
+                    ice_cells.push((c, 2, 1));
+                    ice_cells.push((c, 5, 2));
+                }
+                crate_cells.push((3, 3, 1));
+                crate_cells.push((4, 4, 1));
+                chained_cells.push((3, 4));
+                chained_cells.push((4, 3));
                 vec![
-                    (1, 2, 1), (2, 2, 2), (5, 2, 2), (6, 2, 1),
-                    (1, 5, 1), (2, 5, 2), (5, 5, 2), (6, 5, 1),
-                ],
-                vec![(3, 3), (4, 3), (3, 4), (4, 4)],
-                vec![(0, 3, 1), (7, 4, 1)],
-                vec![],
-            ),
+                    Objective::ClearIce { target: 8 },
+                    Objective::ReachScore { target: 5000 },
+                ]
+            }
         };
 
         Self {
@@ -128,16 +200,17 @@ impl LevelDef {
             building_id: "daily_trial".to_string(),
             cols: 8,
             rows: 8,
-            max_moves: 25,
-            time_limit_seconds: None,
+            max_moves: rng.gen_range(24..=28),
+            time_limit_seconds,
             rune_types_count: 6,
             objectives,
             ice_cells,
             chained_cells,
             crate_cells,
             relic_cells,
-            portals: vec![],
-            blocked_cells: vec![(0, 0), (7, 0), (0, 7), (7, 7)],
+            portals,
+            frost_spread,
+            blocked_cells,
             base_reward: ResourceBundle {
                 wood: 140,
                 stone: 140,
@@ -161,6 +234,7 @@ pub enum LevelOutcome {
 pub struct LevelSession {
     pub level: LevelDef,
     pub board: Board,
+    pub initial_moves: u32,
     pub moves_left: u32,
     pub time_left_secs: Option<f32>,
     pub score: u32,
@@ -170,6 +244,8 @@ pub struct LevelSession {
     pub outcome: LevelOutcome,
     pub last_combo: u32,
     pub last_shuffled: bool,
+    pub turn_ice_broken: u32,
+    pub last_frost_spread: Option<CellPos>,
 }
 
 impl LevelSession {
@@ -194,7 +270,11 @@ impl LevelSession {
         city_bonuses: CityBonuses,
         rng: &mut R,
     ) -> Self {
-        let board = Board::new_for_level(&level, rng);
+        let mut board = Board::new_for_level(&level, rng);
+        if matches!(amulet, Some(AmuletEffect::StartingBooster)) {
+            board.spawn_random_starting_booster(rng);
+        }
+
         let objectives = level
             .objectives
             .iter()
@@ -225,10 +305,18 @@ impl LevelSession {
             Some(AmuletEffect::ResourceBonusPct(p)) => p,
             _ => 0,
         };
-        let time_left_secs = level.time_limit_seconds.map(|s| s as f32);
+        let amulet_time_pct = match amulet {
+            Some(AmuletEffect::ExtraTimePct(p)) => p,
+            _ => 0,
+        };
+        let time_left_secs = level
+            .time_limit_seconds
+            .map(|s| (s as f32) * (1.0 + amulet_time_pct as f32 / 100.0));
+        let total_moves = level.max_moves + amulet_moves + city_bonuses.extra_moves;
 
         Self {
-            moves_left: level.max_moves + amulet_moves + city_bonuses.extra_moves,
+            initial_moves: total_moves,
+            moves_left: total_moves,
             time_left_secs,
             level,
             board,
@@ -239,6 +327,8 @@ impl LevelSession {
             outcome: LevelOutcome::InProgress,
             last_combo: 0,
             last_shuffled: false,
+            turn_ice_broken: 0,
+            last_frost_spread: None,
         }
     }
 
@@ -260,7 +350,7 @@ impl LevelSession {
         false
     }
 
-    /// Attempts a player swap, updating moves, score, objectives, and victory/defeat state.
+    /// Attempts a player swap, updating moves, score, objectives, frost spread, and victory/defeat state.
     pub fn play_swap<R: Rng>(
         &mut self,
         a: CellPos,
@@ -274,7 +364,9 @@ impl LevelSession {
         let step = self.board.try_swap(a, b, balance, rng);
         if step.valid {
             self.consume_move();
-            self.apply_step_outcome(&step, balance);
+            self.apply_step_progress(&step);
+            self.apply_frost_spread_if_needed(rng);
+            self.finalize_turn(balance);
         }
         step
     }
@@ -292,23 +384,26 @@ impl LevelSession {
         }
         let step = self.board.use_active_tool(tool, target, balance, rng);
         if step.valid {
-            self.apply_step_outcome(&step, balance);
+            self.apply_step_progress(&step);
+            self.finalize_turn(balance);
         }
         step
     }
 
-    /// Decrements remaining moves by one (used by animated turn execution).
+    /// Decrements remaining moves by one and resets per-turn trackers.
     pub fn consume_move(&mut self) {
         self.moves_left = self.moves_left.saturating_sub(1);
+        self.turn_ice_broken = 0;
+        self.last_frost_spread = None;
     }
 
     /// Applies score and objective progress from a single animated clear step without ending the turn yet.
     pub fn apply_step_progress(&mut self, step: &MatchStepOutcome) {
-        let boosted_score =
-            step.score_gained + (step.score_gained * self.score_bonus_pct) / 100;
+        let boosted_score = step.score_gained + (step.score_gained * self.score_bonus_pct) / 100;
         self.score += boosted_score;
         self.last_combo = step.max_combo;
         self.last_shuffled = step.shuffled;
+        self.turn_ice_broken += step.ice_broken;
 
         for prog in &mut self.objectives {
             match &prog.objective {
@@ -330,6 +425,19 @@ impl LevelSession {
         }
     }
 
+    /// On frost-spread levels, freezes 1 adjacent cell if no ice was broken during this turn.
+    pub fn apply_frost_spread_if_needed<R: Rng>(&mut self, rng: &mut R) -> Option<CellPos> {
+        if !self.level.frost_spread
+            || self.turn_ice_broken > 0
+            || self.objectives.iter().all(ObjectiveProgress::is_complete)
+        {
+            return None;
+        }
+        let spread = self.board.spread_frost(rng);
+        self.last_frost_spread = spread;
+        spread
+    }
+
     /// Evaluates victory or defeat after all cascades of a turn have finished.
     pub fn finalize_turn(&mut self, balance: &BalanceConfig) {
         if self.outcome != LevelOutcome::InProgress {
@@ -343,17 +451,33 @@ impl LevelSession {
         }
     }
 
-    fn apply_step_outcome(&mut self, step: &MatchStepOutcome, balance: &BalanceConfig) {
-        self.apply_step_progress(step);
-        self.finalize_turn(balance);
+    /// Computes a 1..=3 star rating for a completed victory based on remaining moves efficiency.
+    pub fn earned_stars(&self) -> u8 {
+        if self.outcome != LevelOutcome::Victory {
+            return 0;
+        }
+        let ratio = if self.initial_moves > 0 {
+            self.moves_left as f32 / self.initial_moves as f32
+        } else {
+            0.0
+        };
+        if ratio >= 0.30 {
+            3
+        } else if ratio >= 0.12 {
+            2
+        } else {
+            1
+        }
     }
 
-    /// Computes final resource rewards when the level is won (scaled by remaining moves + Freya amulet).
-    pub fn earned_rewards(&self) -> ResourceBundle {
+    /// Computes final resource rewards when the level is won (scaled by remaining moves + bonuses).
+    pub fn earned_rewards(&self, balance: &BalanceConfig) -> ResourceBundle {
         if self.outcome != LevelOutcome::Victory {
             return ResourceBundle::default();
         }
-        let bonus_pct = (self.moves_left * 3).min(30) + self.resource_bonus_pct;
+        let move_bonus = (self.moves_left * balance.move_reward_bonus_pct_per_move)
+            .min(balance.move_reward_bonus_cap_pct);
+        let bonus_pct = move_bonus + self.resource_bonus_pct;
         let scale = |base: u32| base + (base * bonus_pct) / 100;
         ResourceBundle {
             wood: scale(self.level.base_reward.wood),

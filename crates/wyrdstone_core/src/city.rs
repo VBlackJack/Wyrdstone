@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Fjord city-builder progression: resources, buildings, mastery stars, amulets, quests, and tools.
+//! Fjord city-builder progression: resources, buildings, passive harvests, mastery, amulets, quests, and tools.
 
 use crate::balance::BalanceConfig;
 use crate::board::ActiveTool;
@@ -23,6 +23,8 @@ use std::collections::{HashMap, HashSet};
 
 /// Maximum mastery star rank per building location.
 pub const MAX_MASTERY_STARS: u8 = 5;
+/// Maximum daily trial streak tier for bonus rewards.
+pub const MAX_DAILY_STREAK_CYCLE: u32 = 7;
 
 /// Bundle of village resources used for costs and rewards.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +56,10 @@ impl ResourceBundle {
         self.gold = self.gold.saturating_sub(cost.gold);
         self.mead = self.mead.saturating_sub(cost.mead);
     }
+
+    pub fn is_zero(&self) -> bool {
+        self.wood == 0 && self.stone == 0 && self.gold == 0 && self.mead == 0
+    }
 }
 
 /// Passive buff granted by an equipped Nordic Amulet.
@@ -62,6 +68,8 @@ pub enum AmuletEffect {
     ResourceBonusPct(u32),
     ExtraMoves(u32),
     ScoreBonusPct(u32),
+    StartingBooster,
+    ExtraTimePct(u32),
 }
 
 /// Static Nordic Amulet definition loaded from `assets/data/amulets.ron`.
@@ -108,8 +116,11 @@ pub struct BuildingDef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QuestCondition {
     WinBuildingLevel { building_id: String, wins: u32 },
+    WinSpecificLevel { level_id: String },
     ReachBuildingTier { building_id: String, tier: u32 },
     CraftAnyAmulet,
+    ClaimAnyCollection,
+    CompleteDailyTrials { count: u32 },
 }
 
 /// Static Saga quest loaded from `assets/data/quests.ron`.
@@ -135,6 +146,8 @@ pub struct CollectionDef {
     pub name_key: String,
     pub relic_ids: Vec<String>,
     pub relic_name_keys: Vec<String>,
+    #[serde(default)]
+    pub source_building_ids: Vec<String>,
     pub reward_resources: ResourceBundle,
     pub reward_tools: ToolInventory,
 }
@@ -220,6 +233,10 @@ pub struct ClanStats {
     pub best_combo: u32,
     pub best_score: u32,
     pub last_daily_day_index: u64,
+    #[serde(default)]
+    pub daily_streak: u32,
+    #[serde(default)]
+    pub daily_completions: u32,
 }
 
 /// Mutable player progression in the Wyrdstone Fjord.
@@ -242,6 +259,12 @@ pub struct CityState {
     pub claimed_collections: HashSet<String>,
     #[serde(default)]
     pub stats: ClanStats,
+    #[serde(default)]
+    pub completed_levels: HashSet<String>,
+    #[serde(default)]
+    pub level_best_stars: HashMap<String, u8>,
+    #[serde(default)]
+    pub last_harvest_unix_secs: HashMap<String, u64>,
 }
 
 impl CityState {
@@ -272,6 +295,9 @@ impl CityState {
             found_relics: HashSet::new(),
             claimed_collections: HashSet::new(),
             stats: ClanStats::default(),
+            completed_levels: HashSet::new(),
+            level_best_stars: HashMap::new(),
+            last_harvest_unix_secs: HashMap::new(),
         }
     }
 
@@ -284,7 +310,12 @@ impl CityState {
     }
 
     pub fn building_mastery_stars(&self, building_id: &str) -> u8 {
-        self.building_wins(building_id).min(MAX_MASTERY_STARS as u32) as u8
+        self.building_wins(building_id)
+            .min(MAX_MASTERY_STARS as u32) as u8
+    }
+
+    pub fn level_stars(&self, level_id: &str) -> u8 {
+        self.level_best_stars.get(level_id).copied().unwrap_or(0)
     }
 
     /// Returns true if a building is unlocked based on Great Hall tier.
@@ -303,23 +334,113 @@ impl CityState {
     }
 
     /// Computes aggregate passive bonuses granted by all rebuilt buildings.
-    pub fn compute_bonuses(&self) -> CityBonuses {
+    pub fn compute_bonuses(&self, balance: &BalanceConfig) -> CityBonuses {
         CityBonuses {
-            extra_max_energy: self.building_tier("great_hall") * 10,
-            score_bonus_pct: self.building_tier("forge") * 10,
-            resource_bonus_pct: self.building_tier("longship_dock") * 15,
-            extra_moves: self.building_tier("odin_shrine"),
-            energy_regen_speed_pct: self.building_tier("meadery") * 20,
+            extra_max_energy: self.building_tier("great_hall") * balance.great_hall_energy_per_tier,
+            score_bonus_pct: self.building_tier("forge") * balance.forge_score_pct_per_tier,
+            resource_bonus_pct: self.building_tier("longship_dock")
+                * balance.dock_resource_pct_per_tier,
+            extra_moves: self.building_tier("odin_shrine") * balance.shrine_moves_per_tier,
+            energy_regen_speed_pct: self.building_tier("meadery")
+                * balance.meadery_regen_pct_per_tier,
         }
     }
 
     /// Returns effective max endurance including Great Hall bonus.
     pub fn max_energy(&self, balance: &BalanceConfig) -> u32 {
-        balance.max_energy + self.compute_bonuses().extra_max_energy
+        balance.max_energy + self.compute_bonuses(balance).extra_max_energy
+    }
+
+    /// Returns passive harvest output for a rebuilt building based on its tier.
+    pub fn harvest_reward(&self, building_id: &str) -> ResourceBundle {
+        let tier = self.building_tier(building_id);
+        if tier == 0 {
+            return ResourceBundle::default();
+        }
+        match building_id {
+            "great_hall" => ResourceBundle {
+                wood: 10 * tier,
+                stone: 0,
+                gold: 15 * tier,
+                mead: 0,
+            },
+            "forge" => ResourceBundle {
+                wood: 0,
+                stone: 15 * tier,
+                gold: 12 * tier,
+                mead: 0,
+            },
+            "longship_dock" => ResourceBundle {
+                wood: 15 * tier,
+                stone: 0,
+                gold: 15 * tier,
+                mead: 0,
+            },
+            "odin_shrine" => ResourceBundle {
+                wood: 0,
+                stone: 5 * tier,
+                gold: 18 * tier,
+                mead: 6 * tier,
+            },
+            "meadery" => ResourceBundle {
+                wood: 8 * tier,
+                stone: 0,
+                gold: 0,
+                mead: 10 * tier,
+            },
+            _ => ResourceBundle {
+                wood: 0,
+                stone: 0,
+                gold: 10 * tier,
+                mead: 0,
+            },
+        }
+    }
+
+    /// Returns true when a rebuilt building has a passive resource harvest ready to collect.
+    pub fn is_harvest_ready(
+        &self,
+        building_id: &str,
+        now_secs: u64,
+        balance: &BalanceConfig,
+    ) -> bool {
+        if self.building_tier(building_id) == 0 || balance.harvest_interval_seconds == 0 {
+            return false;
+        }
+        let last = self
+            .last_harvest_unix_secs
+            .get(building_id)
+            .copied()
+            .unwrap_or(0);
+        now_secs.saturating_sub(last) >= balance.harvest_interval_seconds
+    }
+
+    /// Collects a building's ready passive resource harvest and resets its timer.
+    pub fn try_collect_harvest(
+        &mut self,
+        building_id: &str,
+        now_secs: u64,
+        balance: &BalanceConfig,
+    ) -> Option<ResourceBundle> {
+        if !self.is_harvest_ready(building_id, now_secs, balance) {
+            return None;
+        }
+        let reward = self.harvest_reward(building_id);
+        if reward.is_zero() {
+            return None;
+        }
+        self.resources.add(&reward);
+        self.last_harvest_unix_secs
+            .insert(building_id.to_string(), now_secs);
+        Some(reward)
     }
 
     /// Attempts to upgrade a building, deducting resources and granting clan glory and concrete perks.
-    pub fn try_upgrade_building(&mut self, def: &BuildingDef) -> Result<u32, &'static str> {
+    pub fn try_upgrade_building(
+        &mut self,
+        def: &BuildingDef,
+        balance: &BalanceConfig,
+    ) -> Result<u32, &'static str> {
         if !self.is_building_unlocked(def) {
             return Err("city.panel.building.locked");
         }
@@ -343,11 +464,11 @@ impl CityState {
                 self.tools.drakkar_charge += 1;
             }
             "great_hall" => {
-                self.energy += 10;
+                self.energy += balance.great_hall_energy_per_tier;
             }
             "meadery" => {
-                // Full refill up to at least 80 (clamped cleanly by caller or next regen).
-                self.energy = self.energy.max(50 + self.building_tier("great_hall") * 10);
+                let cap = self.max_energy(balance);
+                self.energy = self.energy.max(cap);
             }
             _ => {}
         }
@@ -365,7 +486,11 @@ impl CityState {
     }
 
     /// Crafts a Nordic Amulet and equips it immediately.
-    pub fn try_craft_amulet(&mut self, amulet: &AmuletDef) -> Result<(), &'static str> {
+    pub fn try_craft_amulet(
+        &mut self,
+        amulet: &AmuletDef,
+        balance: &BalanceConfig,
+    ) -> Result<(), &'static str> {
         if self.crafted_amulets.contains(&amulet.id) {
             self.equipped_amulet = Some(amulet.id.clone());
             return Ok(());
@@ -376,7 +501,7 @@ impl CityState {
         self.resources.subtract(&amulet.cost);
         self.crafted_amulets.insert(amulet.id.clone());
         self.equipped_amulet = Some(amulet.id.clone());
-        self.glory += 20;
+        self.glory += balance.amulet_glory;
         Ok(())
     }
 
@@ -431,7 +556,7 @@ impl CityState {
         if balance.energy_regen_seconds == 0 || elapsed_secs == 0 {
             return;
         }
-        let speed_pct = 100 + self.compute_bonuses().energy_regen_speed_pct as u64;
+        let speed_pct = 100 + self.compute_bonuses(balance).energy_regen_speed_pct as u64;
         let effective_secs = (elapsed_secs * speed_pct) / 100;
         let gained = (effective_secs / balance.energy_regen_seconds) as u32;
         if gained > 0 {
@@ -439,11 +564,28 @@ impl CityState {
         }
     }
 
-    /// Records a Match-3 victory, granting earned rewards, mastery progress, and a free tool per new star.
-    pub fn record_level_victory(&mut self, building_id: &str, rewards: &ResourceBundle) {
+    /// Records a Match-3 victory, granting earned rewards, mastery progress, stars, and a free tool per new star.
+    pub fn record_level_victory(
+        &mut self,
+        building_id: &str,
+        level_id: &str,
+        stars: u8,
+        rewards: &ResourceBundle,
+        balance: &BalanceConfig,
+    ) {
         self.resources.add(rewards);
+        self.completed_levels.insert(level_id.to_string());
+        let entry = self
+            .level_best_stars
+            .entry(level_id.to_string())
+            .or_insert(0);
+        *entry = (*entry).max(stars.clamp(1, 3));
+
         let prev_stars = self.building_mastery_stars(building_id);
-        *self.building_wins.entry(building_id.to_string()).or_insert(0) += 1;
+        *self
+            .building_wins
+            .entry(building_id.to_string())
+            .or_insert(0) += 1;
         let new_stars = self.building_mastery_stars(building_id);
         if new_stars > prev_stars {
             match new_stars {
@@ -454,7 +596,7 @@ impl CityState {
                 _ => self.tools.drakkar_charge += 1,
             }
         }
-        self.glory += 10;
+        self.glory += balance.victory_glory;
         self.stats.total_victories += 1;
     }
 
@@ -463,13 +605,41 @@ impl CityState {
         self.stats.last_daily_day_index < day_index
     }
 
-    /// Marks today's Daily Trial as completed and grants bonus glory + 1 Bifrost Prism.
-    pub fn record_daily_victory(&mut self, day_index: u64, rewards: &ResourceBundle) {
-        self.resources.add(rewards);
+    /// Marks today's Daily Trial as completed, updating streak and granting escalating rewards.
+    pub fn record_daily_victory(
+        &mut self,
+        day_index: u64,
+        rewards: &ResourceBundle,
+        balance: &BalanceConfig,
+    ) -> u32 {
+        let new_streak = if self.stats.last_daily_day_index > 0
+            && self.stats.last_daily_day_index + 1 == day_index
+        {
+            (self.stats.daily_streak % MAX_DAILY_STREAK_CYCLE) + 1
+        } else {
+            1
+        };
+        let streak_bonus_pct = (new_streak.saturating_sub(1)) * 10;
+        let scaled_rewards = ResourceBundle {
+            wood: rewards.wood + (rewards.wood * streak_bonus_pct) / 100,
+            stone: rewards.stone + (rewards.stone * streak_bonus_pct) / 100,
+            gold: rewards.gold + (rewards.gold * streak_bonus_pct) / 100,
+            mead: rewards.mead + (rewards.mead * streak_bonus_pct) / 100,
+        };
+        self.resources.add(&scaled_rewards);
         self.stats.last_daily_day_index = day_index;
+        self.stats.daily_streak = new_streak;
+        self.stats.daily_completions += 1;
         self.stats.total_victories += 1;
         self.tools.bifrost_prism += 1;
-        self.glory += 35;
+        if new_streak >= 3 {
+            self.tools.surtr_ember += 1;
+        }
+        if new_streak >= MAX_DAILY_STREAK_CYCLE {
+            self.tools.drakkar_charge += 1;
+        }
+        self.glory += balance.daily_glory;
+        new_streak
     }
 
     /// Evaluates whether a quest condition is currently satisfied.
@@ -481,10 +651,15 @@ impl CityState {
             QuestCondition::WinBuildingLevel { building_id, wins } => {
                 self.building_wins(building_id) >= *wins
             }
+            QuestCondition::WinSpecificLevel { level_id } => {
+                self.completed_levels.contains(level_id)
+            }
             QuestCondition::ReachBuildingTier { building_id, tier } => {
                 self.building_tier(building_id) >= *tier
             }
             QuestCondition::CraftAnyAmulet => !self.crafted_amulets.is_empty(),
+            QuestCondition::ClaimAnyCollection => !self.claimed_collections.is_empty(),
+            QuestCondition::CompleteDailyTrials { count } => self.stats.daily_completions >= *count,
         }
     }
 
@@ -494,14 +669,37 @@ impl CityState {
     }
 
     /// Claims a completed quest's reward.
-    pub fn try_claim_quest(&mut self, quest: &QuestDef) -> bool {
+    pub fn try_claim_quest(&mut self, quest: &QuestDef, balance: &BalanceConfig) -> bool {
         if !self.is_quest_ready(quest) {
             return false;
         }
         self.claimed_quests.insert(quest.id.clone());
         self.resources.add(&quest.reward);
-        self.glory += 15;
+        self.glory += balance.quest_glory;
         true
+    }
+
+    /// Discovers the next undiscovered relic preferring collections tied to `building_id`,
+    /// falling back to any undiscovered relic so progress never stalls.
+    pub fn discover_next_relic_for_building(
+        &mut self,
+        building_id: &str,
+        collections: &[CollectionDef],
+    ) -> Option<String> {
+        for col in collections {
+            let matches_building = col.source_building_ids.is_empty()
+                || col.source_building_ids.iter().any(|b| b == building_id);
+            if !matches_building {
+                continue;
+            }
+            for (idx, rid) in col.relic_ids.iter().enumerate() {
+                if !self.found_relics.contains(rid) {
+                    self.found_relics.insert(rid.clone());
+                    return col.relic_name_keys.get(idx).cloned();
+                }
+            }
+        }
+        self.discover_next_relic(collections)
     }
 
     /// Discovers the next undiscovered relic across all collections, returning its i18n name key.
@@ -537,14 +735,14 @@ impl CityState {
     }
 
     /// Claims a completed Nine Realms collection chest (resources + active tools + glory).
-    pub fn try_claim_collection(&mut self, col: &CollectionDef) -> bool {
+    pub fn try_claim_collection(&mut self, col: &CollectionDef, balance: &BalanceConfig) -> bool {
         if !self.is_collection_ready(col) {
             return false;
         }
         self.claimed_collections.insert(col.id.clone());
         self.resources.add(&col.reward_resources);
         self.tools.add(&col.reward_tools);
-        self.glory += 40;
+        self.glory += balance.collection_glory;
         true
     }
 }

@@ -24,7 +24,20 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Current save format version for forward-safe migrations.
-pub const SAVE_SCHEMA_VERSION: u32 = 3;
+pub const SAVE_SCHEMA_VERSION: u32 = 4;
+
+/// Default background music volume (0.0..=1.0).
+pub const DEFAULT_BGM_VOLUME: f32 = 0.22;
+/// Default sound effects volume (0.0..=1.0).
+pub const DEFAULT_SFX_VOLUME: f32 = 0.55;
+
+fn default_bgm_volume() -> f32 {
+    DEFAULT_BGM_VOLUME
+}
+
+fn default_sfx_volume() -> f32 {
+    DEFAULT_SFX_VOLUME
+}
 
 const BUNDLED_EN_JSON: &str = include_str!("../../../assets/locales/en.json");
 const BUNDLED_FR_JSON: &str = include_str!("../../../assets/locales/fr.json");
@@ -104,6 +117,12 @@ pub struct SaveData {
     pub language: Language,
     #[serde(default)]
     pub last_saved_unix_secs: u64,
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default = "default_bgm_volume")]
+    pub bgm_volume: f32,
+    #[serde(default = "default_sfx_volume")]
+    pub sfx_volume: f32,
     pub city: CityState,
 }
 
@@ -114,6 +133,9 @@ impl SaveData {
             schema_version: SAVE_SCHEMA_VERSION,
             language,
             last_saved_unix_secs: 0,
+            muted: false,
+            bgm_volume: DEFAULT_BGM_VOLUME,
+            sfx_volume: DEFAULT_SFX_VOLUME,
             city: CityState::new(balance),
         }
     }
@@ -128,7 +150,7 @@ impl SaveData {
         serde_json::from_str(raw)
     }
 
-    /// Writes save data to disk when filesystem storage is available.
+    /// Atomically writes save data to disk using a temporary file and rename.
     pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -137,18 +159,35 @@ impl SaveData {
         let json = self
             .to_json()
             .map_err(|e| format!("Failed to serialize save: {e}"))?;
-        std::fs::write(path, json).map_err(|e| format!("Failed to write save file: {e}"))
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, &json)
+            .map_err(|e| format!("Failed to write temporary save file: {e}"))?;
+        std::fs::rename(&tmp_path, path)
+            .map_err(|e| format!("Failed to commit atomic save rename: {e}"))
     }
 
-    /// Loads save data from disk if it exists.
+    /// Loads save data from disk if it exists, backing up corrupted files to `.corrupt`.
     pub fn load_from_path(path: &Path) -> Result<Option<Self>, String> {
         if !path.exists() {
             return Ok(None);
         }
         let raw =
             std::fs::read_to_string(path).map_err(|e| format!("Failed to read save file: {e}"))?;
-        let parsed =
-            Self::from_json(&raw).map_err(|e| format!("Failed to parse save file: {e}"))?;
-        Ok(Some(parsed))
+        match Self::from_json(&raw) {
+            Ok(mut parsed) => {
+                parsed.bgm_volume = parsed.bgm_volume.clamp(0.0, 1.0);
+                parsed.sfx_volume = parsed.sfx_volume.clamp(0.0, 1.0);
+                parsed.schema_version = SAVE_SCHEMA_VERSION;
+                Ok(Some(parsed))
+            }
+            Err(e) => {
+                let corrupt_path = path.with_extension("json.corrupt");
+                let _ = std::fs::copy(path, &corrupt_path);
+                Err(format!(
+                    "Failed to parse save file (backed up to {}): {e}",
+                    corrupt_path.display()
+                ))
+            }
+        }
     }
 }

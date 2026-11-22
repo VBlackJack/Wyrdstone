@@ -18,6 +18,46 @@
 
 use serde::{Deserialize, Serialize};
 
+fn default_great_hall_energy_per_tier() -> u32 {
+    10
+}
+fn default_forge_score_pct_per_tier() -> u32 {
+    10
+}
+fn default_dock_resource_pct_per_tier() -> u32 {
+    15
+}
+fn default_shrine_moves_per_tier() -> u32 {
+    1
+}
+fn default_meadery_regen_pct_per_tier() -> u32 {
+    20
+}
+fn default_move_reward_bonus_pct_per_move() -> u32 {
+    3
+}
+fn default_move_reward_bonus_cap_pct() -> u32 {
+    30
+}
+fn default_victory_glory() -> u32 {
+    10
+}
+fn default_quest_glory() -> u32 {
+    15
+}
+fn default_amulet_glory() -> u32 {
+    20
+}
+fn default_daily_glory() -> u32 {
+    35
+}
+fn default_collection_glory() -> u32 {
+    40
+}
+fn default_harvest_interval_seconds() -> u64 {
+    120
+}
+
 /// Tunable gameplay and animation parameters loaded from `assets/data/balance.ron`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceConfig {
@@ -50,6 +90,32 @@ pub struct BalanceConfig {
     pub clear_anim_seconds: f32,
     pub fall_anim_seconds: f32,
     pub swipe_threshold_px: f32,
+    #[serde(default = "default_great_hall_energy_per_tier")]
+    pub great_hall_energy_per_tier: u32,
+    #[serde(default = "default_forge_score_pct_per_tier")]
+    pub forge_score_pct_per_tier: u32,
+    #[serde(default = "default_dock_resource_pct_per_tier")]
+    pub dock_resource_pct_per_tier: u32,
+    #[serde(default = "default_shrine_moves_per_tier")]
+    pub shrine_moves_per_tier: u32,
+    #[serde(default = "default_meadery_regen_pct_per_tier")]
+    pub meadery_regen_pct_per_tier: u32,
+    #[serde(default = "default_move_reward_bonus_pct_per_move")]
+    pub move_reward_bonus_pct_per_move: u32,
+    #[serde(default = "default_move_reward_bonus_cap_pct")]
+    pub move_reward_bonus_cap_pct: u32,
+    #[serde(default = "default_victory_glory")]
+    pub victory_glory: u32,
+    #[serde(default = "default_quest_glory")]
+    pub quest_glory: u32,
+    #[serde(default = "default_amulet_glory")]
+    pub amulet_glory: u32,
+    #[serde(default = "default_daily_glory")]
+    pub daily_glory: u32,
+    #[serde(default = "default_collection_glory")]
+    pub collection_glory: u32,
+    #[serde(default = "default_harvest_interval_seconds")]
+    pub harvest_interval_seconds: u64,
 }
 
 impl BalanceConfig {

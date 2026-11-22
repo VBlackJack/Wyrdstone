@@ -193,6 +193,7 @@ pub struct FallMove {
 pub struct PreparedClear {
     pub cells: Vec<CellPos>,
     pub spawned_boosters: Vec<(CellPos, RuneType, Booster)>,
+    pub converted_boosters: Vec<(CellPos, Booster)>,
     pub is_direct_blast: bool,
 }
 
@@ -376,10 +377,11 @@ impl Board {
             return None;
         }
         self.swap_contents(a, b);
-        if let Some(combo_cells) = self.check_special_swap_combo(a, b) {
+        if let Some((combo_cells, converted_boosters)) = self.check_special_swap_combo(a, b) {
             return Some(PreparedClear {
                 cells: combo_cells.into_iter().collect(),
                 spawned_boosters: Vec::new(),
+                converted_boosters,
                 is_direct_blast: true,
             });
         }
@@ -409,16 +411,19 @@ impl Board {
             ActiveTool::Mjolnir => Some(PreparedClear {
                 cells: vec![target],
                 spawned_boosters: Vec::new(),
+                converted_boosters: Vec::new(),
                 is_direct_blast: true,
             }),
             ActiveTool::SurtrEmber => Some(PreparedClear {
                 cells: self.area_positions(target, 1).into_iter().collect(),
                 spawned_boosters: Vec::new(),
+                converted_boosters: Vec::new(),
                 is_direct_blast: true,
             }),
             ActiveTool::ThorBolt => Some(PreparedClear {
                 cells: self.row_positions(target.row),
                 spawned_boosters: Vec::new(),
+                converted_boosters: Vec::new(),
                 is_direct_blast: true,
             }),
             ActiveTool::BifrostPrism => {
@@ -428,15 +433,18 @@ impl Board {
                 Some(PreparedClear {
                     cells: set.into_iter().collect(),
                     spawned_boosters: Vec::new(),
+                    converted_boosters: Vec::new(),
                     is_direct_blast: true,
                 })
             }
             ActiveTool::DrakkarCharge => {
-                let mut set: HashSet<CellPos> = self.row_positions(target.row).into_iter().collect();
+                let mut set: HashSet<CellPos> =
+                    self.row_positions(target.row).into_iter().collect();
                 set.extend(self.col_positions(target.col));
                 Some(PreparedClear {
                     cells: set.into_iter().collect(),
                     spawned_boosters: Vec::new(),
+                    converted_boosters: Vec::new(),
                     is_direct_blast: true,
                 })
             }
@@ -465,13 +473,21 @@ impl Board {
                             None
                         }
                     })
-                    .unwrap_or_else(|| *group.cells.iter().next().unwrap());
+                    .unwrap_or_else(|| {
+                        group
+                            .cells
+                            .iter()
+                            .copied()
+                            .min_by_key(|p| (p.row, p.col))
+                            .unwrap()
+                    });
                 spawned_boosters.push((spawn_pos, group.rune, booster));
             }
         }
         PreparedClear {
             cells: to_clear.into_iter().collect(),
             spawned_boosters,
+            converted_boosters: Vec::new(),
             is_direct_blast: false,
         }
     }
@@ -488,8 +504,21 @@ impl Board {
             max_combo: combo_depth,
             ..Default::default()
         };
+        for &(pos, booster) in &prepared.converted_boosters {
+            if let Some(cell) = self.get_mut(pos) {
+                if !cell.blocked && cell.crate_layers == 0 && !cell.relic {
+                    cell.booster = booster;
+                }
+            }
+        }
         let set: HashSet<CellPos> = prepared.cells.iter().copied().collect();
-        self.clear_cell_set(&set, combo_depth, balance, &mut outcome, prepared.is_direct_blast);
+        self.clear_cell_set(
+            &set,
+            combo_depth,
+            balance,
+            &mut outcome,
+            prepared.is_direct_blast,
+        );
 
         for &(pos, rune, booster) in &prepared.spawned_boosters {
             if let Some(cell) = self.get_mut(pos) {
@@ -532,38 +561,80 @@ impl Board {
     /// Applies gravity, Bifrost portal transfers, and refills empty cells, returning fall trajectories.
     pub fn apply_gravity_and_refill_tracked<R: Rng>(&mut self, rng: &mut R) -> Vec<FallMove> {
         let mut moves = Vec::new();
-        // Transfer movable pieces through Bifrost portals when destination cell is empty.
+        self.apply_column_gravity_only(&mut moves);
+
+        // Iteratively transfer movable pieces through Bifrost portals when destination is empty.
         let portals_snapshot = self.portals.clone();
-        for (src, dst) in portals_snapshot {
-            if self.in_bounds(src) && self.in_bounds(dst) {
-                let si = self.idx(src);
-                let di = self.idx(dst);
-                let src_c = self.cells[si];
-                let dst_c = self.cells[di];
-                if !src_c.blocked
-                    && !src_c.chained
-                    && src_c.crate_layers == 0
-                    && src_c.has_movable_piece()
-                    && !dst_c.blocked
-                    && !dst_c.chained
-                    && dst_c.crate_layers == 0
-                    && !dst_c.has_movable_piece()
-                {
-                    self.cells[di].rune = self.cells[si].rune.take();
-                    self.cells[di].booster = self.cells[si].booster;
-                    self.cells[si].booster = Booster::None;
-                    self.cells[di].relic = self.cells[si].relic;
-                    self.cells[si].relic = false;
-                    moves.push(FallMove {
-                        col: dst.col,
-                        from_row: (dst.row as i32) - 1,
-                        to_row: dst.row,
-                    });
+        if !portals_snapshot.is_empty() {
+            for _ in 0..(self.rows * self.cols).min(32) {
+                let mut moved_any = false;
+                for &(src, dst) in &portals_snapshot {
+                    if self.in_bounds(src) && self.in_bounds(dst) {
+                        let si = self.idx(src);
+                        let di = self.idx(dst);
+                        let src_c = self.cells[si];
+                        let dst_c = self.cells[di];
+                        if !src_c.blocked
+                            && !src_c.chained
+                            && src_c.crate_layers == 0
+                            && src_c.has_movable_piece()
+                            && !dst_c.blocked
+                            && !dst_c.chained
+                            && dst_c.crate_layers == 0
+                            && !dst_c.has_movable_piece()
+                        {
+                            self.cells[di].rune = self.cells[si].rune.take();
+                            self.cells[di].booster = self.cells[si].booster;
+                            self.cells[si].booster = Booster::None;
+                            self.cells[di].relic = self.cells[si].relic;
+                            self.cells[si].relic = false;
+                            moves.push(FallMove {
+                                col: dst.col,
+                                from_row: (dst.row as i32) - 1,
+                                to_row: dst.row,
+                            });
+                            moved_any = true;
+                        }
+                    }
                 }
+                if !moved_any {
+                    break;
+                }
+                self.apply_column_gravity_only(&mut moves);
             }
         }
+
+        // Spawn fresh random runes into any remaining empty playable cells from above.
         for col in 0..self.cols {
             let mut spawn_offset = 1i32;
+            let mut write_row = self.rows as i32 - 1;
+            while write_row >= 0 {
+                let wpos = CellPos::new(col, write_row as usize);
+                let wi = self.idx(wpos);
+                let wcell = self.cells[wi];
+                if !wcell.blocked
+                    && !wcell.chained
+                    && wcell.crate_layers == 0
+                    && !wcell.has_movable_piece()
+                {
+                    self.cells[wi].rune = Some(self.random_rune(rng));
+                    self.cells[wi].booster = Booster::None;
+                    self.cells[wi].relic = false;
+                    moves.push(FallMove {
+                        col,
+                        from_row: -spawn_offset,
+                        to_row: write_row as usize,
+                    });
+                    spawn_offset += 1;
+                }
+                write_row -= 1;
+            }
+        }
+        moves
+    }
+
+    fn apply_column_gravity_only(&mut self, moves: &mut Vec<FallMove>) {
+        for col in 0..self.cols {
             let mut write_row = self.rows as i32 - 1;
             while write_row >= 0 {
                 let wpos = CellPos::new(col, write_row as usize);
@@ -578,7 +649,6 @@ impl Board {
                 }
 
                 let mut read_row = write_row - 1;
-                let mut found = false;
                 while read_row >= 0 {
                     let rpos = CellPos::new(col, read_row as usize);
                     let rcell = self.cells[self.idx(rpos)];
@@ -599,28 +669,13 @@ impl Board {
                             from_row: read_row,
                             to_row: write_row as usize,
                         });
-                        found = true;
                         break;
                     }
                     read_row -= 1;
                 }
-
-                if !found {
-                    let wi = self.idx(wpos);
-                    self.cells[wi].rune = Some(self.random_rune(rng));
-                    self.cells[wi].booster = Booster::None;
-                    self.cells[wi].relic = false;
-                    moves.push(FallMove {
-                        col,
-                        from_row: -spawn_offset,
-                        to_row: write_row as usize,
-                    });
-                    spawn_offset += 1;
-                }
                 write_row -= 1;
             }
         }
-        moves
     }
 
     /// Attempts to swap two adjacent cells and resolve all resulting matches, relics, and cascades.
@@ -726,10 +781,11 @@ impl Board {
         self.cells[ib].relic = relic_a;
     }
 
-    fn check_special_swap_combo(&self, a: CellPos, b: CellPos) -> Option<HashSet<CellPos>> {
+    fn check_special_swap_combo(&self, a: CellPos, b: CellPos) -> Option<SpecialSwapCombo> {
         let ca = self.cells[self.idx(a)];
         let cb = self.cells[self.idx(b)];
         let mut affected = HashSet::new();
+        let mut converted = Vec::new();
 
         match (ca.booster, cb.booster) {
             (Booster::BifrostShard, Booster::BifrostShard) => {
@@ -741,27 +797,57 @@ impl Board {
                         }
                     }
                 }
-                Some(affected)
+                Some((affected, converted))
             }
-            (Booster::BifrostShard, _) => {
+            (Booster::BifrostShard, partner_booster) => {
+                let target_rune = cb.rune?;
                 affected.insert(a);
                 affected.insert(b);
-                if let Some(target_rune) = cb.rune {
-                    self.collect_all_of_rune(target_rune, &mut affected);
+                self.collect_all_of_rune(target_rune, &mut affected);
+                if matches!(
+                    partner_booster,
+                    Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb
+                ) {
+                    let mut targets: Vec<CellPos> =
+                        affected.iter().copied().filter(|&p| p != a).collect();
+                    targets.sort_by_key(|p| (p.row, p.col));
+                    for (idx, p) in targets.into_iter().enumerate() {
+                        let btype = match partner_booster {
+                            Booster::Bomb => Booster::Bomb,
+                            _ if idx % 2 == 0 => Booster::LineHorizontal,
+                            _ => Booster::LineVertical,
+                        };
+                        converted.push((p, btype));
+                    }
                 }
-                Some(affected)
+                Some((affected, converted))
             }
-            (_, Booster::BifrostShard) => {
+            (partner_booster, Booster::BifrostShard) => {
+                let target_rune = ca.rune?;
                 affected.insert(a);
                 affected.insert(b);
-                if let Some(target_rune) = ca.rune {
-                    self.collect_all_of_rune(target_rune, &mut affected);
+                self.collect_all_of_rune(target_rune, &mut affected);
+                if matches!(
+                    partner_booster,
+                    Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb
+                ) {
+                    let mut targets: Vec<CellPos> =
+                        affected.iter().copied().filter(|&p| p != b).collect();
+                    targets.sort_by_key(|p| (p.row, p.col));
+                    for (idx, p) in targets.into_iter().enumerate() {
+                        let btype = match partner_booster {
+                            Booster::Bomb => Booster::Bomb,
+                            _ if idx % 2 == 0 => Booster::LineHorizontal,
+                            _ => Booster::LineVertical,
+                        };
+                        converted.push((p, btype));
+                    }
                 }
-                Some(affected)
+                Some((affected, converted))
             }
             (Booster::Bomb, Booster::Bomb) => {
                 affected.extend(self.area_positions(b, 2));
-                Some(affected)
+                Some((affected, converted))
             }
             (
                 Booster::LineHorizontal | Booster::LineVertical,
@@ -769,7 +855,7 @@ impl Board {
             ) => {
                 affected.extend(self.row_positions(b.row));
                 affected.extend(self.col_positions(b.col));
-                Some(affected)
+                Some((affected, converted))
             }
             (Booster::Bomb, Booster::LineHorizontal | Booster::LineVertical)
             | (Booster::LineHorizontal | Booster::LineVertical, Booster::Bomb) => {
@@ -785,10 +871,29 @@ impl Board {
                         affected.extend(self.col_positions(c as usize));
                     }
                 }
-                Some(affected)
+                Some((affected, converted))
             }
             _ => None,
         }
+    }
+
+    fn most_frequent_rune(&self) -> Option<RuneType> {
+        let mut counts = [0u32; 6];
+        for cell in &self.cells {
+            if !cell.blocked && cell.crate_layers == 0 {
+                if let Some(r) = cell.rune {
+                    if let Some(idx) = RuneType::ALL.iter().position(|&x| x == r) {
+                        counts[idx] += 1;
+                    }
+                }
+            }
+        }
+        counts
+            .iter()
+            .enumerate()
+            .filter(|(_, &c)| c > 0)
+            .max_by_key(|(_, &c)| c)
+            .map(|(idx, _)| RuneType::ALL[idx])
     }
 
     fn collect_all_of_rune(&self, rune: RuneType, out: &mut HashSet<CellPos>) {
@@ -927,16 +1032,22 @@ impl Board {
         for run in v_runs {
             let rune = self.cells[self.idx(run[0])].rune.unwrap();
             let run_set: HashSet<CellPos> = run.iter().copied().collect();
-            let mut merged_into: Option<usize> = None;
-            for (i, g) in groups.iter_mut().enumerate() {
-                if g.rune == rune && !g.cells.is_disjoint(&run_set) {
-                    g.cells.extend(&run_set);
-                    g.max_v_len = g.max_v_len.max(run.len());
-                    merged_into = Some(i);
-                    break;
+            let matching_indices: Vec<usize> = groups
+                .iter()
+                .enumerate()
+                .filter(|(_, g)| g.rune == rune && !g.cells.is_disjoint(&run_set))
+                .map(|(i, _)| i)
+                .collect();
+            if let Some(&first_idx) = matching_indices.first() {
+                groups[first_idx].cells.extend(&run_set);
+                groups[first_idx].max_v_len = groups[first_idx].max_v_len.max(run.len());
+                for &extra_idx in matching_indices[1..].iter().rev() {
+                    let extra = groups.remove(extra_idx);
+                    groups[first_idx].cells.extend(extra.cells);
+                    groups[first_idx].max_h_len = groups[first_idx].max_h_len.max(extra.max_h_len);
+                    groups[first_idx].max_v_len = groups[first_idx].max_v_len.max(extra.max_v_len);
                 }
-            }
-            if merged_into.is_none() {
+            } else {
                 groups.push(MatchGroup {
                     rune,
                     cells: run_set,
@@ -1018,7 +1129,9 @@ impl Board {
                         }
                     }
                     Booster::BifrostShard => {
-                        if let Some(r) = self.cells[idx].rune {
+                        let target_rune =
+                            self.cells[idx].rune.or_else(|| self.most_frequent_rune());
+                        if let Some(r) = target_rune {
                             let mut same = HashSet::new();
                             self.collect_all_of_rune(r, &mut same);
                             for p in same {
@@ -1141,6 +1254,86 @@ impl Board {
                 return;
             }
         }
+
+        // Deterministic fallback: force a guaranteed playable swap if random shuffles all deadlocked.
+        let free_set: HashSet<CellPos> = free_positions.iter().copied().collect();
+        let target_rune = RuneType::ALL[0];
+        for row in 0..self.rows {
+            for col in 0..self.cols.saturating_sub(2) {
+                let p0 = CellPos::new(col, row);
+                let p1 = CellPos::new(col + 1, row);
+                let p2 = CellPos::new(col + 2, row);
+                let p_alt = if row + 1 < self.rows {
+                    CellPos::new(col + 2, row + 1)
+                } else if row > 0 {
+                    CellPos::new(col + 2, row - 1)
+                } else {
+                    continue;
+                };
+                if free_set.contains(&p0)
+                    && free_set.contains(&p1)
+                    && free_set.contains(&p2)
+                    && free_set.contains(&p_alt)
+                {
+                    let i0 = self.idx(p0);
+                    let i1 = self.idx(p1);
+                    let i_alt = self.idx(p_alt);
+                    self.cells[i0].rune = Some(target_rune);
+                    self.cells[i1].rune = Some(target_rune);
+                    self.cells[i_alt].rune = Some(target_rune);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Places a random Line or Bomb booster on an unblocked free rune cell (Odin's Eye amulet).
+    pub fn spawn_random_starting_booster<R: Rng>(&mut self, rng: &mut R) -> Option<CellPos> {
+        let candidates: Vec<CellPos> = (0..self.rows)
+            .flat_map(|row| (0..self.cols).map(move |col| CellPos::new(col, row)))
+            .filter(|&p| {
+                let c = self.cells[self.idx(p)];
+                !c.blocked
+                    && !c.chained
+                    && c.crate_layers == 0
+                    && !c.relic
+                    && c.rune.is_some()
+                    && c.booster == Booster::None
+            })
+            .collect();
+        let &pos = candidates.choose(rng)?;
+        let booster = match rng.gen_range(0..3usize) {
+            0 => Booster::LineHorizontal,
+            1 => Booster::LineVertical,
+            _ => Booster::Bomb,
+        };
+        let idx = self.idx(pos);
+        self.cells[idx].booster = booster;
+        Some(pos)
+    }
+
+    /// Spreads Niflheim Frost to one random non-icy playable cell orthogonally adjacent to existing ice.
+    pub fn spread_frost<R: Rng>(&mut self, rng: &mut R) -> Option<CellPos> {
+        let mut candidates = HashSet::new();
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                let pos = CellPos::new(col, row);
+                if self.cells[self.idx(pos)].ice_layers > 0 {
+                    for nb in self.orthogonal_neighbors(pos) {
+                        let c = self.cells[self.idx(nb)];
+                        if !c.blocked && c.ice_layers == 0 && c.crate_layers == 0 && !c.relic {
+                            candidates.insert(nb);
+                        }
+                    }
+                }
+            }
+        }
+        let mut list: Vec<CellPos> = candidates.into_iter().collect();
+        list.sort_by_key(|p| (p.row, p.col));
+        let &chosen = list.choose(rng)?;
+        let idx = self.idx(chosen);
+        self.cells[idx].ice_layers = 1;
+        Some(chosen)
     }
 }
 
@@ -1157,6 +1350,8 @@ fn merge_outcomes(total: &mut MatchStepOutcome, step: &MatchStepOutcome) {
     }
     total.cleared_positions.extend(&step.cleared_positions);
 }
+
+type SpecialSwapCombo = (HashSet<CellPos>, Vec<(CellPos, Booster)>);
 
 struct MatchGroup {
     rune: RuneType,

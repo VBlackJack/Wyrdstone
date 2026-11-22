@@ -16,9 +16,10 @@
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME, SAVE_SCHEMA_VERSION};
 use wyrdstone_core::{
-    ActiveTool, Board, Booster, Cell, CellPos, CityState, GameDataBundle, Language, LevelOutcome,
-    LevelSession, QuestCondition, RuneType, SaveData,
+    ActiveTool, AmuletEffect, Board, Booster, Cell, CellPos, CityState, GameDataBundle, Language,
+    LevelDef, LevelOutcome, LevelSession, QuestCondition, ResourceBundle, RuneType, SaveData,
 };
 
 #[test]
@@ -34,7 +35,6 @@ fn bundled_data_loads_and_i18n_has_full_parity() {
         "Keys missing in en.json: {missing_en:?}"
     );
 
-    // Verify all building references and i18n keys resolve.
     for b in &data.buildings {
         assert!(
             data.level_by_id(&b.level_id).is_some(),
@@ -46,25 +46,28 @@ fn bundled_data_loads_and_i18n_has_full_parity() {
         assert_ne!(data.i18n.t(&b.desc_key), b.desc_key);
     }
 
-    // Verify all quest references resolve.
     for q in &data.quests {
         assert_ne!(data.i18n.t(&q.title_key), q.title_key);
+        assert_ne!(data.i18n.t(&q.desc_key), q.desc_key);
         match &q.condition {
             QuestCondition::WinBuildingLevel { building_id, .. }
             | QuestCondition::ReachBuildingTier { building_id, .. } => {
                 assert!(data.building_by_id(building_id).is_some());
             }
-            QuestCondition::CraftAnyAmulet => {}
+            QuestCondition::WinSpecificLevel { level_id } => {
+                assert!(data.level_by_id(level_id).is_some());
+            }
+            QuestCondition::CraftAnyAmulet
+            | QuestCondition::ClaimAnyCollection
+            | QuestCondition::CompleteDailyTrials { .. } => {}
         }
     }
 
-    // Verify all amulet i18n keys resolve.
     for a in &data.amulets {
         assert_ne!(data.i18n.t(&a.name_key), a.name_key);
         assert_ne!(data.i18n.t(&a.desc_key), a.desc_key);
     }
 
-    // Verify all relic collections resolve and can be completed + claimed.
     let mut city = CityState::new(&data.balance);
     for col in &data.collections {
         assert_ne!(data.i18n.t(&col.name_key), col.name_key);
@@ -78,7 +81,7 @@ fn bundled_data_loads_and_i18n_has_full_parity() {
         assert!(city.discover_next_relic(&data.collections).is_some());
     }
     assert!(city.is_collection_ready(first_col));
-    assert!(city.try_claim_collection(first_col));
+    assert!(city.try_claim_collection(first_col, &data.balance));
     assert!(!city.is_collection_ready(first_col));
 }
 
@@ -101,8 +104,6 @@ fn match3_swap_clears_runes_and_breaks_ice() {
     let data = GameDataBundle::load_bundled(Language::En).unwrap();
     let mut rng = StdRng::seed_from_u64(7);
 
-    // 4x4 deterministic board: swapping (0,0) Ice with (1,0) Fire makes 3 Fire in row 0?
-    // Row 0: Fire, Fire, Ice, Fire -> swap (2,0) and (3,0) makes Fire, Fire, Fire, Ice.
     let mut cells = vec![
         Cell::playable(RuneType::Fire),
         Cell::playable(RuneType::Fire),
@@ -141,8 +142,6 @@ fn match4_spawns_line_booster_and_bifrost_clears_color() {
     let data = GameDataBundle::load_bundled(Language::En).unwrap();
     let mut rng = StdRng::seed_from_u64(99);
 
-    // 5x3 board: Row 0 = Fire, Fire, Ice, Fire, Fire; Row 1 col 2 = Fire.
-    // Swapping (2,0) and (2,1) creates a 5-in-a-row of Fire -> spawns BifrostShard at (2,0).
     let cells = vec![
         Cell::playable(RuneType::Fire),
         Cell::playable(RuneType::Fire),
@@ -168,11 +167,92 @@ fn match4_spawns_line_booster_and_bifrost_clears_color() {
         &mut rng,
     );
     assert!(outcome.valid);
-    // BifrostShard spawned at swap target (or dropped down if gravity acted; verify one exists).
     let has_bifrost = (0..3).any(|r| {
         (0..5).any(|c| board.get(CellPos::new(c, r)).unwrap().booster == Booster::BifrostShard)
     });
     assert!(has_bifrost, "5-in-a-row must spawn a BifrostShard booster");
+}
+
+#[test]
+fn bifrost_shard_chain_trigger_clears_most_frequent_rune() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(11);
+
+    let mut cells = vec![Cell::playable(RuneType::Gold); 16];
+    cells[0].rune = None;
+    cells[0].booster = Booster::BifrostShard;
+    cells[1].rune = Some(RuneType::Fire);
+    let mut board = Board::from_cells(4, 4, 6, cells);
+
+    // Smashing the BifrostShard (which has rune: None) with Mjolnir must clear all Gold runes.
+    let outcome = board.use_active_tool(
+        ActiveTool::Mjolnir,
+        Some(CellPos::new(0, 0)),
+        &data.balance,
+        &mut rng,
+    );
+    assert!(outcome.valid);
+    let gold_cleared = outcome
+        .cleared_runes
+        .get(&RuneType::Gold)
+        .copied()
+        .unwrap_or(0);
+    assert!(
+        gold_cleared >= 14,
+        "Expected BifrostShard chain reaction to clear all 14 Gold runes, got {gold_cleared}"
+    );
+}
+
+#[test]
+fn bifrost_shard_line_super_combo_converts_and_detonates() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+
+    let mut cells = vec![Cell::playable(RuneType::Water); 16];
+    cells[0].rune = None;
+    cells[0].booster = Booster::BifrostShard;
+    cells[1].rune = Some(RuneType::Fire);
+    cells[1].booster = Booster::LineHorizontal;
+    cells[10].rune = Some(RuneType::Fire);
+    let mut board = Board::from_cells(4, 4, 6, cells);
+
+    let prepared = board
+        .begin_swap_step(CellPos::new(0, 0), CellPos::new(1, 0))
+        .expect("Bifrost + Line must form a super-combo");
+    assert!(
+        !prepared.converted_boosters.is_empty(),
+        "Super-combo must convert matching color runes into boosters"
+    );
+    let outcome = board.commit_clear_step(&prepared, 1, &data.balance);
+    assert!(outcome.valid);
+    assert!(outcome.score_gained >= data.balance.booster_activation_bonus * 2);
+}
+
+#[test]
+fn bifrost_shard_swap_with_relic_is_rejected() {
+    let mut cells: Vec<Cell> = (0..16)
+        .map(|i| {
+            let col = i % 4;
+            let row = i / 4;
+            Cell::playable(RuneType::ALL[(col + row * 2) % 6])
+        })
+        .collect();
+    cells[0].rune = None;
+    cells[0].booster = Booster::BifrostShard;
+    cells[1].rune = None;
+    cells[1].relic = true;
+    let mut board = Board::from_cells(4, 4, 6, cells);
+
+    assert!(
+        board
+            .begin_swap_step(CellPos::new(0, 0), CellPos::new(1, 0))
+            .is_none(),
+        "Swapping BifrostShard with a Relic must not consume the shard"
+    );
+    assert_eq!(
+        board.get(CellPos::new(0, 0)).unwrap().booster,
+        Booster::BifrostShard
+    );
+    assert!(board.get(CellPos::new(1, 0)).unwrap().relic);
 }
 
 #[test]
@@ -182,7 +262,6 @@ fn active_tools_mjolnir_and_loki_shuffle_work() {
     let mut session = LevelSession::start(data.level_by_id("forge_1").unwrap().clone(), &mut rng);
     let moves_before = session.moves_left;
 
-    // Use Mjolnir on a chained cell (3,3) in forge_1.
     let res = session.play_tool(
         ActiveTool::Mjolnir,
         Some(CellPos::new(3, 3)),
@@ -193,11 +272,30 @@ fn active_tools_mjolnir_and_loki_shuffle_work() {
     assert_eq!(res.chains_broken, 1);
     assert_eq!(session.moves_left, moves_before);
 
-    // Use Loki Shuffle.
     let shuf = session.play_tool(ActiveTool::LokiShuffle, None, &data.balance, &mut rng);
     assert!(shuf.valid);
     assert!(shuf.shuffled);
     assert_eq!(session.outcome, LevelOutcome::InProgress);
+}
+
+#[test]
+fn niflheim_frost_spreads_when_no_ice_broken() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(77);
+    let mut lvl = data.level_by_id("great_hall_3").unwrap().clone();
+    lvl.frost_spread = true;
+    let mut session = LevelSession::start(lvl, &mut rng);
+
+    session.turn_ice_broken = 0;
+    let spread = session.apply_frost_spread_if_needed(&mut rng);
+    assert!(spread.is_some(), "Frost must spread when no ice was broken");
+
+    session.turn_ice_broken = 1;
+    let no_spread = session.apply_frost_spread_if_needed(&mut rng);
+    assert!(
+        no_spread.is_none(),
+        "Frost must not spread when ice was broken"
+    );
 }
 
 #[test]
@@ -208,31 +306,129 @@ fn city_upgrades_quests_and_save_roundtrip() {
     let great_hall = data.building_by_id("great_hall").unwrap();
     let forge = data.building_by_id("forge").unwrap();
 
-    // Forge requires Great Hall tier 1.
     assert!(!city.is_building_unlocked(forge));
-    assert!(city.try_upgrade_building(forge).is_err());
+    assert!(city.try_upgrade_building(forge, &data.balance).is_err());
 
-    // Win Great Hall level once -> q1 ready!
-    city.record_level_victory("great_hall", &data.levels[0].base_reward);
+    city.record_level_victory(
+        "great_hall",
+        "great_hall_1",
+        3,
+        &data.levels[0].base_reward,
+        &data.balance,
+    );
     let q1 = &data.quests[0];
     assert!(city.is_quest_ready(q1));
-    assert!(city.try_claim_quest(q1));
+    assert!(city.try_claim_quest(q1, &data.balance));
 
-    // Now we can afford Great Hall tier 1.
-    assert_eq!(city.try_upgrade_building(great_hall), Ok(1));
+    assert_eq!(city.try_upgrade_building(great_hall, &data.balance), Ok(1));
     assert!(city.is_building_unlocked(forge));
 
-    // Save/load JSON roundtrip.
+    // Quest q8 requires specifically great_hall_2 (Mastery), not replaying great_hall_1 twice.
+    let q8 = data.quests.iter().find(|q| q.id == "q8").unwrap();
+    city.record_level_victory(
+        "great_hall",
+        "great_hall_1",
+        2,
+        &data.levels[0].base_reward,
+        &data.balance,
+    );
+    assert!(!city.is_quest_ready(q8));
+    city.record_level_victory(
+        "great_hall",
+        "great_hall_2",
+        3,
+        &data.levels[1].base_reward,
+        &data.balance,
+    );
+    assert!(city.is_quest_ready(q8));
+
     let save = SaveData {
-        schema_version: wyrdstone_core::save::SAVE_SCHEMA_VERSION,
+        schema_version: SAVE_SCHEMA_VERSION,
         language: Language::Fr,
         last_saved_unix_secs: 1000,
+        muted: true,
+        bgm_volume: DEFAULT_BGM_VOLUME,
+        sfx_volume: DEFAULT_SFX_VOLUME,
         city,
     };
     let json = save.to_json().expect("serialize save");
     let loaded = SaveData::from_json(&json).expect("deserialize save");
     assert_eq!(loaded.city.building_tier("great_hall"), 1);
     assert!(loaded.city.claimed_quests.contains("q1"));
+    assert!(loaded.muted);
+    assert_eq!(loaded.city.level_stars("great_hall_2"), 3);
+}
+
+#[test]
+fn passive_harvest_and_meadery_energy_cap_respect_balance() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut city = CityState::new(&data.balance);
+    city.resources = ResourceBundle {
+        wood: 500,
+        stone: 500,
+        gold: 500,
+        mead: 200,
+    };
+    let great_hall = data.building_by_id("great_hall").unwrap();
+    let meadery = data.building_by_id("meadery").unwrap();
+
+    assert_eq!(city.try_upgrade_building(great_hall, &data.balance), Ok(1));
+    city.energy = 10;
+    assert_eq!(city.try_upgrade_building(meadery, &data.balance), Ok(1));
+    assert_eq!(city.energy, city.max_energy(&data.balance));
+
+    // Rebuilt building has a ready harvest at now = 1000, then cools down until +harvest_interval_seconds.
+    assert!(city.is_harvest_ready("great_hall", 1000, &data.balance));
+    let collected = city.try_collect_harvest("great_hall", 1000, &data.balance);
+    assert!(collected.is_some());
+    assert!(!city.is_harvest_ready("great_hall", 1050, &data.balance));
+    assert!(city.is_harvest_ready(
+        "great_hall",
+        1000 + data.balance.harvest_interval_seconds,
+        &data.balance
+    ));
+}
+
+#[test]
+fn procedural_daily_trial_and_streak_rewards() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(33);
+    for day in 20_000..20_010 {
+        let daily = LevelDef::daily_challenge(day);
+        let board = Board::new_for_level(&daily, &mut rng);
+        assert!(board.has_valid_moves(), "Daily {day} must be playable");
+    }
+
+    let mut city = CityState::new(&data.balance);
+    let reward = LevelDef::daily_challenge(100).base_reward;
+    assert_eq!(city.record_daily_victory(100, &reward, &data.balance), 1);
+    assert_eq!(city.record_daily_victory(101, &reward, &data.balance), 2);
+    assert_eq!(city.record_daily_victory(102, &reward, &data.balance), 3);
+    assert_eq!(city.stats.daily_completions, 3);
+    // Missing a day resets streak to 1.
+    assert_eq!(city.record_daily_victory(105, &reward, &data.balance), 1);
+}
+
+#[test]
+fn atomic_save_and_corrupt_backup() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let dir = std::env::temp_dir().join("wyrdstone_save_test");
+    let path = dir.join("test_save.json");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let save = SaveData::new_game(&data.balance, Language::En);
+    save.save_to_path(&path).expect("atomic save must succeed");
+    let loaded = SaveData::load_from_path(&path)
+        .expect("load must succeed")
+        .expect("save must exist");
+    assert_eq!(loaded.language, Language::En);
+
+    // Corrupt the file and verify backup is created.
+    std::fs::write(&path, "{ invalid json").unwrap();
+    assert!(SaveData::load_from_path(&path).is_err());
+    assert!(path.with_extension("json.corrupt").exists());
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -240,40 +436,65 @@ fn p2_tools_crates_relics_timer_and_amulets_work() {
     let data = GameDataBundle::load_bundled(Language::En).unwrap();
     let mut rng = StdRng::seed_from_u64(2026);
 
-    // 1. Amulet crafting, equipping, and ExtraMoves + ResourceBonusPct effects.
     let mut city = CityState::new(&data.balance);
-    city.resources.wood = 200;
-    city.resources.stone = 200;
-    city.resources.gold = 300;
-    city.resources.mead = 100;
+    city.resources = ResourceBundle {
+        wood: 500,
+        stone: 500,
+        gold: 600,
+        mead: 200,
+    };
     let heimdall = data.amulet_by_id("amulet_heimdall").unwrap();
-    assert!(city.try_craft_amulet(heimdall).is_ok());
+    assert!(city.try_craft_amulet(heimdall, &data.balance).is_ok());
     assert!(city.is_quest_ready(data.quests.iter().find(|q| q.id == "q7").unwrap()));
 
     let timed_level = data.level_by_id("meadery_2").unwrap().clone();
     let base_moves = timed_level.max_moves;
     let mut session = LevelSession::start_with_amulet(
-        timed_level,
+        timed_level.clone(),
         city.active_amulet_effect(&data.amulets),
         &mut rng,
     );
     assert_eq!(session.moves_left, base_moves + 3);
     assert!(session.time_left_secs.is_some());
 
-    // 2. Timed mode defeat when timer expires.
+    // Eye of Odin spawns a starting booster; Horn of Vidar adds +25% time.
+    let odin_session = LevelSession::start_with_amulet(
+        timed_level.clone(),
+        Some(AmuletEffect::StartingBooster),
+        &mut rng,
+    );
+    let has_starter_booster = (0..odin_session.board.rows()).any(|r| {
+        (0..odin_session.board.cols())
+            .any(|c| odin_session.board.get(CellPos::new(c, r)).unwrap().booster != Booster::None)
+    });
+    assert!(
+        has_starter_booster,
+        "Eye of Odin must spawn a starting booster"
+    );
+
+    let vidar_session = LevelSession::start_with_amulet(
+        timed_level,
+        Some(AmuletEffect::ExtraTimePct(25)),
+        &mut rng,
+    );
+    assert!(vidar_session.time_left_secs.unwrap() > 110.0);
+
     session.tick_timer(999.0);
     assert_eq!(session.outcome, LevelOutcome::Defeat);
 
-    // 3. Frost crates damaged by ThorBolt and Buried Relics dropped to bottom row.
+    // Building-linked relic discovery prefers relics linked to the victorious building.
+    let relic_key = city
+        .discover_next_relic_for_building("forge", &data.collections)
+        .expect("must discover a Nidavellir relic");
+    assert_eq!(relic_key, "relic.hammer.name");
+
     let mut cells = vec![Cell::playable(RuneType::Water); 16];
-    // 4x4 board: put a Relic at (1, 2) and a crate at (1, 3).
     cells[2 * 4 + 1].relic = true;
     cells[2 * 4 + 1].rune = None;
     cells[3 * 4 + 1].crate_layers = 1;
     cells[3 * 4 + 1].rune = None;
     let mut board = Board::from_cells(4, 4, 6, cells);
 
-    // ThorBolt on row 3 breaks the crate at (1, 3), letting the relic fall to (1, 3) and be collected!
     let outcome = board.use_active_tool(
         ActiveTool::ThorBolt,
         Some(CellPos::new(0, 3)),
@@ -284,7 +505,6 @@ fn p2_tools_crates_relics_timer_and_amulets_work() {
     assert_eq!(outcome.crates_broken, 1);
     assert_eq!(outcome.relics_dropped, 1);
 
-    // 4. DrakkarCharge and BifrostPrism work cleanly.
     let drakkar = board.use_active_tool(
         ActiveTool::DrakkarCharge,
         Some(CellPos::new(1, 1)),
