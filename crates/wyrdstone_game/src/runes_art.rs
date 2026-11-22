@@ -51,6 +51,7 @@ pub struct RuneTextures {
     pub booster_bomb: Handle<Image>,
     pub booster_bifrost: Handle<Image>,
     pub selection_ring: Handle<Image>,
+    pub portal_ring: Handle<Image>,
 }
 
 impl RuneTextures {
@@ -89,6 +90,7 @@ pub fn init_rune_textures(mut commands: Commands, mut images: ResMut<Assets<Imag
         booster_bomb: images.add(build_bomb_booster_image()),
         booster_bifrost: images.add(decode_rune_png(BOOSTER_BIFROST_PNG)),
         selection_ring: images.add(build_selection_ring_image()),
+        portal_ring: images.add(build_portal_ring_image()),
     };
 
     commands.insert_resource(textures);
@@ -313,6 +315,23 @@ fn build_selection_ring_image() -> Image {
             let border = x <= 4 || y <= 4 || x >= s - 5 || y >= s - 5;
             if border {
                 set_px(&mut px, x, y, [255, 224, 102, 255]);
+            }
+        }
+    }
+    finish_image(px)
+}
+
+fn build_portal_ring_image() -> Image {
+    let mut px = new_canvas();
+    let s = RUNE_TEX_SIZE as i32;
+    let c = s / 2;
+    for y in 0..s {
+        for x in 0..s {
+            let d2 = (x - c) * (x - c) + (y - c) * (y - c);
+            if (24 * 24..=30 * 30).contains(&d2) {
+                set_px(&mut px, x, y, [175, 112, 255, 235]);
+            } else if (21 * 21..24 * 24).contains(&d2) {
+                set_px(&mut px, x, y, [92, 232, 255, 210]);
             }
         }
     }

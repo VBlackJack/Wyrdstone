@@ -22,7 +22,7 @@ use crate::state::{today_day_index, AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
-use wyrdstone_core::{BuildingDef, Objective, QuestCondition};
+use wyrdstone_core::{ActiveTool, BuildingDef, Objective, QuestCondition};
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
 const SNOWFLAKE_COUNT: usize = 22;
@@ -60,9 +60,11 @@ pub enum CityAction {
     ClaimQuest(String),
     ToggleAmuletsModal,
     ToggleCollectionsModal,
+    ToggleShopModal,
     ToggleStatsModal,
     ToggleHelpModal,
     ClaimCollection(String),
+    CraftTool(ActiveTool),
     CraftOrEquipAmulet(String),
     ToggleLanguage,
     ToggleAudio,
@@ -274,6 +276,12 @@ fn spawn_city_tree(
                         } else {
                             COLOR_PANEL_CARD
                         },
+                    );
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.shop.button"),
+                        CityAction::ToggleShopModal,
+                        COLOR_PANEL_CARD,
                     );
                     spawn_small_button(
                         btns,
@@ -538,11 +546,13 @@ fn spawn_city_tree(
                 });
             });
 
-            // 4. Optional Modal Overlays (Amulets, Relic Collections, Clan Chronicles, Guide)
+            // 4. Optional Modal Overlays (Amulets, Relic Collections, Tool Forge, Chronicles, Guide)
             if ctx.amulets_modal_open {
                 spawn_amulets_modal(root, ctx);
             } else if ctx.collections_modal_open {
                 spawn_collections_modal(root, ctx);
+            } else if ctx.shop_modal_open {
+                spawn_tool_shop_modal(root, ctx, fjord_art);
             } else if ctx.stats_modal_open {
                 spawn_stats_modal(root, ctx);
             } else if ctx.help_modal_open {
@@ -1322,6 +1332,158 @@ fn spawn_collections_modal(root: &mut ChildBuilder, ctx: &GameContext) {
     });
 }
 
+fn spawn_tool_shop_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+) {
+    let i18n = &ctx.data.i18n;
+    root.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),
+    ))
+    .with_children(|backdrop| {
+        backdrop
+            .spawn((
+                Node {
+                    width: Val::Px(600.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(20.0)),
+                    row_gap: Val::Px(8.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(COLOR_PANEL_DARK),
+                BorderColor(COLOR_ACCENT_GOLD),
+                BorderRadius::all(Val::Px(14.0)),
+            ))
+            .with_children(|modal| {
+                modal
+                    .spawn(Node {
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|hdr| {
+                        hdr.spawn((
+                            Text::new(i18n.t("city.panel.shop.title")),
+                            TextFont {
+                                font_size: FONT_HEADING,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                        spawn_small_button(
+                            hdr,
+                            i18n.t("city.panel.amulets.close"),
+                            CityAction::ToggleShopModal,
+                            COLOR_ACCENT_CRIMSON,
+                        );
+                    });
+
+                for recipe in &ctx.data.tool_shop {
+                    let count = ctx.city.tools.count(recipe.tool);
+                    let can_afford = ctx.city.resources.can_afford(&recipe.cost);
+                    let c = recipe.cost;
+                    let mut cost_parts = Vec::new();
+                    if c.wood > 0 {
+                        cost_parts.push(format!("{} {}", c.wood, i18n.t("resources.label.wood")));
+                    }
+                    if c.stone > 0 {
+                        cost_parts.push(format!("{} {}", c.stone, i18n.t("resources.label.stone")));
+                    }
+                    if c.gold > 0 {
+                        cost_parts.push(format!("{} {}", c.gold, i18n.t("resources.label.gold")));
+                    }
+                    if c.mead > 0 {
+                        cost_parts.push(format!("{} {}", c.mead, i18n.t("resources.label.mead")));
+                    }
+
+                    modal
+                        .spawn((
+                            Node {
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::all(Val::Px(8.0)),
+                                column_gap: Val::Px(10.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderColor(COLOR_PANEL_BORDER),
+                            BorderRadius::all(Val::Px(8.0)),
+                        ))
+                        .with_children(|row| {
+                            row.spawn(Node {
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(10.0),
+                                ..default()
+                            })
+                            .with_children(|left| {
+                                if let Some(icon) = fjord_art.tool_icon(recipe.tool) {
+                                    left.spawn((
+                                        ImageNode::new(icon),
+                                        Node {
+                                            width: Val::Px(38.0),
+                                            height: Val::Px(38.0),
+                                            ..default()
+                                        },
+                                        BorderRadius::all(Val::Px(6.0)),
+                                    ));
+                                }
+                                left.spawn(Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(2.0),
+                                    ..default()
+                                })
+                                .with_children(|info| {
+                                    info.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            &recipe.name_key,
+                                            &[("count", count.to_string())],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_BODY,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_GOLD),
+                                    ));
+                                    info.spawn((
+                                        Text::new(cost_parts.join("  |  ")),
+                                        TextFont {
+                                            font_size: 12.5,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_TEXT_MUTED),
+                                    ));
+                                });
+                            });
+
+                            spawn_small_button(
+                                row,
+                                i18n.t("city.panel.shop.craft"),
+                                CityAction::CraftTool(recipe.tool),
+                                if can_afford {
+                                    COLOR_ACCENT_GREEN
+                                } else {
+                                    COLOR_BUTTON_DISABLED
+                                },
+                            );
+                        });
+                }
+            });
+    });
+}
+
 fn spawn_stats_modal(root: &mut ChildBuilder, ctx: &GameContext) {
     let i18n = &ctx.data.i18n;
     let st = ctx.city.stats;
@@ -1568,11 +1730,12 @@ fn spawn_full_button(
         });
 }
 
-/// Processes button presses in the Fjord City hub.
+/// Processes button presses and Escape modal-close shortcut in the Fjord City hub.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_city_buttons(
     mut commands: Commands,
     time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
     fjord_art: Res<FjordTextures>,
     mut sound_bank: ResMut<SoundBank>,
@@ -1584,6 +1747,22 @@ pub fn handle_city_buttons(
     buttons: Query<(&Interaction, &CityAction), Changed<Interaction>>,
 ) {
     let mut rebuild = false;
+
+    if keys.just_pressed(KeyCode::Escape) {
+        if ctx.amulets_modal_open
+            || ctx.collections_modal_open
+            || ctx.shop_modal_open
+            || ctx.stats_modal_open
+            || ctx.help_modal_open
+        {
+            ctx.amulets_modal_open = false;
+            ctx.collections_modal_open = false;
+            ctx.shop_modal_open = false;
+            ctx.stats_modal_open = false;
+            ctx.help_modal_open = false;
+            rebuild = true;
+        }
+    }
 
     // Auto-clear celebration banner after timeout.
     if ctx.celebration_timer_secs > 0.0 {
@@ -1719,10 +1898,42 @@ pub fn handle_city_buttons(
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
+            CityAction::ToggleShopModal => {
+                ctx.shop_modal_open = !ctx.shop_modal_open;
+                ctx.amulets_modal_open = false;
+                ctx.collections_modal_open = false;
+                ctx.stats_modal_open = false;
+                ctx.help_modal_open = false;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
+            }
+            CityAction::CraftTool(tool) => {
+                if let Some(recipe) = ctx
+                    .data
+                    .tool_shop
+                    .iter()
+                    .find(|r| r.tool == *tool)
+                    .cloned()
+                {
+                    match ctx.city.try_craft_tool(&recipe) {
+                        Ok(_) => {
+                            ctx.status_notice_key = None;
+                            ctx.persist();
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                        }
+                        Err(err_key) => {
+                            ctx.status_notice_key = Some(err_key.to_string());
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        }
+                    }
+                    rebuild = true;
+                }
+            }
             CityAction::ToggleStatsModal => {
                 ctx.stats_modal_open = !ctx.stats_modal_open;
                 ctx.amulets_modal_open = false;
                 ctx.collections_modal_open = false;
+                ctx.shop_modal_open = false;
                 ctx.help_modal_open = false;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;

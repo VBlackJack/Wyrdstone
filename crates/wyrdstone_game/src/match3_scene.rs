@@ -433,6 +433,22 @@ fn spawn_board_sprites(
         }
     }
 
+    // Bifrost Portal rings (highlight exit & entry portal cells)
+    for &(src, dst) in session.board.portals() {
+        for p in [src, dst] {
+            let w = cell_to_world(p, layout);
+            commands.spawn((
+                Match3Entity,
+                Sprite {
+                    image: textures.portal_ring.clone(),
+                    custom_size: Some(Vec2::splat(layout.cell_step * 0.98)),
+                    ..default()
+                },
+                Transform::from_xyz(w.x, w.y, Z_CELL_BG + 0.5),
+            ));
+        }
+    }
+
     // Selection ring if a cell is selected
     if let Some(sel) = layout.selected {
         let w = cell_to_world(sel, layout);
@@ -1044,13 +1060,69 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext, fjord_art: &Fjor
         });
 }
 
-/// Handles HUD button interactions (Retreat and Active Tools).
+/// Handles HUD button interactions and keyboard shortcuts (`1-6` tools, `Escape` cancel/close).
 pub fn handle_match3_hud_buttons(
+    keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
     mut input_state: ResMut<Match3InputState>,
     mut next_state: ResMut<NextState<AppState>>,
     buttons: Query<(&Interaction, &Match3UiAction), Changed<Interaction>>,
 ) {
+    // Keyboard shortcuts: Escape closes help or disarms tool; 1..6 selects active tools.
+    if keys.just_pressed(KeyCode::Escape) {
+        if ctx.help_modal_open {
+            ctx.help_modal_open = false;
+            input_state.dirty_hud = true;
+            return;
+        }
+        if ctx.armed_tool.is_some() {
+            ctx.armed_tool = None;
+            input_state.dirty_hud = true;
+            return;
+        }
+    }
+    let key_tools = [
+        (KeyCode::Digit1, ActiveTool::Mjolnir),
+        (KeyCode::Digit2, ActiveTool::SurtrEmber),
+        (KeyCode::Digit3, ActiveTool::ThorBolt),
+        (KeyCode::Digit4, ActiveTool::BifrostPrism),
+        (KeyCode::Digit5, ActiveTool::DrakkarCharge),
+        (KeyCode::Digit6, ActiveTool::LokiShuffle),
+    ];
+    for (kc, tool) in key_tools {
+        if keys.just_pressed(kc) && input_state.is_idle() && !ctx.help_modal_open {
+            if ctx.city.tools.count(tool) > 0 {
+                if tool == ActiveTool::LokiShuffle {
+                    let balance = ctx.data.balance.clone();
+                    if ctx.city.tools.consume(ActiveTool::LokiShuffle) {
+                        let ctx_ref = ctx.as_mut();
+                        if let Some(session) = ctx_ref.active_session.as_mut() {
+                            session.play_tool(
+                                ActiveTool::LokiShuffle,
+                                None,
+                                &balance,
+                                &mut ctx_ref.rng,
+                            );
+                        }
+                        ctx.armed_tool = None;
+                        ctx.persist();
+                        input_state.dirty_board = true;
+                        input_state.dirty_hud = true;
+                    }
+                } else {
+                    ctx.armed_tool = if ctx.armed_tool == Some(tool) {
+                        None
+                    } else {
+                        Some(tool)
+                    };
+                    input_state.selected = None;
+                    input_state.dirty_board = true;
+                    input_state.dirty_hud = true;
+                }
+            }
+            return;
+        }
+    }
     for (interaction, action) in &buttons {
         if *interaction != Interaction::Pressed {
             continue;

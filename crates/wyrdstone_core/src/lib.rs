@@ -29,7 +29,7 @@ pub use board::{
 };
 pub use city::{
     AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats, CollectionDef,
-    QuestCondition, QuestDef, ResourceBundle, ToolInventory,
+    QuestCondition, QuestDef, ResourceBundle, ToolInventory, ToolRecipeDef,
 };
 pub use i18n::{I18nCatalog, Language};
 pub use level::{LevelDef, LevelOutcome, LevelSession, Objective, ObjectiveProgress};

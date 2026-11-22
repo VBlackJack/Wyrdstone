@@ -63,6 +63,8 @@ pub struct LevelDef {
     pub crate_cells: Vec<(usize, usize, u8)>,
     #[serde(default)]
     pub relic_cells: Vec<(usize, usize)>,
+    #[serde(default)]
+    pub portals: Vec<((usize, usize), (usize, usize))>,
     pub blocked_cells: Vec<(usize, usize)>,
     pub base_reward: ResourceBundle,
 }
@@ -134,6 +136,7 @@ impl LevelDef {
             chained_cells,
             crate_cells,
             relic_cells,
+            portals: vec![],
             blocked_cells: vec![(0, 0), (7, 0), (0, 7), (7, 7)],
             base_reward: ResourceBundle {
                 wood: 140,

@@ -139,6 +139,15 @@ pub struct CollectionDef {
     pub reward_tools: ToolInventory,
 }
 
+/// Static crafting recipe for forging active tools in the Fjord.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolRecipeDef {
+    pub tool: ActiveTool,
+    pub name_key: String,
+    pub desc_key: String,
+    pub cost: ResourceBundle,
+}
+
 /// Player inventory of the six active Match-3 tools.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInventory {
@@ -172,6 +181,17 @@ impl ToolInventory {
         self.thor_bolt += other.thor_bolt;
         self.bifrost_prism += other.bifrost_prism;
         self.drakkar_charge += other.drakkar_charge;
+    }
+
+    pub fn grant_one(&mut self, tool: ActiveTool) {
+        match tool {
+            ActiveTool::Mjolnir => self.mjolnir += 1,
+            ActiveTool::SurtrEmber => self.surtr_ember += 1,
+            ActiveTool::LokiShuffle => self.loki_shuffle += 1,
+            ActiveTool::ThorBolt => self.thor_bolt += 1,
+            ActiveTool::BifrostPrism => self.bifrost_prism += 1,
+            ActiveTool::DrakkarCharge => self.drakkar_charge += 1,
+        }
     }
 
     pub fn consume(&mut self, tool: ActiveTool) -> bool {
@@ -332,6 +352,16 @@ impl CityState {
             _ => {}
         }
         Ok(new_tier)
+    }
+
+    /// Crafts one charge of an active tool using village resources.
+    pub fn try_craft_tool(&mut self, recipe: &ToolRecipeDef) -> Result<u32, &'static str> {
+        if !self.resources.can_afford(&recipe.cost) {
+            return Err("city.error.not_enough_resources");
+        }
+        self.resources.subtract(&recipe.cost);
+        self.tools.grant_one(recipe.tool);
+        Ok(self.tools.count(recipe.tool))
     }
 
     /// Crafts a Nordic Amulet and equips it immediately.

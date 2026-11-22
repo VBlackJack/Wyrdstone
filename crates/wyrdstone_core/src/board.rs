@@ -203,6 +203,7 @@ pub struct Board {
     rows: usize,
     rune_pool_len: usize,
     cells: Vec<Cell>,
+    portals: Vec<(CellPos, CellPos)>,
 }
 
 impl Board {
@@ -211,11 +212,17 @@ impl Board {
         let cols = level.cols;
         let rows = level.rows;
         let rune_pool_len = level.rune_types_count.clamp(3, RuneType::ALL.len());
+        let portals: Vec<(CellPos, CellPos)> = level
+            .portals
+            .iter()
+            .map(|&((sc, sr), (dc, dr))| (CellPos::new(sc, sr), CellPos::new(dc, dr)))
+            .collect();
         let mut board = Self {
             cols,
             rows,
             rune_pool_len,
             cells: vec![Cell::blocked_cell(); cols * rows],
+            portals,
         };
 
         let blocked_set: HashSet<(usize, usize)> = level.blocked_cells.iter().copied().collect();
@@ -287,7 +294,13 @@ impl Board {
             rows,
             rune_pool_len: rune_pool_len.clamp(3, RuneType::ALL.len()),
             cells,
+            portals: Vec::new(),
         }
+    }
+
+    /// Returns all Bifrost portal pairs `(exit_cell, entry_cell)` on this board.
+    pub fn portals(&self) -> &[(CellPos, CellPos)] {
+        &self.portals
     }
 
     pub fn cols(&self) -> usize {
@@ -516,9 +529,39 @@ impl Board {
         outcome
     }
 
-    /// Applies gravity and refills empty cells, returning per-tile fall trajectories for animation.
+    /// Applies gravity, Bifrost portal transfers, and refills empty cells, returning fall trajectories.
     pub fn apply_gravity_and_refill_tracked<R: Rng>(&mut self, rng: &mut R) -> Vec<FallMove> {
         let mut moves = Vec::new();
+        // Transfer movable pieces through Bifrost portals when destination cell is empty.
+        let portals_snapshot = self.portals.clone();
+        for (src, dst) in portals_snapshot {
+            if self.in_bounds(src) && self.in_bounds(dst) {
+                let si = self.idx(src);
+                let di = self.idx(dst);
+                let src_c = self.cells[si];
+                let dst_c = self.cells[di];
+                if !src_c.blocked
+                    && !src_c.chained
+                    && src_c.crate_layers == 0
+                    && src_c.has_movable_piece()
+                    && !dst_c.blocked
+                    && !dst_c.chained
+                    && dst_c.crate_layers == 0
+                    && !dst_c.has_movable_piece()
+                {
+                    self.cells[di].rune = self.cells[si].rune.take();
+                    self.cells[di].booster = self.cells[si].booster;
+                    self.cells[si].booster = Booster::None;
+                    self.cells[di].relic = self.cells[si].relic;
+                    self.cells[si].relic = false;
+                    moves.push(FallMove {
+                        col: dst.col,
+                        from_row: (dst.row as i32) - 1,
+                        to_row: dst.row,
+                    });
+                }
+            }
+        }
         for col in 0..self.cols {
             let mut spawn_offset = 1i32;
             let mut write_row = self.rows as i32 - 1;

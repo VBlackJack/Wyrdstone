@@ -68,7 +68,7 @@ pub fn run_app() {
             ),
         )
         .add_systems(Startup, enter_title_after_boot)
-        .add_systems(Update, tick_energy_regen)
+        .add_systems(Update, (tick_energy_regen, handle_global_shortcuts))
         // Title screen
         .add_systems(OnEnter(AppState::Title), title_ui::setup_title_ui)
         .add_systems(
@@ -137,4 +137,14 @@ fn setup_camera(
 
 fn enter_title_after_boot(mut next_state: ResMut<NextState<AppState>>) {
     next_state.set(AppState::Title);
+}
+
+fn handle_global_shortcuts(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut sound_bank: ResMut<audio::SoundBank>,
+    mut bgm_sinks: Query<&mut AudioSink, With<audio::BgmTrack>>,
+) {
+    if keys.just_pressed(KeyCode::KeyM) {
+        audio::toggle_mute(&mut sound_bank, &mut bgm_sinks);
+    }
 }

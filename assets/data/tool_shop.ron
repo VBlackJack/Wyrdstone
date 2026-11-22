@@ -1,0 +1,39 @@
+// Copyright 2026 Julien Bombled - Apache 2.0
+[
+    ToolRecipeDef(
+        tool: Mjolnir,
+        name_key: "match3.tool.mjolnir",
+        desc_key: "match3.tool.hint.mjolnir",
+        cost: ResourceBundle(wood: 0, stone: 20, gold: 40, mead: 0),
+    ),
+    ToolRecipeDef(
+        tool: SurtrEmber,
+        name_key: "match3.tool.surtr_ember",
+        desc_key: "match3.tool.hint.surtr_ember",
+        cost: ResourceBundle(wood: 30, stone: 20, gold: 65, mead: 0),
+    ),
+    ToolRecipeDef(
+        tool: ThorBolt,
+        name_key: "match3.tool.thor_bolt",
+        desc_key: "match3.tool.hint.thor_bolt",
+        cost: ResourceBundle(wood: 0, stone: 35, gold: 75, mead: 0),
+    ),
+    ToolRecipeDef(
+        tool: BifrostPrism,
+        name_key: "match3.tool.bifrost_prism",
+        desc_key: "match3.tool.hint.bifrost_prism",
+        cost: ResourceBundle(wood: 0, stone: 0, gold: 110, mead: 20),
+    ),
+    ToolRecipeDef(
+        tool: DrakkarCharge,
+        name_key: "match3.tool.drakkar_charge",
+        desc_key: "match3.tool.hint.drakkar_charge",
+        cost: ResourceBundle(wood: 40, stone: 0, gold: 120, mead: 25),
+    ),
+    ToolRecipeDef(
+        tool: LokiShuffle,
+        name_key: "match3.tool.loki_shuffle",
+        desc_key: "match3.tool.hint.loki_shuffle",
+        cost: ResourceBundle(wood: 0, stone: 0, gold: 35, mead: 10),
+    ),
+]

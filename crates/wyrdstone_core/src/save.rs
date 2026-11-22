@@ -17,7 +17,7 @@
 //! Bundled game data loader and persistent JSON save schema.
 
 use crate::balance::BalanceConfig;
-use crate::city::{AmuletDef, BuildingDef, CityState, CollectionDef, QuestDef};
+use crate::city::{AmuletDef, BuildingDef, CityState, CollectionDef, QuestDef, ToolRecipeDef};
 use crate::i18n::{I18nCatalog, Language};
 use crate::level::LevelDef;
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,7 @@ const BUNDLED_LEVELS_RON: &str = include_str!("../../../assets/data/levels.ron")
 const BUNDLED_QUESTS_RON: &str = include_str!("../../../assets/data/quests.ron");
 const BUNDLED_AMULETS_RON: &str = include_str!("../../../assets/data/amulets.ron");
 const BUNDLED_COLLECTIONS_RON: &str = include_str!("../../../assets/data/collections.ron");
+const BUNDLED_TOOL_SHOP_RON: &str = include_str!("../../../assets/data/tool_shop.ron");
 
 /// All static game definitions loaded once at startup.
 #[derive(Debug, Clone)]
@@ -44,6 +45,7 @@ pub struct GameDataBundle {
     pub quests: Vec<QuestDef>,
     pub amulets: Vec<AmuletDef>,
     pub collections: Vec<CollectionDef>,
+    pub tool_shop: Vec<ToolRecipeDef>,
     pub i18n: I18nCatalog,
 }
 
@@ -62,6 +64,8 @@ impl GameDataBundle {
             .map_err(|e| format!("Failed to parse amulets.ron: {e}"))?;
         let collections: Vec<CollectionDef> = ron::from_str(BUNDLED_COLLECTIONS_RON)
             .map_err(|e| format!("Failed to parse collections.ron: {e}"))?;
+        let tool_shop: Vec<ToolRecipeDef> = ron::from_str(BUNDLED_TOOL_SHOP_RON)
+            .map_err(|e| format!("Failed to parse tool_shop.ron: {e}"))?;
         let i18n = I18nCatalog::from_json_strs(BUNDLED_EN_JSON, BUNDLED_FR_JSON, initial_language)
             .map_err(|e| format!("Failed to parse locales: {e}"))?;
 
@@ -72,6 +76,7 @@ impl GameDataBundle {
             quests,
             amulets,
             collections,
+            tool_shop,
             i18n,
         })
     }
