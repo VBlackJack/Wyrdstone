@@ -317,27 +317,18 @@ fn spawn_board_sprites(
                 Transform::from_xyz(world.x, world.y, Z_CELL_BG),
             ));
 
-            // Ice plate layer (underneath) + crisp translucent frost sheen (over the rune)
+            // Ice block encasing the rune (translucent glacial cube over the tile)
             if cell.ice_layers > 0 {
-                let (ice_under, ice_over) = if cell.ice_layers >= 2 {
-                    (textures.ice_layer2.clone(), textures.ice_top_layer2.clone())
+                let ice_over = if cell.ice_layers >= 2 {
+                    textures.ice_top_layer2.clone()
                 } else {
-                    (textures.ice_layer1.clone(), textures.ice_top_layer1.clone())
+                    textures.ice_top_layer1.clone()
                 };
                 commands.spawn((
                     Match3Entity,
                     Sprite {
-                        image: ice_under,
-                        custom_size: Some(Vec2::splat(layout.cell_step)),
-                        ..default()
-                    },
-                    Transform::from_xyz(world.x, world.y, Z_ICE_OVERLAY),
-                ));
-                commands.spawn((
-                    Match3Entity,
-                    Sprite {
                         image: ice_over,
-                        custom_size: Some(cell_size),
+                        custom_size: Some(Vec2::splat(layout.cell_step * 0.98)),
                         ..default()
                     },
                     Transform::from_xyz(world.x, world.y, Z_ICE_TOP_FROST),

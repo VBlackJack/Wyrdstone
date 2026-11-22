@@ -37,7 +37,6 @@ pub const MIN_TILE_SIZE_PX: f32 = 34.0;
 /// Z-layer ordering for 2D board sprites.
 pub const Z_BOARD_BG: f32 = 0.0;
 pub const Z_CELL_BG: f32 = 1.0;
-pub const Z_ICE_OVERLAY: f32 = 2.0;
 pub const Z_RUNE_SPRITE: f32 = 3.0;
 pub const Z_BOOSTER_BADGE: f32 = 4.0;
 pub const Z_ICE_TOP_FROST: f32 = 4.5;

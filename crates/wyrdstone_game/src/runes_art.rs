@@ -36,8 +36,6 @@ const RUNE_WATER_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_water
 pub struct RuneTextures {
     pub runes: HashMap<RuneType, Handle<Image>>,
     pub cell_bg: Handle<Image>,
-    pub ice_layer1: Handle<Image>,
-    pub ice_layer2: Handle<Image>,
     pub ice_top_layer1: Handle<Image>,
     pub ice_top_layer2: Handle<Image>,
     pub crate_layer1: Handle<Image>,
@@ -76,8 +74,6 @@ pub fn init_rune_textures(mut commands: Commands, mut images: ResMut<Assets<Imag
     let textures = RuneTextures {
         runes,
         cell_bg: images.add(build_cell_bg_image()),
-        ice_layer1: images.add(build_ice_image(1)),
-        ice_layer2: images.add(build_ice_image(2)),
         ice_top_layer1: images.add(build_ice_top_frost_image(1)),
         ice_top_layer2: images.add(build_ice_top_frost_image(2)),
         crate_layer1: images.add(build_crate_image(1)),
@@ -166,73 +162,91 @@ fn build_cell_bg_image() -> Image {
     finish_image(px)
 }
 
-fn build_ice_image(layers: u8) -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    let fill_alpha = if layers >= 2 { 245 } else { 205 };
-    for y in 0..s {
-        for x in 0..s {
-            let border = x <= 5 || y <= 5 || x >= s - 6 || y >= s - 6;
-            let rgba = if border {
-                if layers >= 2 {
-                    [235, 252, 255, 255]
-                } else {
-                    [165, 235, 255, 245]
-                }
-            } else if layers >= 2 {
-                [125, 222, 252, fill_alpha]
-            } else {
-                [92, 198, 242, fill_alpha]
-            };
-            set_px(&mut px, x, y, rgba);
-        }
-    }
-    finish_image(px)
-}
-
-/// Translucent frost frame & crystalline shards drawn OVER the rune so 1-layer and 2-layer ice pop unmistakably.
+/// Translucent glacial ice cube drawn OVER the runestone so the tile looks genuinely encased in ice.
 fn build_ice_top_frost_image(layers: u8) -> Image {
     let mut px = new_canvas();
     let s = RUNE_TEX_SIZE as i32;
 
-    // Bright crystalline frost frame around the edges of the tile.
-    let frame_w = if layers >= 2 { 7 } else { 4 };
+    // 1. Translucent frozen glass interior glaze (thicker & milkier for 2-layer glacial ice).
+    let base_alpha: f32 = if layers >= 2 { 138.0 } else { 88.0 };
+    let wall_w: i32 = if layers >= 2 { 6 } else { 4 };
+
     for y in 1..(s - 1) {
         for x in 1..(s - 1) {
-            let edge = x.min(y).min(s - 1 - x).min(s - 1 - y);
-            if edge <= frame_w {
-                let alpha = if edge <= 2 {
-                    245
-                } else if layers >= 2 {
-                    185
-                } else {
-                    135
-                };
-                set_px(&mut px, x, y, [215, 248, 255, alpha]);
+            let left = x;
+            let right = s - 1 - x;
+            let top = y;
+            let bottom = s - 1 - y;
+            let edge = left.min(right).min(top).min(bottom);
+
+            // Outer dark frost rim for crisp silhouette against any tile.
+            if edge == 1 {
+                set_px(&mut px, x, y, [78, 168, 214, 240]);
+                continue;
             }
+
+            // Thick 3D beveled ice cube walls: bright white-cyan on top/left, deep arctic blue on bottom/right.
+            if edge <= wall_w {
+                let top_left = left <= wall_w || top <= wall_w;
+                let rgba = if top_left {
+                    if layers >= 2 {
+                        [236, 252, 255, 242]
+                    } else {
+                        [218, 248, 255, 215]
+                    }
+                } else if layers >= 2 {
+                    [102, 198, 238, 232]
+                } else {
+                    [92, 186, 228, 195]
+                };
+                set_px(&mut px, x, y, rgba);
+                continue;
+            }
+
+            // Subtle frost gradient stronger near corners & top-left specular sheen.
+            let corner_dist = (left.min(right) + top.min(bottom)) as f32;
+            let corner_frost = ((24.0 - corner_dist).max(0.0) / 24.0) * if layers >= 2 { 92.0 } else { 62.0 };
+
+            // Glossy diagonal ice-glass reflection bands across the frozen face.
+            let diag = x + y;
+            let band1 = (diag - 36).abs() <= 4;
+            let band2 = (diag - 48).abs() <= 2;
+            let glare = if band1 {
+                68.0
+            } else if band2 {
+                45.0
+            } else {
+                0.0
+            };
+
+            let alpha = (base_alpha + corner_frost + glare).clamp(0.0, 235.0) as u8;
+            let r = (165.0 + glare * 1.2 + corner_frost * 0.7).clamp(0.0, 255.0) as u8;
+            let g = (232.0 + glare * 0.4 + corner_frost * 0.3).clamp(0.0, 255.0) as u8;
+            let b = 255u8;
+            set_px(&mut px, x, y, [r, g, b, alpha]);
         }
     }
 
-    // Frosted triangular corner icicles (clearly visible even over bright blue/cyan runes).
-    let corner_span = if layers >= 2 { 18 } else { 13 };
-    for y in 2..corner_span {
-        for x in 2..(corner_span - y + 2) {
-            let c = [240, 252, 255, if layers >= 2 { 235 } else { 195 }];
-            set_px(&mut px, x, y, c);
-            set_px(&mut px, s - 1 - x, y, c);
-            set_px(&mut px, x, s - 1 - y, c);
-            set_px(&mut px, s - 1 - x, s - 1 - y, c);
-        }
-    }
+    // 2. Crisp specular highlight glint along top-left inner bevel.
+    draw_thick_line(&mut px, 8, 8, 28, 8, 1, [255, 255, 255, 235]);
+    draw_thick_line(&mut px, 8, 8, 8, 24, 1, [255, 255, 255, 235]);
 
-    // Diagonal specular frost glare + double-layer ice crystal cross-cracks.
-    draw_thick_line(&mut px, 10, 18, 26, 8, 1, [255, 255, 255, 190]);
+    // 3. Layer 2 (Thick Glacial Ice): jagged internal fracture lines & frozen rime crystals.
     if layers >= 2 {
-        draw_thick_line(&mut px, 8, 8, 56, 56, 1, [242, 253, 255, 225]);
-        draw_thick_line(&mut px, 56, 8, 8, 56, 1, [242, 253, 255, 225]);
-        // Small white-cyan frost diamond indicator in top-right corner for 2-layer ice.
-        draw_thick_line(&mut px, 50, 10, 56, 16, 1, [120, 235, 255, 255]);
-        draw_thick_line(&mut px, 56, 10, 50, 16, 1, [120, 235, 255, 255]);
+        let crack_hi = [245, 253, 255, 235];
+        let crack_lo = [85, 178, 224, 210];
+        // Jagged glacial crack from top-left to center-right
+        draw_thick_line(&mut px, 10, 12, 26, 24, 1, crack_lo);
+        draw_thick_line(&mut px, 26, 24, 38, 20, 1, crack_lo);
+        draw_thick_line(&mut px, 38, 20, 54, 34, 1, crack_lo);
+        draw_thick_line(&mut px, 10, 11, 26, 23, 0, crack_hi);
+        draw_thick_line(&mut px, 26, 23, 38, 19, 0, crack_hi);
+        draw_thick_line(&mut px, 38, 19, 54, 33, 0, crack_hi);
+        // Secondary crack from bottom-left to center
+        draw_thick_line(&mut px, 12, 52, 28, 38, 1, crack_lo);
+        draw_thick_line(&mut px, 28, 38, 46, 50, 1, crack_lo);
+        draw_thick_line(&mut px, 12, 51, 28, 37, 0, crack_hi);
+        draw_thick_line(&mut px, 28, 37, 46, 49, 0, crack_hi);
     }
 
     finish_image(px)
