@@ -412,11 +412,13 @@ fn spawn_city_tree(
                     Node {
                         width: insp_w,
                         height: insp_h,
+                        min_height: Val::Px(0.0),
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
-                        padding: UiRect::all(Val::Px(14.0)),
+                        padding: UiRect::all(Val::Px(12.0)),
                         row_gap: Val::Px(8.0),
                         border: UiRect::all(Val::Px(2.0)),
+                        overflow: Overflow::clip(),
                         ..default()
                     },
                     BackgroundColor(COLOR_PANEL_DARK),
@@ -576,15 +578,19 @@ fn spawn_building_inspector(
         .map(|c| ctx.city.resources.can_afford(c))
         .unwrap_or(false);
 
-    // Top content group
+    // Top content group (shrinks cleanly so action buttons stay pinned & always visible)
     inspector
         .spawn(Node {
             flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(8.0),
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            min_height: Val::Px(0.0),
+            overflow: Overflow::clip(),
+            row_gap: Val::Px(6.0),
             ..default()
         })
         .with_children(|top| {
-            // Large painted illustration
+            // Crisp 4:3 painted illustration (never distorted on ultrawide screens)
             if let Some(img) = fjord_art.building_image(&b.id) {
                 let tint = if !unlocked {
                     Color::srgb(0.42, 0.46, 0.54)
@@ -600,8 +606,10 @@ fn spawn_building_inspector(
                         ..default()
                     },
                     Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Px(156.0),
+                        width: Val::Px(220.0),
+                        height: Val::Px(132.0),
+                        align_self: AlignSelf::Center,
+                        flex_shrink: 0.0,
                         border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
@@ -838,11 +846,12 @@ fn spawn_building_inspector(
             }
         });
 
-    // Bottom Action Buttons
+    // Bottom Action Buttons (always pinned & visible at any window height)
     inspector
         .spawn(Node {
             flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(8.0),
+            flex_shrink: 0.0,
+            row_gap: Val::Px(6.0),
             ..default()
         })
         .with_children(|actions| {

@@ -20,18 +20,18 @@ use bevy::prelude::*;
 use wyrdstone_core::RuneType;
 
 /// Window defaults for desktop targets.
-pub const WINDOW_DEFAULT_WIDTH: f32 = 1120.0;
-pub const WINDOW_DEFAULT_HEIGHT: f32 = 760.0;
+pub const WINDOW_DEFAULT_WIDTH: f32 = 1360.0;
+pub const WINDOW_DEFAULT_HEIGHT: f32 = 860.0;
 
 /// Procedural rune texture resolution in pixels.
 pub const RUNE_TEX_SIZE: usize = 64;
 
 /// Board layout ratios and spacing constants.
-pub const BOARD_TOP_RESERVED_PX: f32 = 128.0;
-pub const BOARD_BOTTOM_RESERVED_PX: f32 = 116.0;
+pub const BOARD_TOP_RESERVED_PX: f32 = 116.0;
+pub const BOARD_BOTTOM_RESERVED_PX: f32 = 104.0;
 pub const BOARD_SIDE_MARGIN_PX: f32 = 32.0;
 pub const TILE_GAP_RATIO: f32 = 0.08;
-pub const MAX_TILE_SIZE_PX: f32 = 72.0;
+pub const MAX_TILE_SIZE_PX: f32 = 96.0;
 pub const MIN_TILE_SIZE_PX: f32 = 34.0;
 
 /// Z-layer ordering for 2D board sprites.
@@ -44,7 +44,6 @@ pub const Z_CHAIN_OVERLAY: f32 = 5.0;
 pub const Z_SELECTION_RING: f32 = 6.0;
 
 /// Typography scale constants.
-pub const FONT_TITLE_LG: f32 = 58.0;
 pub const FONT_TITLE_MD: f32 = 28.0;
 pub const FONT_HEADING: f32 = 21.0;
 pub const FONT_BODY: f32 = 16.0;

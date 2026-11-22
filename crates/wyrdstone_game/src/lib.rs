@@ -114,8 +114,24 @@ pub fn run_app() {
         .run();
 }
 
-fn setup_camera(mut commands: Commands) {
+fn setup_camera(
+    mut commands: Commands,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+    #[cfg(not(target_os = "android"))] winit_windows: NonSend<bevy::winit::WinitWindows>,
+) {
     commands.spawn(Camera2d);
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Ok(mut window) = windows.get_single_mut() {
+            window.set_maximized(true);
+        }
+        let (rgba, w, h) = fjord_art::app_icon_rgba();
+        if let Ok(icon) = winit::window::Icon::from_rgba(rgba, w, h) {
+            for winit_win in winit_windows.windows.values() {
+                winit_win.set_window_icon(Some(icon.clone()));
+            }
+        }
+    }
 }
 
 fn enter_title_after_boot(mut next_state: ResMut<NextState<AppState>>) {

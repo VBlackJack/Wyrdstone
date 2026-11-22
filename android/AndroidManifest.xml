@@ -8,6 +8,7 @@
 
     <application
         android:label="Wyrdstone"
+        android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
         android:hasCode="true">
         <activity

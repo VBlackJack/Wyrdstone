@@ -43,6 +43,7 @@ bevy = { version = "0.15", default-features = false, features = [
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 directories = "5.0"
+winit = "0.30"
 
 [target.'cfg(target_os = "android")'.dependencies]
 bevy = { version = "0.15", default-features = false, features = ["android-game-activity"] }
@@ -51,6 +52,7 @@ bevy = { version = "0.15", default-features = false, features = ["android-game-a
 package = "com.julienbombled.wyrdstone"
 label = "Wyrdstone"
 build_targets = ["aarch64-linux-android"]
+resources = "../../android/res"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
@@ -58,3 +60,4 @@ target_sdk_version = 35
 
 [package.metadata.android.application]
 label = "Wyrdstone"
+icon = "@mipmap/ic_launcher"

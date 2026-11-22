@@ -96,38 +96,39 @@ fn spawn_title_tree(
                 BackgroundColor(Color::srgba(0.04, 0.07, 0.12, 0.56)),
             ))
             .with_children(|parent| {
-                // Translucent Nordic emblem card
+                // Sculpted WYRDSTONE Logo & Subtitle card
                 parent
                     .spawn((
                         Node {
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             row_gap: Val::Px(10.0),
-                            padding: UiRect::axes(Val::Px(54.0), Val::Px(32.0)),
+                            padding: UiRect::all(Val::Px(18.0)),
                             border: UiRect::all(Val::Px(2.0)),
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.07, 0.10, 0.16, 0.86)),
+                        BackgroundColor(Color::srgba(0.05, 0.08, 0.13, 0.88)),
                         BorderColor(COLOR_ACCENT_GOLD),
                         BorderRadius::all(Val::Px(16.0)),
                     ))
                     .with_children(|card| {
                         card.spawn((
-                            Text::new(i18n.t("app.title.name")),
-                            TextFont {
-                                font_size: FONT_TITLE_LG,
+                            ImageNode::new(fjord_art.logo.clone()),
+                            Node {
+                                width: Val::Px(480.0),
+                                height: Val::Px(270.0),
                                 ..default()
                             },
-                            TextColor(COLOR_ACCENT_GOLD),
+                            BorderRadius::all(Val::Px(10.0)),
                         ));
 
                         card.spawn((
                             Text::new(i18n.t("app.title.subtitle")),
                             TextFont {
-                                font_size: FONT_TITLE_MD,
+                                font_size: FONT_HEADING,
                                 ..default()
                             },
-                            TextColor(COLOR_TEXT_PRIMARY),
+                            TextColor(COLOR_ACCENT_GOLD),
                         ));
 
                         card.spawn((

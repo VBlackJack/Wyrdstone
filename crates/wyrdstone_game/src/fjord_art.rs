@@ -31,14 +31,26 @@ const BLDG_MEADERY_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_mea
 const PORTRAIT_JARL_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_jarl.png");
 const PORTRAIT_BROKK_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_brokk.png");
 const PORTRAIT_VOLVA_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_volva.png");
+const WYRDSTONE_LOGO_PNG: &[u8] = include_bytes!("../../../assets/sprites/wyrdstone_logo.png");
+const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/sprites/app_icon.png");
+const INTER_REGULAR_TTF: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
 
 /// Handles to all bundled painted artworks.
 #[derive(Resource)]
 pub struct FjordTextures {
     pub fjord_map: Handle<Image>,
     pub match3_bg: Handle<Image>,
+    pub logo: Handle<Image>,
     pub buildings: HashMap<String, Handle<Image>>,
     pub portraits: HashMap<String, Handle<Image>>,
+}
+
+/// Decodes the bundled app icon PNG into raw RGBA8 bytes and dimensions for native window icons.
+pub fn app_icon_rgba() -> (Vec<u8>, u32, u32) {
+    let img = decode_png(APP_ICON_PNG);
+    let w = img.width();
+    let h = img.height();
+    (img.data, w, h)
 }
 
 impl FjordTextures {
@@ -53,10 +65,20 @@ impl FjordTextures {
     }
 }
 
-/// PreStartup system decoding all bundled painted PNG textures into GPU assets.
-pub fn init_fjord_textures(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+/// PreStartup system decoding all bundled painted PNG textures and the Latin-1 UI font into GPU assets.
+pub fn init_fjord_textures(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut fonts: ResMut<Assets<Font>>,
+) {
+    // Replace Bevy's ASCII-only default font with Inter-Regular (full French/Latin-1 accents).
+    if let Ok(inter_font) = Font::try_from_bytes(INTER_REGULAR_TTF.to_vec()) {
+        fonts.insert(&Handle::default(), inter_font);
+    }
+
     let fjord_map = images.add(decode_png(FJORD_MAP_PNG));
     let match3_bg = images.add(decode_png(MATCH3_BG_PNG));
+    let logo = images.add(decode_png(WYRDSTONE_LOGO_PNG));
 
     let mut buildings = HashMap::new();
     buildings.insert("great_hall".to_string(), images.add(decode_png(BLDG_GREAT_HALL_PNG)));
@@ -73,6 +95,7 @@ pub fn init_fjord_textures(mut commands: Commands, mut images: ResMut<Assets<Ima
     commands.insert_resource(FjordTextures {
         fjord_map,
         match3_bg,
+        logo,
         buildings,
         portraits,
     });
