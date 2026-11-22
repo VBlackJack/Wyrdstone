@@ -67,6 +67,7 @@ pub fn run_app() {
                 audio::init_sound_bank,
             ),
         )
+        .add_systems(Startup, enter_title_after_boot)
         .add_systems(Update, tick_energy_regen)
         // Title screen
         .add_systems(OnEnter(AppState::Title), title_ui::setup_title_ui)
@@ -109,4 +110,8 @@ pub fn run_app() {
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
+}
+
+fn enter_title_after_boot(mut next_state: ResMut<NextState<AppState>>) {
+    next_state.set(AppState::Title);
 }

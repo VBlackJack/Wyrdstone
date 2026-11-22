@@ -29,6 +29,7 @@ use wyrdstone_core::{
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AppState {
     #[default]
+    Boot,
     Title,
     FjordCity,
     Match3,
