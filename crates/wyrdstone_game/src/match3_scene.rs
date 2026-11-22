@@ -74,6 +74,7 @@ pub struct FloatingScore {
 #[derive(Component)]
 pub enum Match3UiAction {
     Retreat,
+    ToggleHelp,
     SelectTool(ActiveTool),
 }
 
@@ -696,6 +697,28 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                     right
                         .spawn((
                             Button,
+                            Match3UiAction::ToggleHelp,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderRadius::all(Val::Px(6.0)),
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new(i18n.t("city.panel.help.button")),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                        });
+
+                    right
+                        .spawn((
+                            Button,
                             Match3UiAction::Retreat,
                             Node {
                                 padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
@@ -813,6 +836,98 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                         }
                     });
             });
+
+            // Optional Wyrdstone Guide overlay inside Match-3
+            if ctx.help_modal_open {
+                root.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),
+                ))
+                .with_children(|bg| {
+                    bg.spawn((
+                        Node {
+                            width: Val::Px(540.0),
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(Val::Px(22.0)),
+                            row_gap: Val::Px(10.0),
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_DARK),
+                        BorderColor(COLOR_ACCENT_GOLD),
+                        BorderRadius::all(Val::Px(14.0)),
+                    ))
+                    .with_children(|card| {
+                        card.spawn(Node {
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        })
+                        .with_children(|hdr| {
+                            hdr.spawn((
+                                Text::new(i18n.t("city.panel.help.title")),
+                                TextFont {
+                                    font_size: FONT_HEADING,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                            hdr.spawn((
+                                Button,
+                                Match3UiAction::ToggleHelp,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(COLOR_ACCENT_CRIMSON),
+                                BorderRadius::all(Val::Px(6.0)),
+                            ))
+                            .with_children(|btn| {
+                                btn.spawn((
+                                    Text::new(i18n.t("city.panel.amulets.close")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_PRIMARY),
+                                ));
+                            });
+                        });
+
+                        for (t_key, b_key) in [
+                            ("city.panel.help.boosters_title", "city.panel.help.boosters_body"),
+                            ("city.panel.help.obstacles_title", "city.panel.help.obstacles_body"),
+                            ("city.panel.help.village_title", "city.panel.help.village_body"),
+                        ] {
+                            card.spawn((
+                                Text::new(i18n.t(t_key)),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                            card.spawn((
+                                Text::new(i18n.t(b_key)),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                        }
+                    });
+                });
+            }
         });
 }
 
@@ -831,8 +946,13 @@ pub fn handle_match3_hud_buttons(
             Match3UiAction::Retreat => {
                 ctx.active_session = None;
                 ctx.armed_tool = None;
+                ctx.help_modal_open = false;
                 next_state.set(AppState::FjordCity);
                 return;
+            }
+            Match3UiAction::ToggleHelp => {
+                ctx.help_modal_open = !ctx.help_modal_open;
+                input_state.dirty_hud = true;
             }
             Match3UiAction::SelectTool(tool) => {
                 if !input_state.is_idle() || ctx.city.tools.count(tool) == 0 {
@@ -881,7 +1001,7 @@ pub fn handle_board_pointer_input(
     sound_bank: Res<SoundBank>,
     mut input_state: ResMut<Match3InputState>,
 ) {
-    if !input_state.is_idle() {
+    if !input_state.is_idle() || ctx.help_modal_open {
         return;
     }
     let Ok(window) = windows.get_single() else {
@@ -1435,7 +1555,12 @@ fn check_level_finished(ctx: &mut GameContext, next_state: &mut NextState<AppSta
         ctx.last_score = score;
         if outcome == LevelOutcome::Victory {
             ctx.city.record_level_victory(&building_id, &rewards);
+            let collections = ctx.data.collections.clone();
+            ctx.last_discovered_relic_key = ctx.city.discover_next_relic(&collections);
+        } else {
+            ctx.last_discovered_relic_key = None;
         }
+        ctx.help_modal_open = false;
         ctx.persist();
         next_state.set(AppState::LevelResult);
     }

@@ -42,6 +42,9 @@ pub enum CityAction {
     UpgradeBuilding(String),
     ClaimQuest(String),
     ToggleAmuletsModal,
+    ToggleCollectionsModal,
+    ToggleHelpModal,
+    ClaimCollection(String),
     CraftOrEquipAmulet(String),
     ToggleLanguage,
     ToggleAudio,
@@ -192,9 +195,20 @@ fn spawn_city_tree(
                 // Utility buttons
                 bar.spawn(Node {
                     column_gap: Val::Px(6.0),
+                    flex_wrap: FlexWrap::Wrap,
                     ..default()
                 })
                 .with_children(|btns| {
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.collections.button"),
+                        CityAction::ToggleCollectionsModal,
+                        if ctx.city.has_any_claimable_collection(&ctx.data.collections) {
+                            COLOR_ACCENT_GREEN
+                        } else {
+                            COLOR_PANEL_CARD
+                        },
+                    );
                     spawn_small_button(
                         btns,
                         i18n.t("city.panel.amulets.button"),
@@ -204,6 +218,12 @@ fn spawn_city_tree(
                         } else {
                             COLOR_PANEL_CARD
                         },
+                    );
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.help.button"),
+                        CityAction::ToggleHelpModal,
+                        COLOR_PANEL_CARD,
                     );
                     spawn_small_button(
                         btns,
@@ -419,9 +439,13 @@ fn spawn_city_tree(
                 });
             });
 
-            // 4. Optional Nordic Amulets Modal Overlay
+            // 4. Optional Modal Overlays (Amulets, Relic Collections, Wyrdstone Guide)
             if ctx.amulets_modal_open {
                 spawn_amulets_modal(root, ctx);
+            } else if ctx.collections_modal_open {
+                spawn_collections_modal(root, ctx);
+            } else if ctx.help_modal_open {
+                spawn_help_modal(root, ctx);
             }
         });
 }
@@ -1022,6 +1046,238 @@ fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
     });
 }
 
+fn spawn_collections_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+    let i18n = &ctx.data.i18n;
+    root.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),
+    ))
+    .with_children(|backdrop| {
+        backdrop
+            .spawn((
+                Node {
+                    width: Val::Px(580.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(22.0)),
+                    row_gap: Val::Px(12.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(COLOR_PANEL_DARK),
+                BorderColor(COLOR_ACCENT_GOLD),
+                BorderRadius::all(Val::Px(14.0)),
+            ))
+            .with_children(|modal| {
+                modal
+                    .spawn(Node {
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|hdr| {
+                        hdr.spawn((
+                            Text::new(i18n.t("city.panel.collections.title")),
+                            TextFont {
+                                font_size: FONT_HEADING,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                        spawn_small_button(
+                            hdr,
+                            i18n.t("city.panel.amulets.close"),
+                            CityAction::ToggleCollectionsModal,
+                            COLOR_ACCENT_CRIMSON,
+                        );
+                    });
+
+                for col in &ctx.data.collections {
+                    let found = ctx.city.collection_found_count(col);
+                    let total = col.relic_ids.len();
+                    let ready = ctx.city.is_collection_ready(col);
+                    let claimed = ctx.city.claimed_collections.contains(&col.id);
+
+                    modal
+                        .spawn((
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                padding: UiRect::all(Val::Px(12.0)),
+                                row_gap: Val::Px(6.0),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderColor(if ready {
+                                COLOR_ACCENT_GREEN
+                            } else if claimed {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_BORDER
+                            }),
+                            BorderRadius::all(Val::Px(10.0)),
+                        ))
+                        .with_children(|card| {
+                            card.spawn(Node {
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            })
+                            .with_children(|row| {
+                                row.spawn((
+                                    Text::new(format!(
+                                        "{}  ({})",
+                                        i18n.t(&col.name_key),
+                                        i18n.t_fmt(
+                                            "city.panel.collections.progress",
+                                            &[
+                                                ("found", found.to_string()),
+                                                ("total", total.to_string()),
+                                            ],
+                                        )
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_BODY,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+
+                                if ready {
+                                    spawn_small_button(
+                                        row,
+                                        i18n.t("city.panel.collections.claim"),
+                                        CityAction::ClaimCollection(col.id.clone()),
+                                        COLOR_ACCENT_GREEN,
+                                    );
+                                } else if claimed {
+                                    row.spawn((
+                                        Text::new(i18n.t("city.panel.collections.claimed")),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_GREEN),
+                                    ));
+                                }
+                            });
+
+                            // Individual relic pills
+                            card.spawn(Node {
+                                flex_wrap: FlexWrap::Wrap,
+                                column_gap: Val::Px(8.0),
+                                row_gap: Val::Px(4.0),
+                                ..default()
+                            })
+                            .with_children(|pills| {
+                                for (rid, rkey) in
+                                    col.relic_ids.iter().zip(col.relic_name_keys.iter())
+                                {
+                                    let owned = ctx.city.found_relics.contains(rid);
+                                    spawn_resource_pill(
+                                        pills,
+                                        i18n.t(rkey),
+                                        if owned {
+                                            COLOR_ACCENT_GOLD
+                                        } else {
+                                            COLOR_TEXT_MUTED
+                                        },
+                                    );
+                                }
+                            });
+                        });
+                }
+            });
+    });
+}
+
+fn spawn_help_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+    let i18n = &ctx.data.i18n;
+    root.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),
+    ))
+    .with_children(|backdrop| {
+        backdrop
+            .spawn((
+                Node {
+                    width: Val::Px(560.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(22.0)),
+                    row_gap: Val::Px(10.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(COLOR_PANEL_DARK),
+                BorderColor(COLOR_ACCENT_GOLD),
+                BorderRadius::all(Val::Px(14.0)),
+            ))
+            .with_children(|card| {
+                card.spawn(Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|hdr| {
+                    hdr.spawn((
+                        Text::new(i18n.t("city.panel.help.title")),
+                        TextFont {
+                            font_size: FONT_HEADING,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    spawn_small_button(
+                        hdr,
+                        i18n.t("city.panel.amulets.close"),
+                        CityAction::ToggleHelpModal,
+                        COLOR_ACCENT_CRIMSON,
+                    );
+                });
+
+                for (t_key, b_key) in [
+                    ("city.panel.help.boosters_title", "city.panel.help.boosters_body"),
+                    ("city.panel.help.obstacles_title", "city.panel.help.obstacles_body"),
+                    ("city.panel.help.village_title", "city.panel.help.village_body"),
+                ] {
+                    card.spawn((
+                        Text::new(i18n.t(t_key)),
+                        TextFont {
+                            font_size: FONT_BODY,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    card.spawn((
+                        Text::new(i18n.t(b_key)),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_PRIMARY),
+                    ));
+                }
+            });
+    });
+}
+
 fn spawn_resource_pill(parent: &mut ChildBuilder, text: &str, text_color: Color) {
     parent
         .spawn((
@@ -1220,8 +1476,39 @@ pub fn handle_city_buttons(
             }
             CityAction::ToggleAmuletsModal => {
                 ctx.amulets_modal_open = !ctx.amulets_modal_open;
+                ctx.collections_modal_open = false;
+                ctx.help_modal_open = false;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
+            }
+            CityAction::ToggleCollectionsModal => {
+                ctx.collections_modal_open = !ctx.collections_modal_open;
+                ctx.amulets_modal_open = false;
+                ctx.help_modal_open = false;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
+            }
+            CityAction::ToggleHelpModal => {
+                ctx.help_modal_open = !ctx.help_modal_open;
+                ctx.amulets_modal_open = false;
+                ctx.collections_modal_open = false;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
+            }
+            CityAction::ClaimCollection(col_id) => {
+                if let Some(col) = ctx
+                    .data
+                    .collections
+                    .iter()
+                    .find(|c| c.id == *col_id)
+                    .cloned()
+                {
+                    if ctx.city.try_claim_collection(&col) {
+                        ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                        rebuild = true;
+                    }
+                }
             }
             CityAction::CraftOrEquipAmulet(amulet_id) => {
                 if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {

@@ -17,14 +17,14 @@
 //! Bundled game data loader and persistent JSON save schema.
 
 use crate::balance::BalanceConfig;
-use crate::city::{AmuletDef, BuildingDef, CityState, QuestDef};
+use crate::city::{AmuletDef, BuildingDef, CityState, CollectionDef, QuestDef};
 use crate::i18n::{I18nCatalog, Language};
 use crate::level::LevelDef;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Current save format version for forward-safe migrations.
-pub const SAVE_SCHEMA_VERSION: u32 = 2;
+pub const SAVE_SCHEMA_VERSION: u32 = 3;
 
 const BUNDLED_EN_JSON: &str = include_str!("../../../assets/locales/en.json");
 const BUNDLED_FR_JSON: &str = include_str!("../../../assets/locales/fr.json");
@@ -33,6 +33,7 @@ const BUNDLED_BUILDINGS_RON: &str = include_str!("../../../assets/data/buildings
 const BUNDLED_LEVELS_RON: &str = include_str!("../../../assets/data/levels.ron");
 const BUNDLED_QUESTS_RON: &str = include_str!("../../../assets/data/quests.ron");
 const BUNDLED_AMULETS_RON: &str = include_str!("../../../assets/data/amulets.ron");
+const BUNDLED_COLLECTIONS_RON: &str = include_str!("../../../assets/data/collections.ron");
 
 /// All static game definitions loaded once at startup.
 #[derive(Debug, Clone)]
@@ -42,6 +43,7 @@ pub struct GameDataBundle {
     pub levels: Vec<LevelDef>,
     pub quests: Vec<QuestDef>,
     pub amulets: Vec<AmuletDef>,
+    pub collections: Vec<CollectionDef>,
     pub i18n: I18nCatalog,
 }
 
@@ -58,6 +60,8 @@ impl GameDataBundle {
             .map_err(|e| format!("Failed to parse quests.ron: {e}"))?;
         let amulets: Vec<AmuletDef> = ron::from_str(BUNDLED_AMULETS_RON)
             .map_err(|e| format!("Failed to parse amulets.ron: {e}"))?;
+        let collections: Vec<CollectionDef> = ron::from_str(BUNDLED_COLLECTIONS_RON)
+            .map_err(|e| format!("Failed to parse collections.ron: {e}"))?;
         let i18n = I18nCatalog::from_json_strs(BUNDLED_EN_JSON, BUNDLED_FR_JSON, initial_language)
             .map_err(|e| format!("Failed to parse locales: {e}"))?;
 
@@ -67,6 +71,7 @@ impl GameDataBundle {
             levels,
             quests,
             amulets,
+            collections,
             i18n,
         })
     }

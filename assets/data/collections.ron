@@ -1,0 +1,27 @@
+// Copyright 2026 Julien Bombled - Apache 2.0
+[
+    CollectionDef(
+        id: "col_midgard",
+        name_key: "collection.midgard.name",
+        relic_ids: ["relic_horn", "relic_draupnir", "relic_brooch"],
+        relic_name_keys: ["relic.horn.name", "relic.draupnir.name", "relic.brooch.name"],
+        reward_resources: ResourceBundle(wood: 120, stone: 100, gold: 120, mead: 25),
+        reward_tools: ToolInventory(mjolnir: 2, surtr_ember: 0, loki_shuffle: 1, thor_bolt: 0, bifrost_prism: 0, drakkar_charge: 0),
+    ),
+    CollectionDef(
+        id: "col_nidavellir",
+        name_key: "collection.nidavellir.name",
+        relic_ids: ["relic_hammer", "relic_gleipnir", "relic_anvil"],
+        relic_name_keys: ["relic.hammer.name", "relic.gleipnir.name", "relic.anvil.name"],
+        reward_resources: ResourceBundle(wood: 100, stone: 150, gold: 160, mead: 30),
+        reward_tools: ToolInventory(mjolnir: 0, surtr_ember: 2, loki_shuffle: 0, thor_bolt: 2, bifrost_prism: 0, drakkar_charge: 0),
+    ),
+    CollectionDef(
+        id: "col_asgard",
+        name_key: "collection.asgard.name",
+        relic_ids: ["relic_gungnir", "relic_gjallarhorn", "relic_bifrost_crown"],
+        relic_name_keys: ["relic.gungnir.name", "relic.gjallarhorn.name", "relic.bifrost_crown.name"],
+        reward_resources: ResourceBundle(wood: 150, stone: 150, gold: 220, mead: 50),
+        reward_tools: ToolInventory(mjolnir: 0, surtr_ember: 0, loki_shuffle: 0, thor_bolt: 0, bifrost_prism: 2, drakkar_charge: 2),
+    ),
+]

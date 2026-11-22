@@ -150,6 +150,19 @@ pub fn setup_result_ui(
                         },
                         TextColor(COLOR_TEXT_PRIMARY),
                     ));
+                    if let Some(relic_key) = &ctx.last_discovered_relic_key {
+                        card.spawn((
+                            Text::new(i18n.t_fmt(
+                                "result.relic.discovered",
+                                &[("relic", i18n.t(relic_key).to_string())],
+                            )),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_TEAL),
+                        ));
+                    }
                 }
 
                 card.spawn(Node {

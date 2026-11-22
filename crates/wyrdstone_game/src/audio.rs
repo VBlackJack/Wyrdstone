@@ -56,6 +56,8 @@ pub struct SoundBank {
     pub upgrade: Handle<AudioSource>,
     pub victory: Handle<AudioSource>,
     pub defeat: Handle<AudioSource>,
+    pub bgm_fjord: Handle<AudioSource>,
+    pub bgm_match3: Handle<AudioSource>,
 }
 
 /// Synthesizes all Nordic SFX and ambient music at startup and begins the BGM loop.
@@ -86,6 +88,7 @@ pub fn init_sound_bank(mut commands: Commands, mut audio_assets: ResMut<Assets<A
         synth_arpeggio(0.65, &[293.66, 261.63, 220.0, 174.61]),
     );
     let bgm_fjord = add_wav(&mut audio_assets, synth_nordic_ambient_loop(8.0));
+    let bgm_match3 = add_wav(&mut audio_assets, synth_nordic_battle_loop(6.4));
 
     commands.spawn((
         BgmTrack,
@@ -107,7 +110,47 @@ pub fn init_sound_bank(mut commands: Commands, mut audio_assets: ResMut<Assets<A
         upgrade,
         victory,
         defeat,
+        bgm_fjord,
+        bgm_match3,
     });
+}
+
+/// Switches background music to the rhythmic Norse drum track when entering Match-3.
+pub fn switch_bgm_to_match3(
+    mut commands: Commands,
+    bank: Res<SoundBank>,
+    tracks: Query<Entity, With<BgmTrack>>,
+) {
+    replace_bgm(&mut commands, &tracks, bank.bgm_match3.clone(), bank.muted);
+}
+
+/// Restores the calm Fjord ambient loop when leaving Match-3.
+pub fn switch_bgm_to_fjord(
+    mut commands: Commands,
+    bank: Res<SoundBank>,
+    tracks: Query<Entity, With<BgmTrack>>,
+) {
+    replace_bgm(&mut commands, &tracks, bank.bgm_fjord.clone(), bank.muted);
+}
+
+fn replace_bgm(
+    commands: &mut Commands,
+    tracks: &Query<Entity, With<BgmTrack>>,
+    handle: Handle<AudioSource>,
+    muted: bool,
+) {
+    for entity in tracks {
+        commands.entity(entity).despawn_recursive();
+    }
+    commands.spawn((
+        BgmTrack,
+        AudioPlayer::new(handle),
+        PlaybackSettings {
+            mode: PlaybackMode::Loop,
+            volume: Volume::new(if muted { 0.0 } else { BGM_VOLUME }),
+            ..default()
+        },
+    ));
 }
 
 /// Plays a one-shot sound effect if audio is not muted.
@@ -264,6 +307,54 @@ fn synth_nordic_ambient_loop(duration_secs: f32) -> Vec<f32> {
             }
         }
         out.push(((drone + harp) * loop_fade).clamp(-0.9, 0.9));
+    }
+    out
+}
+
+fn synth_nordic_battle_loop(duration_secs: f32) -> Vec<f32> {
+    let n = (duration_secs * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    let beat_secs = 0.4f32; // 150 BPM driving Norse rhythm
+    let melody: [f32; 16] = [
+        293.66, 349.23, 440.00, 392.00, 293.66, 440.00, 523.25, 440.00,
+        349.23, 392.00, 440.00, 523.25, 587.33, 523.25, 440.00, 392.00,
+    ];
+
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let beat_idx = (t / beat_secs) as usize;
+        let beat_t = t - (beat_idx as f32) * beat_secs;
+
+        // Deep war drum on strong beats (0, 2, 4, 6...) + lighter tom on offbeats.
+        let strong = beat_idx % 2 == 0;
+        let drum_freq = if strong {
+            88.0 - 38.0 * (beat_t / beat_secs).min(1.0)
+        } else {
+            135.0 - 45.0 * (beat_t / beat_secs).min(1.0)
+        };
+        let drum_env = (1.0 - (beat_t / 0.22).min(1.0)).powf(2.2);
+        let drum = (TAU * drum_freq * beat_t).sin() * drum_env * if strong { 0.42 } else { 0.22 };
+
+        // Energetic D-minor pentatonic harp arpeggio.
+        let note_hz = melody[beat_idx % melody.len()];
+        let harp_env = (1.0 - (beat_t / beat_secs).min(1.0)).powf(1.8) * (beat_t * 35.0).min(1.0);
+        let harp = ((TAU * note_hz * beat_t).sin() * 0.65
+            + (TAU * note_hz * 2.0 * beat_t).sin() * 0.20)
+            * harp_env
+            * 0.28;
+
+        // Subtle warm D2 bass drone.
+        let bass = (TAU * 73.42 * t).sin() * 0.14;
+
+        let edge = 0.08;
+        let fade = if t < edge {
+            t / edge
+        } else if t > duration_secs - edge {
+            (duration_secs - t) / edge
+        } else {
+            1.0
+        };
+        out.push(((drum + harp + bass) * fade).clamp(-0.9, 0.9));
     }
     out
 }

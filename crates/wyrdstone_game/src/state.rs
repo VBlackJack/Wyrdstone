@@ -44,12 +44,16 @@ pub struct GameContext {
     pub has_existing_save: bool,
     pub selected_building_id: String,
     pub amulets_modal_open: bool,
+    pub collections_modal_open: bool,
+    pub help_modal_open: bool,
+    pub confirm_reset: bool,
     pub active_session: Option<LevelSession>,
     pub active_level_id: Option<String>,
     pub armed_tool: Option<ActiveTool>,
     pub last_outcome: Option<LevelOutcome>,
     pub last_rewards: ResourceBundle,
     pub last_score: u32,
+    pub last_discovered_relic_key: Option<String>,
     pub status_notice_key: Option<String>,
     pub celebration_message: Option<String>,
     pub celebration_timer_secs: f32,
@@ -89,12 +93,16 @@ impl GameContext {
             has_existing_save,
             selected_building_id: default_bldg,
             amulets_modal_open: false,
+            collections_modal_open: false,
+            help_modal_open: false,
+            confirm_reset: false,
             active_session: None,
             active_level_id: None,
             armed_tool: None,
             last_outcome: None,
             last_rewards: ResourceBundle::default(),
             last_score: 0,
+            last_discovered_relic_key: None,
             status_notice_key: None,
             celebration_message: None,
             celebration_timer_secs: 0.0,
@@ -115,6 +123,26 @@ impl GameContext {
             };
             let _ = snapshot.save_to_path(path);
         }
+    }
+
+    /// Resets player progression to a brand-new Saga and persists immediately.
+    pub fn reset_saga(&mut self) {
+        self.city = CityState::new(&self.data.balance);
+        self.selected_building_id = self
+            .data
+            .buildings
+            .first()
+            .map(|b| b.id.clone())
+            .unwrap_or_else(|| "great_hall".to_string());
+        self.amulets_modal_open = false;
+        self.collections_modal_open = false;
+        self.help_modal_open = false;
+        self.confirm_reset = false;
+        self.active_session = None;
+        self.last_discovered_relic_key = None;
+        self.celebration_message = None;
+        self.celebration_timer_secs = 0.0;
+        self.persist();
     }
 
     /// Launches a Match-3 level by ID, spending endurance and applying amulet + village bonuses.

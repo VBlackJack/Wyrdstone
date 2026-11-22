@@ -126,6 +126,17 @@ fn default_speaker() -> String {
     "jarl".to_string()
 }
 
+/// Static Nine Realms relic collection set loaded from `assets/data/collections.ron`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionDef {
+    pub id: String,
+    pub name_key: String,
+    pub relic_ids: Vec<String>,
+    pub relic_name_keys: Vec<String>,
+    pub reward_resources: ResourceBundle,
+    pub reward_tools: ToolInventory,
+}
+
 /// Player inventory of the six active Match-3 tools.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInventory {
@@ -150,6 +161,15 @@ impl ToolInventory {
             ActiveTool::BifrostPrism => self.bifrost_prism,
             ActiveTool::DrakkarCharge => self.drakkar_charge,
         }
+    }
+
+    pub fn add(&mut self, other: &ToolInventory) {
+        self.mjolnir += other.mjolnir;
+        self.surtr_ember += other.surtr_ember;
+        self.loki_shuffle += other.loki_shuffle;
+        self.thor_bolt += other.thor_bolt;
+        self.bifrost_prism += other.bifrost_prism;
+        self.drakkar_charge += other.drakkar_charge;
     }
 
     pub fn consume(&mut self, tool: ActiveTool) -> bool {
@@ -184,6 +204,10 @@ pub struct CityState {
     pub crafted_amulets: HashSet<String>,
     #[serde(default)]
     pub equipped_amulet: Option<String>,
+    #[serde(default)]
+    pub found_relics: HashSet<String>,
+    #[serde(default)]
+    pub claimed_collections: HashSet<String>,
 }
 
 impl CityState {
@@ -211,6 +235,8 @@ impl CityState {
             claimed_quests: HashSet::new(),
             crafted_amulets: HashSet::new(),
             equipped_amulet: None,
+            found_relics: HashSet::new(),
+            claimed_collections: HashSet::new(),
         }
     }
 
@@ -377,6 +403,50 @@ impl CityState {
         self.claimed_quests.insert(quest.id.clone());
         self.resources.add(&quest.reward);
         self.glory += 15;
+        true
+    }
+
+    /// Discovers the next undiscovered relic across all collections, returning its i18n name key.
+    pub fn discover_next_relic(&mut self, collections: &[CollectionDef]) -> Option<String> {
+        for col in collections {
+            for (idx, rid) in col.relic_ids.iter().enumerate() {
+                if !self.found_relics.contains(rid) {
+                    self.found_relics.insert(rid.clone());
+                    return col.relic_name_keys.get(idx).cloned();
+                }
+            }
+        }
+        None
+    }
+
+    /// Counts how many relics in a collection have been discovered.
+    pub fn collection_found_count(&self, col: &CollectionDef) -> usize {
+        col.relic_ids
+            .iter()
+            .filter(|rid| self.found_relics.contains(*rid))
+            .count()
+    }
+
+    /// Returns true if every relic in a collection is found and the chest is not yet claimed.
+    pub fn is_collection_ready(&self, col: &CollectionDef) -> bool {
+        !self.claimed_collections.contains(&col.id)
+            && self.collection_found_count(col) == col.relic_ids.len()
+    }
+
+    /// Returns true if at least one collection chest is ready to claim.
+    pub fn has_any_claimable_collection(&self, collections: &[CollectionDef]) -> bool {
+        collections.iter().any(|c| self.is_collection_ready(c))
+    }
+
+    /// Claims a completed Nine Realms collection chest (resources + active tools + glory).
+    pub fn try_claim_collection(&mut self, col: &CollectionDef) -> bool {
+        if !self.is_collection_ready(col) {
+            return false;
+        }
+        self.claimed_collections.insert(col.id.clone());
+        self.resources.add(&col.reward_resources);
+        self.tools.add(&col.reward_tools);
+        self.glory += 40;
         true
     }
 }

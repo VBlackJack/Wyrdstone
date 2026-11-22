@@ -63,6 +63,23 @@ fn bundled_data_loads_and_i18n_has_full_parity() {
         assert_ne!(data.i18n.t(&a.name_key), a.name_key);
         assert_ne!(data.i18n.t(&a.desc_key), a.desc_key);
     }
+
+    // Verify all relic collections resolve and can be completed + claimed.
+    let mut city = CityState::new(&data.balance);
+    for col in &data.collections {
+        assert_ne!(data.i18n.t(&col.name_key), col.name_key);
+        assert_eq!(col.relic_ids.len(), col.relic_name_keys.len());
+        for rkey in &col.relic_name_keys {
+            assert_ne!(data.i18n.t(rkey), rkey);
+        }
+    }
+    let first_col = &data.collections[0];
+    for _ in 0..first_col.relic_ids.len() {
+        assert!(city.discover_next_relic(&data.collections).is_some());
+    }
+    assert!(city.is_collection_ready(first_col));
+    assert!(city.try_claim_collection(first_col));
+    assert!(!city.is_collection_ready(first_col));
 }
 
 #[test]

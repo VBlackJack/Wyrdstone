@@ -84,7 +84,10 @@ pub fn run_app() {
         )
         .add_systems(OnExit(AppState::FjordCity), city_ui::cleanup_city_ui)
         // Match-3 board scene
-        .add_systems(OnEnter(AppState::Match3), match3_scene::setup_match3_scene)
+        .add_systems(
+            OnEnter(AppState::Match3),
+            (match3_scene::setup_match3_scene, audio::switch_bgm_to_match3),
+        )
         .add_systems(
             Update,
             (
@@ -97,7 +100,10 @@ pub fn run_app() {
                 .chain()
                 .run_if(in_state(AppState::Match3)),
         )
-        .add_systems(OnExit(AppState::Match3), match3_scene::cleanup_match3_scene)
+        .add_systems(
+            OnExit(AppState::Match3),
+            (match3_scene::cleanup_match3_scene, audio::switch_bgm_to_fjord),
+        )
         // Level Result modal
         .add_systems(OnEnter(AppState::LevelResult), result_ui::setup_result_ui)
         .add_systems(

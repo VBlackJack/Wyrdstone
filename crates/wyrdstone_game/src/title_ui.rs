@@ -28,6 +28,7 @@ pub struct TitleRoot;
 #[derive(Component)]
 pub enum TitleAction {
     EnterFjord,
+    NewSaga,
     ToggleLanguage,
     ToggleAudio,
 }
@@ -167,29 +168,51 @@ fn spawn_title_tree(
                         ));
                     });
 
-                // Utility buttons row (Language + Audio)
+                // Utility buttons row (Language + Audio + Optional New Saga)
                 parent
                     .spawn(Node {
                         column_gap: Val::Px(12.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::Center,
                         ..default()
                     })
                     .with_children(|row| {
-                        for (label, act) in [
-                            (i18n.t("app.title.button.language"), TitleAction::ToggleLanguage),
-                            (sound_label, TitleAction::ToggleAudio),
-                        ] {
+                        let mut util_btns: Vec<(&str, TitleAction, Color)> = vec![
+                            (
+                                i18n.t("app.title.button.language"),
+                                TitleAction::ToggleLanguage,
+                                Color::srgba(0.10, 0.14, 0.21, 0.90),
+                            ),
+                            (
+                                sound_label,
+                                TitleAction::ToggleAudio,
+                                Color::srgba(0.10, 0.14, 0.21, 0.90),
+                            ),
+                        ];
+                        if ctx.has_existing_save {
+                            let (lbl, col) = if ctx.confirm_reset {
+                                (i18n.t("app.title.button.confirm_reset"), COLOR_ACCENT_CRIMSON)
+                            } else {
+                                (
+                                    i18n.t("app.title.button.new_saga"),
+                                    Color::srgba(0.24, 0.12, 0.14, 0.92),
+                                )
+                            };
+                            util_btns.push((lbl, TitleAction::NewSaga, col));
+                        }
+                        for (label, act, bg_col) in util_btns {
                             row.spawn((
                                 Button,
                                 act,
                                 Node {
-                                    width: Val::Px(170.0),
+                                    width: Val::Px(176.0),
                                     height: Val::Px(42.0),
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
                                     border: UiRect::all(Val::Px(1.5)),
                                     ..default()
                                 },
-                                BackgroundColor(Color::srgba(0.10, 0.14, 0.21, 0.90)),
+                                BackgroundColor(bg_col),
                                 BorderColor(COLOR_PANEL_BORDER),
                                 BorderRadius::all(Val::Px(8.0)),
                             ))
@@ -225,9 +248,24 @@ pub fn handle_title_buttons(
         match *interaction {
             Interaction::Pressed => match action {
                 TitleAction::EnterFjord => {
+                    ctx.confirm_reset = false;
                     next_state.set(AppState::FjordCity);
                 }
+                TitleAction::NewSaga => {
+                    if ctx.confirm_reset {
+                        ctx.reset_saga();
+                        next_state.set(AppState::FjordCity);
+                    } else {
+                        ctx.confirm_reset = true;
+                        for entity in &roots {
+                            commands.entity(entity).despawn_recursive();
+                        }
+                        spawn_title_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
+                    }
+                    return;
+                }
                 TitleAction::ToggleLanguage => {
+                    ctx.confirm_reset = false;
                     ctx.data.i18n.toggle_language();
                     ctx.persist();
                     for entity in &roots {
@@ -237,6 +275,7 @@ pub fn handle_title_buttons(
                     return;
                 }
                 TitleAction::ToggleAudio => {
+                    ctx.confirm_reset = false;
                     toggle_mute(&mut sound_bank, &mut bgm_sinks);
                     for entity in &roots {
                         commands.entity(entity).despawn_recursive();
@@ -247,12 +286,20 @@ pub fn handle_title_buttons(
             },
             Interaction::Hovered => match action {
                 TitleAction::EnterFjord => *bg = BackgroundColor(COLOR_ACCENT_GOLD_HOVER),
+                TitleAction::NewSaga => *bg = BackgroundColor(COLOR_ACCENT_CRIMSON),
                 TitleAction::ToggleLanguage | TitleAction::ToggleAudio => {
                     *bg = BackgroundColor(COLOR_ACCENT_TEAL)
                 }
             },
             Interaction::None => match action {
                 TitleAction::EnterFjord => *bg = BackgroundColor(COLOR_ACCENT_GOLD),
+                TitleAction::NewSaga => {
+                    *bg = BackgroundColor(if ctx.confirm_reset {
+                        COLOR_ACCENT_CRIMSON
+                    } else {
+                        Color::srgba(0.24, 0.12, 0.14, 0.92)
+                    })
+                }
                 TitleAction::ToggleLanguage | TitleAction::ToggleAudio => {
                     *bg = BackgroundColor(Color::srgba(0.10, 0.14, 0.21, 0.90))
                 }
