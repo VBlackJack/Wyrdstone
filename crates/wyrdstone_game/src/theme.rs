@@ -40,6 +40,7 @@ pub const Z_CELL_BG: f32 = 1.0;
 pub const Z_ICE_OVERLAY: f32 = 2.0;
 pub const Z_RUNE_SPRITE: f32 = 3.0;
 pub const Z_BOOSTER_BADGE: f32 = 4.0;
+pub const Z_ICE_TOP_FROST: f32 = 4.5;
 pub const Z_CHAIN_OVERLAY: f32 = 5.0;
 pub const Z_SELECTION_RING: f32 = 6.0;
 

@@ -170,7 +170,7 @@ pub fn setup_match3_scene(
         }
     }
 
-    spawn_match3_hud(&mut commands, &ctx);
+    spawn_match3_hud(&mut commands, &ctx, &fjord_art);
     commands.insert_resource(input_state);
 }
 
@@ -317,21 +317,30 @@ fn spawn_board_sprites(
                 Transform::from_xyz(world.x, world.y, Z_CELL_BG),
             ));
 
-            // Ice plate layer
+            // Ice plate layer (underneath) + crisp translucent frost sheen (over the rune)
             if cell.ice_layers > 0 {
-                let ice_tex = if cell.ice_layers >= 2 {
-                    textures.ice_layer2.clone()
+                let (ice_under, ice_over) = if cell.ice_layers >= 2 {
+                    (textures.ice_layer2.clone(), textures.ice_top_layer2.clone())
                 } else {
-                    textures.ice_layer1.clone()
+                    (textures.ice_layer1.clone(), textures.ice_top_layer1.clone())
                 };
                 commands.spawn((
                     Match3Entity,
                     Sprite {
-                        image: ice_tex,
-                        custom_size: Some(cell_size),
+                        image: ice_under,
+                        custom_size: Some(Vec2::splat(layout.cell_step)),
                         ..default()
                     },
                     Transform::from_xyz(world.x, world.y, Z_ICE_OVERLAY),
+                ));
+                commands.spawn((
+                    Match3Entity,
+                    Sprite {
+                        image: ice_over,
+                        custom_size: Some(cell_size),
+                        ..default()
+                    },
+                    Transform::from_xyz(world.x, world.y, Z_ICE_TOP_FROST),
                 ));
             }
 
@@ -527,7 +536,7 @@ fn spawn_floating_score(
     ));
 }
 
-fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
+fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext, fjord_art: &FjordTextures) {
     let i18n = &ctx.data.i18n;
     let Some(session) = &ctx.active_session else {
         return;
@@ -811,7 +820,9 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                                 Button,
                                 Match3UiAction::SelectTool(tool),
                                 Node {
-                                    padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                    column_gap: Val::Px(8.0),
+                                    align_items: AlignItems::Center,
                                     border: UiRect::all(Val::Px(1.5)),
                                     ..default()
                                 },
@@ -824,6 +835,25 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                                 BorderRadius::all(Val::Px(8.0)),
                             ))
                             .with_children(|btn| {
+                                if let Some(icon) = fjord_art.tool_icon(tool) {
+                                    btn.spawn((
+                                        ImageNode {
+                                            image: icon,
+                                            color: if count > 0 {
+                                                Color::WHITE
+                                            } else {
+                                                Color::srgba(0.55, 0.55, 0.60, 0.7)
+                                            },
+                                            ..default()
+                                        },
+                                        Node {
+                                            width: Val::Px(34.0),
+                                            height: Val::Px(34.0),
+                                            ..default()
+                                        },
+                                        BorderRadius::all(Val::Px(6.0)),
+                                    ));
+                                }
                                 btn.spawn((
                                     Text::new(i18n.t_fmt(key, &[("count", count.to_string())])),
                                     TextFont {
@@ -1567,10 +1597,12 @@ fn check_level_finished(ctx: &mut GameContext, next_state: &mut NextState<AppSta
 }
 
 /// Rebuilds board sprites and/or HUD when dirty flags are raised.
+#[allow(clippy::too_many_arguments)]
 pub fn sync_match3_visuals(
     mut commands: Commands,
     ctx: Res<GameContext>,
     textures: Res<RuneTextures>,
+    fjord_art: Res<FjordTextures>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut input_state: ResMut<Match3InputState>,
     sprites: Query<Entity, With<Match3Entity>>,
@@ -1595,7 +1627,7 @@ pub fn sync_match3_visuals(
         for e in &huds {
             commands.entity(e).despawn_recursive();
         }
-        spawn_match3_hud(&mut commands, &ctx);
+        spawn_match3_hud(&mut commands, &ctx, &fjord_art);
         input_state.dirty_hud = false;
     }
 }

@@ -30,6 +30,8 @@ pub struct RuneTextures {
     pub cell_bg: Handle<Image>,
     pub ice_layer1: Handle<Image>,
     pub ice_layer2: Handle<Image>,
+    pub ice_top_layer1: Handle<Image>,
+    pub ice_top_layer2: Handle<Image>,
     pub crate_layer1: Handle<Image>,
     pub crate_layer2: Handle<Image>,
     pub relic_icon: Handle<Image>,
@@ -66,6 +68,8 @@ pub fn init_rune_textures(mut commands: Commands, mut images: ResMut<Assets<Imag
         cell_bg: images.add(build_cell_bg_image()),
         ice_layer1: images.add(build_ice_image(1)),
         ice_layer2: images.add(build_ice_image(2)),
+        ice_top_layer1: images.add(build_ice_top_frost_image(1)),
+        ice_top_layer2: images.add(build_ice_top_frost_image(2)),
         crate_layer1: images.add(build_crate_image(1)),
         crate_layer2: images.add(build_crate_image(2)),
         relic_icon: images.add(build_relic_image()),
@@ -229,22 +233,72 @@ fn build_cell_bg_image() -> Image {
 fn build_ice_image(layers: u8) -> Image {
     let mut px = new_canvas();
     let s = RUNE_TEX_SIZE as i32;
-    let alpha = if layers >= 2 { 200 } else { 115 };
-    for y in 2..(s - 2) {
-        for x in 2..(s - 2) {
+    let fill_alpha = if layers >= 2 { 245 } else { 205 };
+    for y in 0..s {
+        for x in 0..s {
             let border = x <= 5 || y <= 5 || x >= s - 6 || y >= s - 6;
             let rgba = if border {
-                [190, 240, 255, alpha]
+                if layers >= 2 {
+                    [235, 252, 255, 255]
+                } else {
+                    [165, 235, 255, 245]
+                }
+            } else if layers >= 2 {
+                [125, 222, 252, fill_alpha]
             } else {
-                [120, 210, 245, alpha / 2]
+                [92, 198, 242, fill_alpha]
             };
             set_px(&mut px, x, y, rgba);
         }
     }
-    if layers >= 2 {
-        draw_thick_line(&mut px, 10, 10, 54, 54, 1, [235, 250, 255, 210]);
-        draw_thick_line(&mut px, 54, 10, 10, 54, 1, [235, 250, 255, 210]);
+    finish_image(px)
+}
+
+/// Translucent frost frame & crystalline shards drawn OVER the rune so 1-layer and 2-layer ice pop unmistakably.
+fn build_ice_top_frost_image(layers: u8) -> Image {
+    let mut px = new_canvas();
+    let s = RUNE_TEX_SIZE as i32;
+
+    // Bright crystalline frost frame around the edges of the tile.
+    let frame_w = if layers >= 2 { 7 } else { 4 };
+    for y in 1..(s - 1) {
+        for x in 1..(s - 1) {
+            let edge = x.min(y).min(s - 1 - x).min(s - 1 - y);
+            if edge <= frame_w {
+                let alpha = if edge <= 2 {
+                    245
+                } else if layers >= 2 {
+                    185
+                } else {
+                    135
+                };
+                set_px(&mut px, x, y, [215, 248, 255, alpha]);
+            }
+        }
     }
+
+    // Frosted triangular corner icicles (clearly visible even over bright blue/cyan runes).
+    let corner_span = if layers >= 2 { 18 } else { 13 };
+    for y in 2..corner_span {
+        for x in 2..(corner_span - y + 2) {
+            let c = [240, 252, 255, if layers >= 2 { 235 } else { 195 }];
+            set_px(&mut px, x, y, c);
+            set_px(&mut px, s - 1 - x, y, c);
+            set_px(&mut px, x, s - 1 - y, c);
+            set_px(&mut px, s - 1 - x, s - 1 - y, c);
+        }
+    }
+
+    // Diagonal specular frost glare + double-layer ice crystal cross-cracks.
+    draw_thick_line(&mut px, 10, 18, 26, 8, 1, [255, 255, 255, 190]);
+    if layers >= 2 {
+        draw_thick_line(&mut px, 8, 8, 56, 56, 1, [242, 253, 255, 225]);
+        draw_thick_line(&mut px, 56, 8, 8, 56, 1, [242, 253, 255, 225]);
+        // Small white-cyan frost diamond indicator in top-right corner for 2-layer ice.
+        draw_thick_line(&mut px, 50, 10, 56, 16, 1, [120, 235, 255, 255]);
+        draw_thick_line(&mut px, 56, 10, 50, 16, 1, [120, 235, 255, 255]);
+    }
+
     finish_image(px)
 }
 
