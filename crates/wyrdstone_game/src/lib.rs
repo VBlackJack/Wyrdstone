@@ -79,8 +79,9 @@ pub fn run_app() {
             (
                 match3_scene::handle_match3_hud_buttons,
                 match3_scene::handle_board_pointer_input,
+                match3_scene::tick_board_animation,
                 match3_scene::sync_match3_visuals,
-                match3_scene::animate_board_tiles,
+                match3_scene::animate_particles,
             )
                 .chain()
                 .run_if(in_state(AppState::Match3)),

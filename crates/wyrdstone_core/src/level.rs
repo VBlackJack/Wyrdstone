@@ -151,7 +151,13 @@ impl LevelSession {
         step
     }
 
-    fn apply_step_outcome(&mut self, step: &MatchStepOutcome, balance: &BalanceConfig) {
+    /// Decrements remaining moves by one (used by animated turn execution).
+    pub fn consume_move(&mut self) {
+        self.moves_left = self.moves_left.saturating_sub(1);
+    }
+
+    /// Applies score and objective progress from a single animated clear step without ending the turn yet.
+    pub fn apply_step_progress(&mut self, step: &MatchStepOutcome) {
         self.score += step.score_gained;
         self.last_combo = step.max_combo;
         self.last_shuffled = step.shuffled;
@@ -171,13 +177,24 @@ impl LevelSession {
                 }
             }
         }
+    }
 
+    /// Evaluates victory or defeat after all cascades of a turn have finished.
+    pub fn finalize_turn(&mut self, balance: &BalanceConfig) {
+        if self.outcome != LevelOutcome::InProgress {
+            return;
+        }
         if self.objectives.iter().all(ObjectiveProgress::is_complete) {
             self.score += self.moves_left * balance.remaining_move_bonus;
             self.outcome = LevelOutcome::Victory;
         } else if self.moves_left == 0 {
             self.outcome = LevelOutcome::Defeat;
         }
+    }
+
+    fn apply_step_outcome(&mut self, step: &MatchStepOutcome, balance: &BalanceConfig) {
+        self.apply_step_progress(step);
+        self.finalize_turn(balance);
     }
 
     /// Computes final resource rewards when the level is won (scaled slightly by remaining moves).

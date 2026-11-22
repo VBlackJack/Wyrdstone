@@ -14,14 +14,22 @@
  * limitations under the License.
  */
 
-//! Match-3 2D board rendering, HUD, mouse + Android touch input, and active tools.
+//! Match-3 2D board rendering, stepped animations, particles, HUD, and mouse + Android touch input.
 
 use crate::runes_art::RuneTextures;
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use wyrdstone_core::{ActiveTool, Booster, CellPos, LevelOutcome, Objective};
+use std::collections::{HashMap, HashSet};
+use wyrdstone_core::{
+    ActiveTool, Booster, CellPos, FallMove, LevelOutcome, Objective, PreparedClear,
+};
+
+const PARTICLES_PER_CLEARED_TILE: usize = 6;
+const PARTICLE_LIFETIME_SECS: f32 = 0.34;
+const PARTICLE_SPEED_PX: f32 = 155.0;
+const PARTICLE_SIZE_PX: f32 = 7.0;
 
 #[derive(Component)]
 pub struct Match3Entity;
@@ -29,11 +37,22 @@ pub struct Match3Entity;
 #[derive(Component)]
 pub struct Match3HudRoot;
 
+/// Marks a movable rune/booster sprite bound to a logical grid cell.
 #[derive(Component)]
-pub struct BoardTileVisual;
+pub struct BoardTileVisual {
+    pub pos: CellPos,
+}
 
 #[derive(Component)]
 pub struct SelectionMarker;
+
+/// Lightweight burst particle spawned when runes clear.
+#[derive(Component)]
+pub struct BurstParticle {
+    pub velocity: Vec2,
+    pub elapsed: f32,
+    pub lifetime: f32,
+}
 
 #[derive(Component)]
 pub enum Match3UiAction {
@@ -41,7 +60,39 @@ pub enum Match3UiAction {
     SelectTool(ActiveTool),
 }
 
-/// Tracks board layout metrics and pointer/touch gesture state.
+/// Stepped animation phase machine so every swap, match, clear, fall, and cascade is readable.
+#[derive(Default)]
+pub enum BoardAnimPhase {
+    #[default]
+    Idle,
+    Swapping {
+        a: CellPos,
+        b: CellPos,
+        elapsed: f32,
+        duration: f32,
+    },
+    SwapRevert {
+        a: CellPos,
+        b: CellPos,
+        elapsed: f32,
+        duration: f32,
+    },
+    Clearing {
+        prepared: PreparedClear,
+        combo: u32,
+        elapsed: f32,
+        duration: f32,
+        particles_spawned: bool,
+    },
+    Falling {
+        moves: HashMap<CellPos, i32>,
+        combo: u32,
+        elapsed: f32,
+        duration: f32,
+    },
+}
+
+/// Tracks board layout metrics, pointer/touch gesture state, and active animation phase.
 #[derive(Resource, Default)]
 pub struct Match3InputState {
     pub selected: Option<CellPos>,
@@ -53,6 +104,13 @@ pub struct Match3InputState {
     pub board_origin: Vec2,
     pub dirty_board: bool,
     pub dirty_hud: bool,
+    pub phase: BoardAnimPhase,
+}
+
+impl Match3InputState {
+    pub fn is_idle(&self) -> bool {
+        matches!(self.phase, BoardAnimPhase::Idle)
+    }
 }
 
 /// Initializes the Match-3 scene (2D sprites + HUD overlay).
@@ -62,11 +120,7 @@ pub fn setup_match3_scene(
     textures: Res<RuneTextures>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    let mut input_state = Match3InputState {
-        dirty_board: false,
-        dirty_hud: false,
-        ..default()
-    };
+    let mut input_state = Match3InputState::default();
 
     if let (Some(session), Ok(window)) = (&ctx.active_session, windows.get_single()) {
         compute_board_layout(
@@ -76,23 +130,27 @@ pub fn setup_match3_scene(
             session.board.rows(),
             &mut input_state,
         );
-        spawn_board_sprites(&mut commands, session, &textures, &input_state);
+        spawn_board_sprites(&mut commands, session, &textures, &input_state, None);
     }
 
     spawn_match3_hud(&mut commands, &ctx);
     commands.insert_resource(input_state);
 }
 
-/// Cleans up all Match-3 sprites, HUD, and input state on exit.
+/// Cleans up all Match-3 sprites, particles, HUD, and input state on exit.
 pub fn cleanup_match3_scene(
     mut commands: Commands,
     sprites: Query<Entity, With<Match3Entity>>,
     huds: Query<Entity, With<Match3HudRoot>>,
+    particles: Query<Entity, With<BurstParticle>>,
 ) {
     for e in &sprites {
         commands.entity(e).despawn_recursive();
     }
     for e in &huds {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &particles {
         commands.entity(e).despawn_recursive();
     }
     commands.remove_resource::<Match3InputState>();
@@ -116,14 +174,21 @@ fn compute_board_layout(
     let board_w = step * cols as f32;
     let board_h = step * rows as f32;
     let center_y_offset = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
-    layout.board_origin = Vec2::new(-board_w * 0.5 + step * 0.5, board_h * 0.5 - step * 0.5 + center_y_offset);
+    layout.board_origin = Vec2::new(
+        -board_w * 0.5 + step * 0.5,
+        board_h * 0.5 - step * 0.5 + center_y_offset,
+    );
+}
+
+fn grid_to_world_f(col: f32, row: f32, layout: &Match3InputState) -> Vec2 {
+    Vec2::new(
+        layout.board_origin.x + col * layout.cell_step,
+        layout.board_origin.y - row * layout.cell_step,
+    )
 }
 
 fn cell_to_world(pos: CellPos, layout: &Match3InputState) -> Vec2 {
-    Vec2::new(
-        layout.board_origin.x + pos.col as f32 * layout.cell_step,
-        layout.board_origin.y - pos.row as f32 * layout.cell_step,
-    )
+    grid_to_world_f(pos.col as f32, pos.row as f32, layout)
 }
 
 fn world_to_cell(
@@ -155,6 +220,7 @@ fn spawn_board_sprites(
     session: &wyrdstone_core::LevelSession,
     textures: &RuneTextures,
     layout: &Match3InputState,
+    fall_starts: Option<&HashMap<CellPos, i32>>,
 ) {
     let cols = session.board.cols();
     let rows = session.board.rows();
@@ -183,6 +249,10 @@ fn spawn_board_sprites(
                 continue;
             }
             let world = cell_to_world(pos, layout);
+            let tile_world = match fall_starts.and_then(|m| m.get(&pos)) {
+                Some(&from_row) => grid_to_world_f(col as f32, from_row as f32, layout),
+                None => world,
+            };
             let cell_size = Vec2::splat(layout.cell_step * 0.96);
             let tile_size = Vec2::splat(layout.tile_size);
 
@@ -219,38 +289,37 @@ fn spawn_board_sprites(
             if cell.booster == Booster::BifrostShard {
                 commands.spawn((
                     Match3Entity,
-                    BoardTileVisual,
+                    BoardTileVisual { pos },
                     Sprite {
                         image: textures.booster_bifrost.clone(),
                         custom_size: Some(tile_size),
                         ..default()
                     },
-                    Transform::from_xyz(world.x, world.y, Z_RUNE_SPRITE)
-                        .with_scale(Vec3::splat(0.86)),
+                    Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
                 ));
             } else if let Some(rune) = cell.rune {
                 if let Some(tex) = textures.runes.get(&rune) {
                     commands.spawn((
                         Match3Entity,
-                        BoardTileVisual,
+                        BoardTileVisual { pos },
                         Sprite {
                             image: tex.clone(),
                             custom_size: Some(tile_size),
                             ..default()
                         },
-                        Transform::from_xyz(world.x, world.y, Z_RUNE_SPRITE)
-                            .with_scale(Vec3::splat(0.88)),
+                        Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
                     ));
                 }
                 if let Some(booster_tex) = textures.booster_handle(cell.booster) {
                     commands.spawn((
                         Match3Entity,
+                        BoardTileVisual { pos },
                         Sprite {
                             image: booster_tex,
                             custom_size: Some(tile_size),
                             ..default()
                         },
-                        Transform::from_xyz(world.x, world.y, Z_BOOSTER_BADGE),
+                        Transform::from_xyz(tile_world.x, tile_world.y, Z_BOOSTER_BADGE),
                     ));
                 }
             }
@@ -283,6 +352,71 @@ fn spawn_board_sprites(
             },
             Transform::from_xyz(w.x, w.y, Z_SELECTION_RING),
         ));
+    }
+}
+
+fn rebuild_board_now(
+    commands: &mut Commands,
+    session: &wyrdstone_core::LevelSession,
+    textures: &RuneTextures,
+    window: &Window,
+    input_state: &mut Match3InputState,
+    sprites: &Query<Entity, With<Match3Entity>>,
+    fall_starts: Option<&HashMap<CellPos, i32>>,
+) {
+    for e in sprites {
+        commands.entity(e).despawn_recursive();
+    }
+    compute_board_layout(
+        window.width(),
+        window.height(),
+        session.board.cols(),
+        session.board.rows(),
+        input_state,
+    );
+    spawn_board_sprites(commands, session, textures, input_state, fall_starts);
+}
+
+fn spawn_clear_particles(
+    commands: &mut Commands,
+    cells: &[CellPos],
+    session: &wyrdstone_core::LevelSession,
+    layout: &Match3InputState,
+) {
+    for &pos in cells {
+        let center = cell_to_world(pos, layout);
+        let color = session
+            .board
+            .get(pos)
+            .and_then(|c| c.rune)
+            .map(|r| {
+                let [rr, gg, bb] = rune_base_rgb(r);
+                Color::srgb(
+                    (rr as f32 / 255.0).min(1.0) * 1.15,
+                    (gg as f32 / 255.0).min(1.0) * 1.15,
+                    (bb as f32 / 255.0).min(1.0) * 1.15,
+                )
+            })
+            .unwrap_or(COLOR_ACCENT_GOLD);
+
+        for i in 0..PARTICLES_PER_CLEARED_TILE {
+            let angle = (i as f32 / PARTICLES_PER_CLEARED_TILE as f32) * std::f32::consts::TAU
+                + (pos.col as f32 * 0.37);
+            let dir = Vec2::new(angle.cos(), angle.sin());
+            commands.spawn((
+                BurstParticle {
+                    velocity: dir * PARTICLE_SPEED_PX,
+                    elapsed: 0.0,
+                    lifetime: PARTICLE_LIFETIME_SECS,
+                },
+                Sprite {
+                    color,
+                    custom_size: Some(Vec2::splat(PARTICLE_SIZE_PX)),
+                    ..default()
+                },
+                Transform::from_xyz(center.x, center.y, Z_SELECTION_RING + 1.0),
+            ));
+        }
     }
 }
 
@@ -323,7 +457,6 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                 BorderRadius::all(Val::Px(10.0)),
             ))
             .with_children(|top| {
-                // Moves + Score
                 top.spawn(Node {
                     column_gap: Val::Px(18.0),
                     align_items: AlignItems::Center,
@@ -354,7 +487,6 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                     ));
                 });
 
-                // Objectives list
                 top.spawn(Node {
                     column_gap: Val::Px(14.0),
                     flex_wrap: FlexWrap::Wrap,
@@ -401,7 +533,6 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                     }
                 });
 
-                // Combo / shuffle notice + Retreat button
                 top.spawn(Node {
                     column_gap: Val::Px(10.0),
                     align_items: AlignItems::Center,
@@ -566,7 +697,7 @@ pub fn handle_match3_hud_buttons(
                 return;
             }
             Match3UiAction::SelectTool(tool) => {
-                if ctx.city.tools.count(tool) == 0 {
+                if !input_state.is_idle() || ctx.city.tools.count(tool) == 0 {
                     continue;
                 }
                 if tool == ActiveTool::LokiShuffle {
@@ -600,7 +731,7 @@ pub fn handle_match3_hud_buttons(
     }
 }
 
-/// Handles both desktop mouse (click + drag) and Android touch (tap + swipe) on the Match-3 board.
+/// Handles both desktop mouse (click + drag) and Android touch (tap + swipe) when the board is idle.
 pub fn handle_board_pointer_input(
     mouse: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
@@ -608,8 +739,10 @@ pub fn handle_board_pointer_input(
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mut ctx: ResMut<GameContext>,
     mut input_state: ResMut<Match3InputState>,
-    mut next_state: ResMut<NextState<AppState>>,
 ) {
+    if !input_state.is_idle() {
+        return;
+    }
     let Ok(window) = windows.get_single() else {
         return;
     };
@@ -626,7 +759,6 @@ pub fn handle_board_pointer_input(
     let mut current_screen: Option<Vec2> = None;
     let mut released = false;
 
-    // Touch input (Android)
     if let Some(touch) = touches.iter_just_pressed().next() {
         input_state.active_touch_id = Some(touch.id());
         pressed_screen = Some(touch.position());
@@ -639,7 +771,6 @@ pub fn handle_board_pointer_input(
         }
     }
 
-    // Mouse input (Windows desktop)
     if pressed_screen.is_none() && input_state.active_touch_id.is_none() {
         if mouse.just_pressed(MouseButton::Left) {
             pressed_screen = window.cursor_position();
@@ -650,29 +781,34 @@ pub fn handle_board_pointer_input(
         }
     }
 
-    // Handle initial press
     if let Some(screen_pos) = pressed_screen {
         if let Ok(world_pos) = camera.viewport_to_world_2d(cam_transform, screen_pos) {
             if let Some(cell) = world_to_cell(world_pos, cols, rows, &input_state) {
-                // If an active tool is armed, fire it on this cell!
+                // Armed active tool triggers an animated clear phase directly.
                 if let Some(tool) = ctx.armed_tool {
-                    if ctx.city.tools.consume(tool) {
-                        let balance = ctx.data.balance.clone();
-                        let ctx_ref = ctx.as_mut();
-                        if let Some(session) = ctx_ref.active_session.as_mut() {
-                            session.play_tool(tool, Some(cell), &balance, &mut ctx_ref.rng);
+                    let prepared = ctx
+                        .active_session
+                        .as_ref()
+                        .and_then(|s| s.board.prepare_tool_step(tool, cell));
+                    if let Some(prep) = prepared {
+                        if ctx.city.tools.consume(tool) {
+                            ctx.armed_tool = None;
+                            ctx.persist();
+                            let clear_dur = ctx.data.balance.clear_anim_seconds;
+                            input_state.selected = None;
+                            input_state.dirty_hud = true;
+                            input_state.phase = BoardAnimPhase::Clearing {
+                                prepared: prep,
+                                combo: 1,
+                                elapsed: 0.0,
+                                duration: clear_dur,
+                                particles_spawned: false,
+                            };
                         }
-                        ctx.armed_tool = None;
-                        ctx.persist();
-                        input_state.selected = None;
-                        input_state.dirty_board = true;
-                        input_state.dirty_hud = true;
-                        check_level_finished(&mut ctx, &mut next_state);
                     }
                     return;
                 }
 
-                // If another adjacent cell was already selected, swap them!
                 if let Some(prev) = input_state.selected {
                     if prev == cell {
                         input_state.selected = None;
@@ -680,12 +816,11 @@ pub fn handle_board_pointer_input(
                         return;
                     }
                     if prev.is_adjacent(cell) {
-                        execute_swap(prev, cell, &mut ctx, &mut input_state, &mut next_state);
+                        start_swap_animation(prev, cell, &ctx, &mut input_state);
                         return;
                     }
                 }
 
-                // Select cell & start potential swipe drag.
                 input_state.selected = Some(cell);
                 input_state.drag_origin_cell = Some(cell);
                 input_state.drag_origin_screen = Some(screen_pos);
@@ -694,7 +829,6 @@ pub fn handle_board_pointer_input(
         }
     }
 
-    // Handle drag-swipe gesture
     if let (Some(curr), Some(origin_cell), Some(origin_screen)) = (
         current_screen,
         input_state.drag_origin_cell,
@@ -721,7 +855,7 @@ pub fn handle_board_pointer_input(
             input_state.drag_origin_cell = None;
             input_state.drag_origin_screen = None;
             if let Some(nb) = target {
-                execute_swap(origin_cell, nb, &mut ctx, &mut input_state, &mut next_state);
+                start_swap_animation(origin_cell, nb, &ctx, &mut input_state);
             }
         }
     }
@@ -732,26 +866,304 @@ pub fn handle_board_pointer_input(
     }
 }
 
-fn execute_swap(
+fn start_swap_animation(
     a: CellPos,
     b: CellPos,
-    ctx: &mut GameContext,
+    ctx: &GameContext,
     input_state: &mut Match3InputState,
-    next_state: &mut NextState<AppState>,
 ) {
-    let balance = ctx.data.balance.clone();
-    let outcome = match ctx.active_session.as_mut() {
-        Some(session) => session.play_swap(a, b, &balance, &mut ctx.rng),
-        None => return,
-    };
+    let can_swap = ctx
+        .active_session
+        .as_ref()
+        .map(|s| s.board.can_initiate_swap(a, b))
+        .unwrap_or(false);
     input_state.selected = None;
     input_state.drag_origin_cell = None;
     input_state.drag_origin_screen = None;
-    input_state.dirty_board = true;
-    if outcome.valid {
-        input_state.dirty_hud = true;
-        check_level_finished(ctx, next_state);
+    if !can_swap {
+        input_state.dirty_board = true;
+        return;
     }
+    input_state.phase = BoardAnimPhase::Swapping {
+        a,
+        b,
+        elapsed: 0.0,
+        duration: ctx.data.balance.swap_anim_seconds,
+    };
+}
+
+/// Advances the stepped Match-3 animation state machine (swap -> clear -> fall -> cascade).
+#[allow(clippy::too_many_arguments)]
+pub fn tick_board_animation(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut ctx: ResMut<GameContext>,
+    textures: Res<RuneTextures>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut input_state: ResMut<Match3InputState>,
+    mut next_state: ResMut<NextState<AppState>>,
+    all_sprites: Query<Entity, With<Match3Entity>>,
+    mut tile_q: Query<(&BoardTileVisual, &mut Transform, &mut Sprite)>,
+) {
+    let Ok(window) = windows.get_single() else {
+        return;
+    };
+    let dt = time.delta_secs();
+
+    // Take ownership of phase to transition cleanly without borrow conflicts.
+    let phase = std::mem::take(&mut input_state.phase);
+    match phase {
+        BoardAnimPhase::Idle => {
+            input_state.phase = BoardAnimPhase::Idle;
+        }
+        BoardAnimPhase::Swapping {
+            a,
+            b,
+            mut elapsed,
+            duration,
+        } => {
+            elapsed += dt;
+            let t = ease_out_quad((elapsed / duration).clamp(0.0, 1.0));
+            let wa = cell_to_world(a, &input_state);
+            let wb = cell_to_world(b, &input_state);
+            for (tile, mut tf, _) in &mut tile_q {
+                if tile.pos == a {
+                    let p = wa.lerp(wb, t);
+                    tf.translation.x = p.x;
+                    tf.translation.y = p.y;
+                } else if tile.pos == b {
+                    let p = wb.lerp(wa, t);
+                    tf.translation.x = p.x;
+                    tf.translation.y = p.y;
+                }
+            }
+
+            if elapsed >= duration {
+                let prepared = ctx
+                    .active_session
+                    .as_mut()
+                    .and_then(|s| s.board.begin_swap_step(a, b));
+                if let Some(prep) = prepared {
+                    if let Some(session) = ctx.active_session.as_mut() {
+                        session.consume_move();
+                        session.last_combo = 1;
+                        session.last_shuffled = false;
+                    }
+                    if let Some(session) = ctx.active_session.as_ref() {
+                        rebuild_board_now(
+                            &mut commands,
+                            session,
+                            &textures,
+                            window,
+                            &mut input_state,
+                            &all_sprites,
+                            None,
+                        );
+                    }
+                    input_state.dirty_hud = true;
+                    input_state.phase = BoardAnimPhase::Clearing {
+                        prepared: prep,
+                        combo: 1,
+                        elapsed: 0.0,
+                        duration: ctx.data.balance.clear_anim_seconds,
+                        particles_spawned: false,
+                    };
+                } else {
+                    // Invalid swap: smoothly bounce both tiles back.
+                    input_state.phase = BoardAnimPhase::SwapRevert {
+                        a,
+                        b,
+                        elapsed: 0.0,
+                        duration,
+                    };
+                }
+            } else {
+                input_state.phase = BoardAnimPhase::Swapping {
+                    a,
+                    b,
+                    elapsed,
+                    duration,
+                };
+            }
+        }
+        BoardAnimPhase::SwapRevert {
+            a,
+            b,
+            mut elapsed,
+            duration,
+        } => {
+            elapsed += dt;
+            let t = ease_out_quad((elapsed / duration).clamp(0.0, 1.0));
+            let wa = cell_to_world(a, &input_state);
+            let wb = cell_to_world(b, &input_state);
+            for (tile, mut tf, _) in &mut tile_q {
+                if tile.pos == a {
+                    let p = wb.lerp(wa, t);
+                    tf.translation.x = p.x;
+                    tf.translation.y = p.y;
+                } else if tile.pos == b {
+                    let p = wa.lerp(wb, t);
+                    tf.translation.x = p.x;
+                    tf.translation.y = p.y;
+                }
+            }
+
+            if elapsed >= duration {
+                input_state.dirty_board = true;
+                input_state.phase = BoardAnimPhase::Idle;
+            } else {
+                input_state.phase = BoardAnimPhase::SwapRevert {
+                    a,
+                    b,
+                    elapsed,
+                    duration,
+                };
+            }
+        }
+        BoardAnimPhase::Clearing {
+            prepared,
+            combo,
+            mut elapsed,
+            duration,
+            mut particles_spawned,
+        } => {
+            if !particles_spawned {
+                if let Some(session) = ctx.active_session.as_ref() {
+                    spawn_clear_particles(&mut commands, &prepared.cells, session, &input_state);
+                }
+                particles_spawned = true;
+            }
+
+            elapsed += dt;
+            let raw_t = (elapsed / duration).clamp(0.0, 1.0);
+            let cleared_set: HashSet<CellPos> = prepared.cells.iter().copied().collect();
+
+            // Pulse up briefly (0..0.35), then shrink & fade cleanly (0.35..1.0).
+            let scale = if raw_t < 0.35 {
+                1.0 + (raw_t / 0.35) * 0.22
+            } else {
+                (1.22 * (1.0 - (raw_t - 0.35) / 0.65)).max(0.05)
+            };
+            let alpha = (1.0 - raw_t * 0.85).max(0.1);
+
+            for (tile, mut tf, mut sprite) in &mut tile_q {
+                if cleared_set.contains(&tile.pos) {
+                    tf.scale = Vec3::splat(scale);
+                    sprite.color = Color::srgba(1.35, 1.30, 1.05, alpha);
+                }
+            }
+
+            if elapsed >= duration {
+                let balance = ctx.data.balance.clone();
+                let ctx_ref = ctx.as_mut();
+                let mut fall_map = HashMap::new();
+                if let Some(session) = ctx_ref.active_session.as_mut() {
+                    let step = session.board.commit_clear_step(&prepared, combo, &balance);
+                    session.apply_step_progress(&step);
+                    let fall_moves: Vec<FallMove> =
+                        session.board.apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
+                    for fm in fall_moves {
+                        fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
+                    }
+                }
+                if let Some(session) = ctx.active_session.as_ref() {
+                    rebuild_board_now(
+                        &mut commands,
+                        session,
+                        &textures,
+                        window,
+                        &mut input_state,
+                        &all_sprites,
+                        Some(&fall_map),
+                    );
+                }
+                input_state.dirty_hud = true;
+                input_state.phase = BoardAnimPhase::Falling {
+                    moves: fall_map,
+                    combo,
+                    elapsed: 0.0,
+                    duration: ctx.data.balance.fall_anim_seconds,
+                };
+            } else {
+                input_state.phase = BoardAnimPhase::Clearing {
+                    prepared,
+                    combo,
+                    elapsed,
+                    duration,
+                    particles_spawned,
+                };
+            }
+        }
+        BoardAnimPhase::Falling {
+            moves,
+            combo,
+            mut elapsed,
+            duration,
+        } => {
+            elapsed += dt;
+            let t = ease_out_quad((elapsed / duration).clamp(0.0, 1.0));
+            for (tile, mut tf, _) in &mut tile_q {
+                if let Some(&from_row) = moves.get(&tile.pos) {
+                    let start = grid_to_world_f(tile.pos.col as f32, from_row as f32, &input_state);
+                    let end = cell_to_world(tile.pos, &input_state);
+                    let p = start.lerp(end, t);
+                    tf.translation.x = p.x;
+                    tf.translation.y = p.y;
+                }
+            }
+
+            if elapsed >= duration {
+                // Check for follow-up cascade!
+                let next_cascade = ctx
+                    .active_session
+                    .as_ref()
+                    .and_then(|s| s.board.prepare_cascade_step());
+                if let Some(next_prep) = next_cascade {
+                    if let Some(session) = ctx.active_session.as_mut() {
+                        session.last_combo = combo + 1;
+                    }
+                    input_state.dirty_hud = true;
+                    input_state.phase = BoardAnimPhase::Clearing {
+                        prepared: next_prep,
+                        combo: combo + 1,
+                        elapsed: 0.0,
+                        duration: ctx.data.balance.clear_anim_seconds,
+                        particles_spawned: false,
+                    };
+                } else {
+                    // Turn finished: check deadlock shuffle and Victory/Defeat.
+                    let balance = ctx.data.balance.clone();
+                    let ctx_ref = ctx.as_mut();
+                    let mut did_shuffle = false;
+                    if let Some(session) = ctx_ref.active_session.as_mut() {
+                        if !session.board.has_valid_moves() {
+                            session.board.shuffle_free_runes(&mut ctx_ref.rng);
+                            session.last_shuffled = true;
+                            did_shuffle = true;
+                        }
+                        session.finalize_turn(&balance);
+                    }
+                    if did_shuffle {
+                        input_state.dirty_board = true;
+                        input_state.dirty_hud = true;
+                    }
+                    check_level_finished(&mut ctx, &mut next_state);
+                    input_state.phase = BoardAnimPhase::Idle;
+                }
+            } else {
+                input_state.phase = BoardAnimPhase::Falling {
+                    moves,
+                    combo,
+                    elapsed,
+                    duration,
+                };
+            }
+        }
+    }
+}
+
+fn ease_out_quad(t: f32) -> f32 {
+    1.0 - (1.0 - t) * (1.0 - t)
 }
 
 fn check_level_finished(ctx: &mut GameContext, next_state: &mut NextState<AppState>) {
@@ -788,18 +1200,16 @@ pub fn sync_match3_visuals(
     huds: Query<Entity, With<Match3HudRoot>>,
 ) {
     if input_state.dirty_board {
-        for e in &sprites {
-            commands.entity(e).despawn_recursive();
-        }
         if let (Some(session), Ok(window)) = (&ctx.active_session, windows.get_single()) {
-            compute_board_layout(
-                window.width(),
-                window.height(),
-                session.board.cols(),
-                session.board.rows(),
+            rebuild_board_now(
+                &mut commands,
+                session,
+                &textures,
+                window,
                 &mut input_state,
+                &sprites,
+                None,
             );
-            spawn_board_sprites(&mut commands, session, &textures, &input_state);
         }
         input_state.dirty_board = false;
     }
@@ -813,13 +1223,23 @@ pub fn sync_match3_visuals(
     }
 }
 
-/// Smoothly animates tile scale pop-in after spawns and matches.
-pub fn animate_board_tiles(
+/// Moves and fades out burst particles spawned during rune clears.
+pub fn animate_particles(
+    mut commands: Commands,
     time: Res<Time>,
-    mut tiles: Query<&mut Transform, With<BoardTileVisual>>,
+    mut query: Query<(Entity, &mut BurstParticle, &mut Transform, &mut Sprite)>,
 ) {
-    let dt = (time.delta_secs() * TILE_LERP_SPEED).min(1.0);
-    for mut tf in &mut tiles {
-        tf.scale = tf.scale.lerp(Vec3::ONE, dt);
+    let dt = time.delta_secs();
+    for (entity, mut p, mut tf, mut sprite) in &mut query {
+        p.elapsed += dt;
+        if p.elapsed >= p.lifetime {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let progress = p.elapsed / p.lifetime;
+        tf.translation.x += p.velocity.x * dt * (1.0 - progress * 0.5);
+        tf.translation.y += p.velocity.y * dt * (1.0 - progress * 0.5);
+        tf.scale = Vec3::splat((1.0 - progress).max(0.1));
+        sprite.color = sprite.color.with_alpha(1.0 - progress);
     }
 }

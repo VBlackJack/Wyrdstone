@@ -158,6 +158,22 @@ pub struct MatchStepOutcome {
     pub shuffled: bool,
 }
 
+/// Describes one rune's vertical drop during a gravity step (`from_row < 0` means spawned above).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FallMove {
+    pub col: usize,
+    pub from_row: i32,
+    pub to_row: usize,
+}
+
+/// Preview of cells about to clear in an animated step, before mutating the board.
+#[derive(Debug, Clone)]
+pub struct PreparedClear {
+    pub cells: Vec<CellPos>,
+    pub spawned_boosters: Vec<(CellPos, RuneType, Booster)>,
+    pub is_direct_blast: bool,
+}
+
 /// Match-3 board state and rule resolver.
 #[derive(Debug, Clone)]
 pub struct Board {
@@ -293,6 +309,187 @@ impl Board {
             }
         }
         self.random_rune(rng)
+    }
+
+    /// Returns true if two cells are orthogonally adjacent and both swappable.
+    pub fn can_initiate_swap(&self, a: CellPos, b: CellPos) -> bool {
+        if !a.is_adjacent(b) || !self.in_bounds(a) || !self.in_bounds(b) {
+            return false;
+        }
+        self.cells[self.idx(a)].can_be_swapped() && self.cells[self.idx(b)].can_be_swapped()
+    }
+
+    /// Performs the raw swap and returns a `PreparedClear` if valid; reverts and returns `None` if invalid.
+    pub fn begin_swap_step(&mut self, a: CellPos, b: CellPos) -> Option<PreparedClear> {
+        if !self.can_initiate_swap(a, b) {
+            return None;
+        }
+        self.swap_contents(a, b);
+        if let Some(combo_cells) = self.check_special_swap_combo(a, b) {
+            return Some(PreparedClear {
+                cells: combo_cells.into_iter().collect(),
+                spawned_boosters: Vec::new(),
+                is_direct_blast: true,
+            });
+        }
+        let groups = self.find_match_groups();
+        if groups.is_empty() {
+            self.swap_contents(a, b);
+            return None;
+        }
+        Some(self.groups_to_prepared_clear(&groups, Some((a, b))))
+    }
+
+    /// Prepares the next cascade clear if any matches exist after gravity.
+    pub fn prepare_cascade_step(&self) -> Option<PreparedClear> {
+        let groups = self.find_match_groups();
+        if groups.is_empty() {
+            return None;
+        }
+        Some(self.groups_to_prepared_clear(&groups, None))
+    }
+
+    /// Prepares a direct-blast clear for Mjolnir or SurtrEmber.
+    pub fn prepare_tool_step(&self, tool: ActiveTool, target: CellPos) -> Option<PreparedClear> {
+        if !self.in_bounds(target) || self.cells[self.idx(target)].blocked {
+            return None;
+        }
+        match tool {
+            ActiveTool::Mjolnir => Some(PreparedClear {
+                cells: vec![target],
+                spawned_boosters: Vec::new(),
+                is_direct_blast: true,
+            }),
+            ActiveTool::SurtrEmber => Some(PreparedClear {
+                cells: self.area_positions(target, 1).into_iter().collect(),
+                spawned_boosters: Vec::new(),
+                is_direct_blast: true,
+            }),
+            ActiveTool::LokiShuffle => None,
+        }
+    }
+
+    fn groups_to_prepared_clear(
+        &self,
+        groups: &[MatchGroup],
+        swap_pair: Option<(CellPos, CellPos)>,
+    ) -> PreparedClear {
+        let mut to_clear: HashSet<CellPos> = HashSet::new();
+        let mut spawned_boosters: Vec<(CellPos, RuneType, Booster)> = Vec::new();
+        for group in groups {
+            to_clear.extend(&group.cells);
+            let booster = group.spawned_booster();
+            if booster != Booster::None {
+                let spawn_pos = swap_pair
+                    .and_then(|(a, b)| {
+                        if group.cells.contains(&b) {
+                            Some(b)
+                        } else if group.cells.contains(&a) {
+                            Some(a)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| *group.cells.iter().next().unwrap());
+                spawned_boosters.push((spawn_pos, group.rune, booster));
+            }
+        }
+        PreparedClear {
+            cells: to_clear.into_iter().collect(),
+            spawned_boosters,
+            is_direct_blast: false,
+        }
+    }
+
+    /// Commits a previously prepared clear onto the board and returns the resulting step outcome.
+    pub fn commit_clear_step(
+        &mut self,
+        prepared: &PreparedClear,
+        combo_depth: u32,
+        balance: &BalanceConfig,
+    ) -> MatchStepOutcome {
+        let mut outcome = MatchStepOutcome {
+            valid: true,
+            max_combo: combo_depth,
+            ..Default::default()
+        };
+        let set: HashSet<CellPos> = prepared.cells.iter().copied().collect();
+        self.clear_cell_set(&set, combo_depth, balance, &mut outcome, prepared.is_direct_blast);
+
+        for &(pos, rune, booster) in &prepared.spawned_boosters {
+            if let Some(cell) = self.get_mut(pos) {
+                if !cell.blocked {
+                    cell.booster = booster;
+                    cell.rune = if booster == Booster::BifrostShard {
+                        None
+                    } else {
+                        Some(rune)
+                    };
+                }
+            }
+        }
+        outcome
+    }
+
+    /// Applies gravity and refills empty cells, returning per-tile fall trajectories for animation.
+    pub fn apply_gravity_and_refill_tracked<R: Rng>(&mut self, rng: &mut R) -> Vec<FallMove> {
+        let mut moves = Vec::new();
+        for col in 0..self.cols {
+            let mut spawn_offset = 1i32;
+            let mut write_row = self.rows as i32 - 1;
+            while write_row >= 0 {
+                let wpos = CellPos::new(col, write_row as usize);
+                let wcell = self.cells[self.idx(wpos)];
+                if wcell.blocked
+                    || wcell.chained
+                    || wcell.rune.is_some()
+                    || wcell.booster != Booster::None
+                {
+                    write_row -= 1;
+                    continue;
+                }
+
+                let mut read_row = write_row - 1;
+                let mut found = false;
+                while read_row >= 0 {
+                    let rpos = CellPos::new(col, read_row as usize);
+                    let rcell = self.cells[self.idx(rpos)];
+                    if rcell.blocked || rcell.chained {
+                        read_row -= 1;
+                        continue;
+                    }
+                    if rcell.rune.is_some() || rcell.booster != Booster::None {
+                        let wi = self.idx(wpos);
+                        let ri = self.idx(rpos);
+                        self.cells[wi].rune = self.cells[ri].rune.take();
+                        self.cells[wi].booster = self.cells[ri].booster;
+                        self.cells[ri].booster = Booster::None;
+                        moves.push(FallMove {
+                            col,
+                            from_row: read_row,
+                            to_row: write_row as usize,
+                        });
+                        found = true;
+                        break;
+                    }
+                    read_row -= 1;
+                }
+
+                if !found {
+                    let wi = self.idx(wpos);
+                    self.cells[wi].rune = Some(self.random_rune(rng));
+                    self.cells[wi].booster = Booster::None;
+                    moves.push(FallMove {
+                        col,
+                        from_row: -spawn_offset,
+                        to_row: write_row as usize,
+                    });
+                    spawn_offset += 1;
+                }
+                write_row -= 1;
+            }
+        }
+        moves
     }
 
     /// Attempts to swap two adjacent cells and resolve all resulting matches and cascades.

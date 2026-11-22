@@ -18,8 +18,8 @@ BalanceConfig(
     starting_mjolnir: 3,
     starting_surtr_ember: 2,
     starting_loki_shuffle: 3,
-    swap_anim_seconds: 0.14,
-    clear_anim_seconds: 0.16,
-    fall_anim_seconds: 0.16,
+    swap_anim_seconds: 0.18,
+    clear_anim_seconds: 0.28,
+    fall_anim_seconds: 0.24,
     swipe_threshold_px: 24.0,
 )

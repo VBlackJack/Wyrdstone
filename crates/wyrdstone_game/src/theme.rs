@@ -33,7 +33,6 @@ pub const BOARD_SIDE_MARGIN_PX: f32 = 32.0;
 pub const TILE_GAP_RATIO: f32 = 0.08;
 pub const MAX_TILE_SIZE_PX: f32 = 72.0;
 pub const MIN_TILE_SIZE_PX: f32 = 34.0;
-pub const TILE_LERP_SPEED: f32 = 16.0;
 
 /// Z-layer ordering for 2D board sprites.
 pub const Z_BOARD_BG: f32 = 0.0;
