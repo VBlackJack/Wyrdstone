@@ -226,6 +226,7 @@ fn city_upgrades_quests_and_save_roundtrip() {
     let save = SaveData {
         schema_version: wyrdstone_core::save::SAVE_SCHEMA_VERSION,
         language: Language::Fr,
+        last_saved_unix_secs: 1000,
         city,
     };
     let json = save.to_json().expect("serialize save");

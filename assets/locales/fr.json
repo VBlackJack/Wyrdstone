@@ -23,6 +23,7 @@
   "city.button.upgrade": "Rebâtir / Améliorer",
   "city.button.max_level": "Maîtrise Max",
   "city.button.title": "Titre",
+  "city.button.drink_mead": "+{energy} End. ({cost} Hydr.)",
   "city.panel.quests.title": "Saga du Clan",
   "city.panel.quests.complete": "Réclamer",
   "city.panel.quests.done": "Saga terminée !",

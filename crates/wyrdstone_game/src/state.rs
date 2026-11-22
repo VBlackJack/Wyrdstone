@@ -20,6 +20,7 @@ use bevy::prelude::*;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 use wyrdstone_core::{
     ActiveTool, CityState, GameDataBundle, Language, LevelOutcome, LevelSession, ResourceBundle,
     SaveData,
@@ -73,8 +74,20 @@ impl GameContext {
             .as_ref()
             .and_then(|p| SaveData::load_from_path(p).ok().flatten())
         {
-            Some(saved) => {
+            Some(mut saved) => {
                 data.i18n.set_language(saved.language);
+                let now = now_unix_secs();
+                if saved.last_saved_unix_secs > 0 && now > saved.last_saved_unix_secs {
+                    saved
+                        .city
+                        .apply_offline_energy_regen(now - saved.last_saved_unix_secs, &data.balance);
+                } else if saved.last_saved_unix_secs == 0
+                    && saved.city.energy < data.balance.energy_cost_per_level
+                {
+                    // Legacy save before offline regen existed: restore full endurance once.
+                    let cap = saved.city.max_energy(&data.balance);
+                    saved.city.energy = cap;
+                }
                 (saved.city, true)
             }
             None => (CityState::new(&data.balance), false),
@@ -119,6 +132,7 @@ impl GameContext {
             let snapshot = SaveData {
                 schema_version: wyrdstone_core::save::SAVE_SCHEMA_VERSION,
                 language: self.data.i18n.language(),
+                last_saved_unix_secs: now_unix_secs(),
                 city: self.city.clone(),
             };
             let _ = snapshot.save_to_path(path);
@@ -180,12 +194,23 @@ fn resolve_save_path() -> Option<PathBuf> {
     }
 }
 
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Regenerates endurance periodically, sped up by the Mead Hall tier.
 pub fn tick_energy_regen(time: Res<Time>, mut ctx: ResMut<GameContext>) {
     let speed_mult = 1.0 + (ctx.city.compute_bonuses().energy_regen_speed_pct as f32 / 100.0);
     let scaled_delta = time.delta().mul_f32(speed_mult);
     if ctx.energy_regen_timer.tick(scaled_delta).just_finished() {
         let balance = ctx.data.balance.clone();
+        let prev = ctx.city.energy;
         ctx.city.regenerate_energy(1, &balance);
+        if ctx.city.energy != prev {
+            ctx.persist();
+        }
     }
 }

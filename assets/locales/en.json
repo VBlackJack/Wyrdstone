@@ -23,6 +23,7 @@
   "city.button.upgrade": "Rebuild / Upgrade",
   "city.button.max_level": "Max Mastery",
   "city.button.title": "Title",
+  "city.button.drink_mead": "+{energy} End. ({cost} Mead)",
   "city.panel.quests.title": "Clan Saga",
   "city.panel.quests.complete": "Claim Reward",
   "city.panel.quests.done": "Saga Complete!",

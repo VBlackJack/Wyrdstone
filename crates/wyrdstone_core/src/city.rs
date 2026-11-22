@@ -367,6 +367,33 @@ impl CityState {
         self.energy = (self.energy + amount).min(cap);
     }
 
+    /// Drinks Mead to immediately restore Endurance so players are never soft-locked.
+    pub fn try_drink_mead(&mut self, balance: &BalanceConfig) -> Result<u32, &'static str> {
+        let cap = self.max_energy(balance);
+        if self.energy >= cap {
+            return Ok(self.energy);
+        }
+        if self.resources.mead < balance.mead_refill_cost {
+            return Err("city.error.not_enough_resources");
+        }
+        self.resources.mead -= balance.mead_refill_cost;
+        self.energy = (self.energy + balance.mead_refill_energy).min(cap);
+        Ok(self.energy)
+    }
+
+    /// Applies offline endurance regeneration based on elapsed seconds since last save.
+    pub fn apply_offline_energy_regen(&mut self, elapsed_secs: u64, balance: &BalanceConfig) {
+        if balance.energy_regen_seconds == 0 || elapsed_secs == 0 {
+            return;
+        }
+        let speed_pct = 100 + self.compute_bonuses().energy_regen_speed_pct as u64;
+        let effective_secs = (elapsed_secs * speed_pct) / 100;
+        let gained = (effective_secs / balance.energy_regen_seconds) as u32;
+        if gained > 0 {
+            self.regenerate_energy(gained, balance);
+        }
+    }
+
     /// Records a Match-3 victory, granting earned rewards and mastery progress.
     pub fn record_level_victory(&mut self, building_id: &str, rewards: &ResourceBundle) {
         self.resources.add(rewards);

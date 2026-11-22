@@ -97,6 +97,8 @@ impl GameDataBundle {
 pub struct SaveData {
     pub schema_version: u32,
     pub language: Language,
+    #[serde(default)]
+    pub last_saved_unix_secs: u64,
     pub city: CityState,
 }
 
@@ -106,6 +108,7 @@ impl SaveData {
         Self {
             schema_version: SAVE_SCHEMA_VERSION,
             language,
+            last_saved_unix_secs: 0,
             city: CityState::new(balance),
         }
     }

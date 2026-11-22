@@ -29,10 +29,11 @@ const CELEBRATION_DURATION_SECS: f32 = 3.2;
 #[derive(Component)]
 pub struct CityRoot;
 
-/// Tracks whether the City layout was last built in portrait mode.
+/// Tracks whether the City layout was last built in portrait mode and displayed endurance.
 #[derive(Resource, Default)]
 pub struct CityLayoutMode {
     pub is_portrait: bool,
+    pub last_displayed_energy: u32,
 }
 
 #[derive(Component)]
@@ -40,6 +41,7 @@ pub enum CityAction {
     SelectBuilding(String),
     PlayBuildingLevel(String),
     UpgradeBuilding(String),
+    DrinkMead,
     ClaimQuest(String),
     ToggleAmuletsModal,
     ToggleCollectionsModal,
@@ -63,7 +65,10 @@ pub fn setup_city_ui(
         .get_single()
         .map(|w| w.width() < w.height())
         .unwrap_or(false);
-    commands.insert_resource(CityLayoutMode { is_portrait });
+    commands.insert_resource(CityLayoutMode {
+        is_portrait,
+        last_displayed_energy: ctx.city.energy,
+    });
     spawn_city_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted, is_portrait);
 }
 
@@ -190,6 +195,26 @@ fn spawn_city_tree(
                         ),
                         Color::srgb(0.45, 0.84, 0.96),
                     );
+                    if ctx.city.energy < max_energy {
+                        let can_drink = res.mead >= ctx.data.balance.mead_refill_cost;
+                        let lbl = i18n.t_fmt(
+                            "city.button.drink_mead",
+                            &[
+                                ("energy", ctx.data.balance.mead_refill_energy.to_string()),
+                                ("cost", ctx.data.balance.mead_refill_cost.to_string()),
+                            ],
+                        );
+                        spawn_small_button(
+                            pills,
+                            &lbl,
+                            CityAction::DrinkMead,
+                            if can_drink {
+                                COLOR_ACCENT_GREEN
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                        );
+                    }
                 });
 
                 // Utility buttons
@@ -1405,6 +1430,12 @@ pub fn handle_city_buttons(
         }
     }
 
+    // Refresh top bar live when Endurance regenerates.
+    if layout_mode.last_displayed_energy != ctx.city.energy {
+        layout_mode.last_displayed_energy = ctx.city.energy;
+        rebuild = true;
+    }
+
     // Respond to window orientation changes (Portrait <-> Landscape).
     for ev in resize_events.read() {
         let now_portrait = ev.width < ev.height;
@@ -1472,6 +1503,21 @@ pub fn handle_city_buttons(
                     }
                     rebuild = true;
                 }
+            }
+            CityAction::DrinkMead => {
+                let balance = ctx.data.balance.clone();
+                match ctx.city.try_drink_mead(&balance) {
+                    Ok(_) => {
+                        ctx.status_notice_key = None;
+                        ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    }
+                }
+                rebuild = true;
             }
             CityAction::ClaimQuest(quest_id) => {
                 if let Some(quest) = ctx.data.quests.iter().find(|q| q.id == *quest_id).cloned() {

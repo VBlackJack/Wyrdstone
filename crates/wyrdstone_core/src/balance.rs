@@ -34,6 +34,8 @@ pub struct BalanceConfig {
     pub max_energy: u32,
     pub energy_cost_per_level: u32,
     pub energy_regen_seconds: u64,
+    pub mead_refill_cost: u32,
+    pub mead_refill_energy: u32,
     pub starting_wood: u32,
     pub starting_stone: u32,
     pub starting_gold: u32,
