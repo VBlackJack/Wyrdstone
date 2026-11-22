@@ -68,7 +68,7 @@ pub const COLOR_BUTTON_DISABLED: Color = Color::srgb(0.24, 0.27, 0.32);
 pub const fn rune_base_rgb(rune: RuneType) -> [u8; 3] {
     match rune {
         RuneType::Fire => [204, 62, 46],   // Muspel crimson
-        RuneType::Ice => [78, 188, 224],   // Niflheim frost cyan
+        RuneType::Ice => [236, 234, 228],  // Niflheim pearl-silver (distinct from cyan ice blocks)
         RuneType::Wood => [62, 168, 92],   // Yggdrasil emerald
         RuneType::Stone => [138, 128, 168], // Midgard slate violet
         RuneType::Gold => [232, 178, 46],  // Asgard solar gold

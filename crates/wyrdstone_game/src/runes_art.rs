@@ -166,13 +166,12 @@ fn build_cell_bg_image() -> Image {
     finish_image(px)
 }
 
-/// Translucent glacial ice cube drawn OVER the runestone so the tile looks genuinely encased in ice.
+/// Translucent glacial ice cube drawn OVER the runestone with a clear center window
+/// so the trapped rune glyph remains 100% readable while unmistakably encased in ice.
 fn build_ice_top_frost_image(layers: u8) -> Image {
     let mut px = new_canvas();
     let s = RUNE_TEX_SIZE as i32;
-
-    // 1. Translucent frozen glass interior glaze (thicker & milkier for 2-layer glacial ice).
-    let base_alpha: f32 = if layers >= 2 { 138.0 } else { 88.0 };
+    let half = s as f32 * 0.5;
     let wall_w: i32 = if layers >= 2 { 6 } else { 4 };
 
     for y in 1..(s - 1) {
@@ -183,74 +182,79 @@ fn build_ice_top_frost_image(layers: u8) -> Image {
             let bottom = s - 1 - y;
             let edge = left.min(right).min(top).min(bottom);
 
-            // Outer dark frost rim for crisp silhouette against any tile.
+            // Outer frost rim for crisp ice-block silhouette.
             if edge == 1 {
-                set_px(&mut px, x, y, [78, 168, 214, 240]);
+                set_px(&mut px, x, y, [72, 174, 224, 245]);
                 continue;
             }
 
-            // Thick 3D beveled ice cube walls: bright white-cyan on top/left, deep arctic blue on bottom/right.
+            // Thick 3D beveled ice walls around all four sides.
             if edge <= wall_w {
                 let top_left = left <= wall_w || top <= wall_w;
                 let rgba = if top_left {
                     if layers >= 2 {
-                        [236, 252, 255, 242]
+                        [240, 253, 255, 248]
                     } else {
-                        [218, 248, 255, 215]
+                        [218, 248, 255, 225]
                     }
                 } else if layers >= 2 {
-                    [102, 198, 238, 232]
+                    [96, 198, 242, 238]
                 } else {
-                    [92, 186, 228, 195]
+                    [88, 186, 230, 205]
                 };
                 set_px(&mut px, x, y, rgba);
                 continue;
             }
 
-            // Subtle frost gradient stronger near corners & top-left specular sheen.
-            let corner_dist = (left.min(right) + top.min(bottom)) as f32;
-            let corner_frost = ((24.0 - corner_dist).max(0.0) / 24.0) * if layers >= 2 { 92.0 } else { 62.0 };
+            // Radial clear window in the center so the carved rune glyph shines through clearly!
+            let dx = x as f32 - half;
+            let dy = y as f32 - half;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let clear_radius = if layers >= 2 { 16.0 } else { 19.0 };
+            let outer_radius = 29.0;
+            let frost_ring = ((dist - clear_radius) / (outer_radius - clear_radius)).clamp(0.0, 1.0);
 
-            // Glossy diagonal ice-glass reflection bands across the frozen face.
+            let center_tint = if layers >= 2 { 26.0 } else { 12.0 };
+            let ring_alpha = frost_ring.powf(1.3) * if layers >= 2 { 195.0 } else { 145.0 };
+
+            // Subtle diagonal specular ice sheen (only outside the very center).
             let diag = x + y;
-            let band1 = (diag - 36).abs() <= 4;
-            let band2 = (diag - 48).abs() <= 2;
-            let glare = if band1 {
-                68.0
-            } else if band2 {
-                45.0
+            let glare = if dist > clear_radius * 0.75 && ((diag - 34).abs() <= 3 || (diag - 48).abs() <= 2) {
+                55.0
             } else {
                 0.0
             };
 
-            let alpha = (base_alpha + corner_frost + glare).clamp(0.0, 235.0) as u8;
-            let r = (165.0 + glare * 1.2 + corner_frost * 0.7).clamp(0.0, 255.0) as u8;
-            let g = (232.0 + glare * 0.4 + corner_frost * 0.3).clamp(0.0, 255.0) as u8;
+            let alpha = (center_tint + ring_alpha + glare).clamp(0.0, 235.0) as u8;
+            let r = (175.0 + frost_ring * 65.0 + glare).clamp(0.0, 255.0) as u8;
+            let g = (236.0 + frost_ring * 18.0 + glare * 0.3).clamp(0.0, 255.0) as u8;
             let b = 255u8;
             set_px(&mut px, x, y, [r, g, b, alpha]);
         }
     }
 
-    // 2. Crisp specular highlight glint along top-left inner bevel.
-    draw_thick_line(&mut px, 8, 8, 28, 8, 1, [255, 255, 255, 235]);
-    draw_thick_line(&mut px, 8, 8, 8, 24, 1, [255, 255, 255, 235]);
+    // Crisp white specular glint on top-left ice bevel.
+    draw_thick_line(&mut px, 8, 8, 26, 8, 1, [255, 255, 255, 240]);
+    draw_thick_line(&mut px, 8, 8, 8, 24, 1, [255, 255, 255, 240]);
 
-    // 3. Layer 2 (Thick Glacial Ice): jagged internal fracture lines & frozen rime crystals.
+    // Layer 2 (Thick Glacial Ice): jagged frost fractures around the rim & corners (leaving the center rune clear).
     if layers >= 2 {
-        let crack_hi = [245, 253, 255, 235];
-        let crack_lo = [85, 178, 224, 210];
-        // Jagged glacial crack from top-left to center-right
-        draw_thick_line(&mut px, 10, 12, 26, 24, 1, crack_lo);
-        draw_thick_line(&mut px, 26, 24, 38, 20, 1, crack_lo);
-        draw_thick_line(&mut px, 38, 20, 54, 34, 1, crack_lo);
-        draw_thick_line(&mut px, 10, 11, 26, 23, 0, crack_hi);
-        draw_thick_line(&mut px, 26, 23, 38, 19, 0, crack_hi);
-        draw_thick_line(&mut px, 38, 19, 54, 33, 0, crack_hi);
-        // Secondary crack from bottom-left to center
-        draw_thick_line(&mut px, 12, 52, 28, 38, 1, crack_lo);
-        draw_thick_line(&mut px, 28, 38, 46, 50, 1, crack_lo);
-        draw_thick_line(&mut px, 12, 51, 28, 37, 0, crack_hi);
-        draw_thick_line(&mut px, 28, 37, 46, 49, 0, crack_hi);
+        let crack_hi = [248, 254, 255, 245];
+        let crack_lo = [76, 175, 224, 220];
+        // Top-left to top-center crack
+        draw_thick_line(&mut px, 8, 12, 18, 18, 1, crack_lo);
+        draw_thick_line(&mut px, 18, 18, 24, 10, 1, crack_lo);
+        draw_thick_line(&mut px, 8, 11, 18, 17, 0, crack_hi);
+        // Bottom-right crack
+        draw_thick_line(&mut px, 56, 50, 44, 44, 1, crack_lo);
+        draw_thick_line(&mut px, 44, 44, 40, 55, 1, crack_lo);
+        draw_thick_line(&mut px, 56, 49, 44, 43, 0, crack_hi);
+        // Top-right crack
+        draw_thick_line(&mut px, 55, 14, 44, 22, 1, crack_lo);
+        draw_thick_line(&mut px, 55, 13, 44, 21, 0, crack_hi);
+        // Bottom-left crack
+        draw_thick_line(&mut px, 10, 52, 20, 42, 1, crack_lo);
+        draw_thick_line(&mut px, 10, 51, 20, 41, 0, crack_hi);
     }
 
     finish_image(px)
