@@ -18,7 +18,7 @@
 
 use crate::balance::BalanceConfig;
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, RuneType};
-use crate::city::{AmuletEffect, ResourceBundle};
+use crate::city::{AmuletEffect, CityBonuses, ResourceBundle};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -103,6 +103,16 @@ impl LevelSession {
         amulet: Option<AmuletEffect>,
         rng: &mut R,
     ) -> Self {
+        Self::start_with_bonuses(level, amulet, CityBonuses::default(), rng)
+    }
+
+    /// Starts a new playable session combining equipped Amulet and rebuilt village bonuses.
+    pub fn start_with_bonuses<R: Rng>(
+        level: LevelDef,
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        rng: &mut R,
+    ) -> Self {
         let board = Board::new_for_level(&level, rng);
         let objectives = level
             .objectives
@@ -122,28 +132,28 @@ impl LevelSession {
             })
             .collect();
 
-        let extra_moves = match amulet {
+        let amulet_moves = match amulet {
             Some(AmuletEffect::ExtraMoves(m)) => m,
             _ => 0,
         };
-        let score_bonus_pct = match amulet {
+        let amulet_score = match amulet {
             Some(AmuletEffect::ScoreBonusPct(p)) => p,
             _ => 0,
         };
-        let resource_bonus_pct = match amulet {
+        let amulet_resources = match amulet {
             Some(AmuletEffect::ResourceBonusPct(p)) => p,
             _ => 0,
         };
         let time_left_secs = level.time_limit_seconds.map(|s| s as f32);
 
         Self {
-            moves_left: level.max_moves + extra_moves,
+            moves_left: level.max_moves + amulet_moves + city_bonuses.extra_moves,
             time_left_secs,
             level,
             board,
             score: 0,
-            score_bonus_pct,
-            resource_bonus_pct,
+            score_bonus_pct: amulet_score + city_bonuses.score_bonus_pct,
+            resource_bonus_pct: amulet_resources + city_bonuses.resource_bonus_pct,
             objectives,
             outcome: LevelOutcome::InProgress,
             last_combo: 0,

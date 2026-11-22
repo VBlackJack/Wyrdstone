@@ -42,6 +42,8 @@ pub struct GameContext {
     pub data: GameDataBundle,
     pub city: CityState,
     pub has_existing_save: bool,
+    pub selected_building_id: String,
+    pub amulets_modal_open: bool,
     pub active_session: Option<LevelSession>,
     pub active_level_id: Option<String>,
     pub armed_tool: Option<ActiveTool>,
@@ -72,11 +74,19 @@ impl GameContext {
             None => (CityState::new(&data.balance), false),
         };
 
+        let default_bldg = data
+            .buildings
+            .first()
+            .map(|b| b.id.clone())
+            .unwrap_or_else(|| "great_hall".to_string());
         let regen_secs = data.balance.energy_regen_seconds as f32;
+
         Self {
             data,
             city,
             has_existing_save,
+            selected_building_id: default_bldg,
+            amulets_modal_open: false,
             active_session: None,
             active_level_id: None,
             armed_tool: None,
@@ -103,7 +113,7 @@ impl GameContext {
         }
     }
 
-    /// Launches a Match-3 level by ID, spending endurance if available.
+    /// Launches a Match-3 level by ID, spending endurance and applying amulet + village bonuses.
     pub fn start_level(&mut self, level_id: &str) -> Result<(), &'static str> {
         if !self.city.try_spend_energy(&self.data.balance) {
             return Err("city.error.not_enough_energy");
@@ -112,7 +122,9 @@ impl GameContext {
             return Err("city.error.not_enough_energy");
         };
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
-        let session = LevelSession::start_with_amulet(level_def, amulet, &mut self.rng);
+        let city_bonuses = self.city.compute_bonuses();
+        let session =
+            LevelSession::start_with_bonuses(level_def, amulet, city_bonuses, &mut self.rng);
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
         self.armed_tool = None;
@@ -134,9 +146,11 @@ fn resolve_save_path() -> Option<PathBuf> {
     }
 }
 
-/// Regenerates endurance periodically while the game is running.
+/// Regenerates endurance periodically, sped up by the Mead Hall tier.
 pub fn tick_energy_regen(time: Res<Time>, mut ctx: ResMut<GameContext>) {
-    if ctx.energy_regen_timer.tick(time.delta()).just_finished() {
+    let speed_mult = 1.0 + (ctx.city.compute_bonuses().energy_regen_speed_pct as f32 / 100.0);
+    let scaled_delta = time.delta().mul_f32(speed_mult);
+    if ctx.energy_regen_timer.tick(scaled_delta).just_finished() {
         let balance = ctx.data.balance.clone();
         ctx.city.regenerate_energy(1, &balance);
     }

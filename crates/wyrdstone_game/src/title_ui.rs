@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Title screen UI with language switch and play/continue entry.
+//! Full-bleed painted Title screen with language switch, audio toggle, and play entry.
 
 use crate::audio::{toggle_mute, BgmTrack, SoundBank};
 use crate::fjord_art::FjordTextures;
@@ -70,142 +70,142 @@ fn spawn_title_tree(
     commands
         .spawn((
             TitleRoot,
+            ImageNode::new(fjord_art.fjord_map.clone()),
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(18.0),
-                padding: UiRect::all(Val::Px(24.0)),
                 ..default()
             },
-            BackgroundColor(COLOR_BG_DEEP),
         ))
-        .with_children(|parent| {
-            // Illustrated Nordic Fjord panorama banner
-            parent.spawn((
-                ImageNode::new(fjord_art.fjord_panorama.clone()),
+        .with_children(|bg| {
+            // Subtle dark vignette overlay for crisp typography contrast
+            bg.spawn((
                 Node {
-                    width: Val::Px(560.0),
-                    height: Val::Px(190.0),
-                    border: UiRect::all(Val::Px(2.0)),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(22.0),
+                    padding: UiRect::all(Val::Px(24.0)),
                     ..default()
                 },
-                BorderColor(COLOR_ACCENT_GOLD),
-                BorderRadius::all(Val::Px(12.0)),
-            ));
-
-            // Emblem card
-            parent
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        row_gap: Val::Px(8.0),
-                        padding: UiRect::axes(Val::Px(44.0), Val::Px(22.0)),
-                        border: UiRect::all(Val::Px(2.0)),
-                        ..default()
-                    },
-                    BackgroundColor(COLOR_PANEL_DARK),
-                    BorderColor(COLOR_ACCENT_GOLD),
-                    BorderRadius::all(Val::Px(14.0)),
-                ))
-                .with_children(|card| {
-                    card.spawn((
-                        Text::new(i18n.t("app.title.name")),
-                        TextFont {
-                            font_size: FONT_TITLE_LG,
+                BackgroundColor(Color::srgba(0.04, 0.07, 0.12, 0.56)),
+            ))
+            .with_children(|parent| {
+                // Translucent Nordic emblem card
+                parent
+                    .spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(10.0),
+                            padding: UiRect::axes(Val::Px(54.0), Val::Px(32.0)),
+                            border: UiRect::all(Val::Px(2.0)),
                             ..default()
                         },
-                        TextColor(COLOR_ACCENT_GOLD),
-                    ));
-
-                    card.spawn((
-                        Text::new(i18n.t("app.title.subtitle")),
-                        TextFont {
-                            font_size: FONT_TITLE_MD,
-                            ..default()
-                        },
-                        TextColor(COLOR_TEXT_PRIMARY),
-                    ));
-
-                    card.spawn((
-                        Text::new(i18n.t("app.title.footer")),
-                        TextFont {
-                            font_size: FONT_BODY,
-                            ..default()
-                        },
-                        TextColor(COLOR_TEXT_MUTED),
-                    ));
-                });
-
-            // Primary Play button
-            parent
-                .spawn((
-                    Button,
-                    TitleAction::EnterFjord,
-                    Node {
-                        width: Val::Px(280.0),
-                        height: Val::Px(56.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(2.0)),
-                        ..default()
-                    },
-                    BackgroundColor(COLOR_ACCENT_GOLD),
-                    BorderColor(COLOR_ACCENT_GOLD_HOVER),
-                    BorderRadius::all(Val::Px(10.0)),
-                ))
-                .with_children(|btn| {
-                    btn.spawn((
-                        Text::new(play_label),
-                        TextFont {
-                            font_size: FONT_HEADING,
-                            ..default()
-                        },
-                        TextColor(COLOR_TEXT_DARK),
-                    ));
-                });
-
-            // Utility buttons row (Language + Audio)
-            parent
-                .spawn(Node {
-                    column_gap: Val::Px(12.0),
-                    ..default()
-                })
-                .with_children(|row| {
-                    for (label, act) in [
-                        (i18n.t("app.title.button.language"), TitleAction::ToggleLanguage),
-                        (sound_label, TitleAction::ToggleAudio),
-                    ] {
-                        row.spawn((
-                            Button,
-                            act,
-                            Node {
-                                width: Val::Px(170.0),
-                                height: Val::Px(42.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.5)),
+                        BackgroundColor(Color::srgba(0.07, 0.10, 0.16, 0.86)),
+                        BorderColor(COLOR_ACCENT_GOLD),
+                        BorderRadius::all(Val::Px(16.0)),
+                    ))
+                    .with_children(|card| {
+                        card.spawn((
+                            Text::new(i18n.t("app.title.name")),
+                            TextFont {
+                                font_size: FONT_TITLE_LG,
                                 ..default()
                             },
-                            BackgroundColor(COLOR_PANEL_CARD),
-                            BorderColor(COLOR_PANEL_BORDER),
-                            BorderRadius::all(Val::Px(8.0)),
-                        ))
-                        .with_children(|btn| {
-                            btn.spawn((
-                                Text::new(label),
-                                TextFont {
-                                    font_size: FONT_BODY,
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+
+                        card.spawn((
+                            Text::new(i18n.t("app.title.subtitle")),
+                            TextFont {
+                                font_size: FONT_TITLE_MD,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_PRIMARY),
+                        ));
+
+                        card.spawn((
+                            Text::new(i18n.t("app.title.footer")),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_MUTED),
+                        ));
+                    });
+
+                // Primary Play button
+                parent
+                    .spawn((
+                        Button,
+                        TitleAction::EnterFjord,
+                        Node {
+                            width: Val::Px(300.0),
+                            height: Val::Px(60.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_ACCENT_GOLD),
+                        BorderColor(COLOR_ACCENT_GOLD_HOVER),
+                        BorderRadius::all(Val::Px(12.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(play_label),
+                            TextFont {
+                                font_size: FONT_HEADING,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_DARK),
+                        ));
+                    });
+
+                // Utility buttons row (Language + Audio)
+                parent
+                    .spawn(Node {
+                        column_gap: Val::Px(12.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        for (label, act) in [
+                            (i18n.t("app.title.button.language"), TitleAction::ToggleLanguage),
+                            (sound_label, TitleAction::ToggleAudio),
+                        ] {
+                            row.spawn((
+                                Button,
+                                act,
+                                Node {
+                                    width: Val::Px(170.0),
+                                    height: Val::Px(42.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.5)),
                                     ..default()
                                 },
-                                TextColor(COLOR_TEXT_PRIMARY),
-                            ));
-                        });
-                    }
-                });
+                                BackgroundColor(Color::srgba(0.10, 0.14, 0.21, 0.90)),
+                                BorderColor(COLOR_PANEL_BORDER),
+                                BorderRadius::all(Val::Px(8.0)),
+                            ))
+                            .with_children(|btn| {
+                                btn.spawn((
+                                    Text::new(label),
+                                    TextFont {
+                                        font_size: FONT_BODY,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_PRIMARY),
+                                ));
+                            });
+                        }
+                    });
+            });
         });
 }
 
@@ -254,7 +254,7 @@ pub fn handle_title_buttons(
             Interaction::None => match action {
                 TitleAction::EnterFjord => *bg = BackgroundColor(COLOR_ACCENT_GOLD),
                 TitleAction::ToggleLanguage | TitleAction::ToggleAudio => {
-                    *bg = BackgroundColor(COLOR_PANEL_CARD)
+                    *bg = BackgroundColor(Color::srgba(0.10, 0.14, 0.21, 0.90))
                 }
             },
         }

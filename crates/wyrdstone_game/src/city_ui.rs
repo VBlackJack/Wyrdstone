@@ -14,22 +14,25 @@
  * limitations under the License.
  */
 
-//! Fjord village hub UI: resource bar, Saga quests, and building cards.
+//! Interactive painted Fjord village map with building inspector drawer and Amulets modal.
 
 use crate::audio::{play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank};
 use crate::fjord_art::FjordTextures;
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
+use wyrdstone_core::BuildingDef;
 
 #[derive(Component)]
 pub struct CityRoot;
 
 #[derive(Component)]
 pub enum CityAction {
+    SelectBuilding(String),
     PlayBuildingLevel(String),
     UpgradeBuilding(String),
     ClaimQuest(String),
+    ToggleAmuletsModal,
     CraftOrEquipAmulet(String),
     ToggleLanguage,
     ToggleAudio,
@@ -61,6 +64,7 @@ fn spawn_city_tree(
 ) {
     let i18n = &ctx.data.i18n;
     let res = ctx.city.resources;
+    let max_energy = ctx.city.max_energy(&ctx.data.balance);
     let sound_label = if muted {
         i18n.t("app.audio.off")
     } else {
@@ -74,23 +78,23 @@ fn spawn_city_tree(
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(16.0)),
-                row_gap: Val::Px(14.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                row_gap: Val::Px(10.0),
                 ..default()
             },
             BackgroundColor(COLOR_BG_DEEP),
         ))
         .with_children(|root| {
-            // Top bar: title, resources, language, back
+            // 1. Sleek Top Resource & Navigation Bar
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
                     flex_wrap: FlexWrap::Wrap,
                     justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
-                    row_gap: Val::Px(8.0),
-                    column_gap: Val::Px(12.0),
+                    padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                    row_gap: Val::Px(6.0),
+                    column_gap: Val::Px(10.0),
                     border: UiRect::all(Val::Px(1.5)),
                     ..default()
                 },
@@ -99,10 +103,10 @@ fn spawn_city_tree(
                 BorderRadius::all(Val::Px(10.0)),
             ))
             .with_children(|bar| {
-                // Title + Clan Glory
+                // Village title + Clan Glory
                 bar.spawn(Node {
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(2.0),
+                    row_gap: Val::Px(1.0),
                     ..default()
                 })
                 .with_children(|col| {
@@ -127,36 +131,63 @@ fn spawn_city_tree(
                     ));
                 });
 
-                // Resources strip
-                let resource_line = format!(
-                    "{}: {}   {}: {}   {}: {}   {}: {}   {}: {}/{}",
-                    i18n.t("resources.label.wood"),
-                    res.wood,
-                    i18n.t("resources.label.stone"),
-                    res.stone,
-                    i18n.t("resources.label.gold"),
-                    res.gold,
-                    i18n.t("resources.label.mead"),
-                    res.mead,
-                    i18n.t("resources.label.energy"),
-                    ctx.city.energy,
-                    ctx.data.balance.max_energy,
-                );
-                bar.spawn((
-                    Text::new(resource_line),
-                    TextFont {
-                        font_size: FONT_BODY,
-                        ..default()
-                    },
-                    TextColor(COLOR_TEXT_PRIMARY),
-                ));
+                // Resource pills
+                bar.spawn(Node {
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(4.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|pills| {
+                    spawn_resource_pill(
+                        pills,
+                        &format!("{}: {}", i18n.t("resources.label.wood"), res.wood),
+                        Color::srgb(0.44, 0.80, 0.52),
+                    );
+                    spawn_resource_pill(
+                        pills,
+                        &format!("{}: {}", i18n.t("resources.label.stone"), res.stone),
+                        Color::srgb(0.76, 0.74, 0.88),
+                    );
+                    spawn_resource_pill(
+                        pills,
+                        &format!("{}: {}", i18n.t("resources.label.gold"), res.gold),
+                        COLOR_ACCENT_GOLD,
+                    );
+                    spawn_resource_pill(
+                        pills,
+                        &format!("{}: {}", i18n.t("resources.label.mead"), res.mead),
+                        Color::srgb(0.95, 0.66, 0.30),
+                    );
+                    spawn_resource_pill(
+                        pills,
+                        &format!(
+                            "{}: {}/{}",
+                            i18n.t("resources.label.energy"),
+                            ctx.city.energy,
+                            max_energy
+                        ),
+                        Color::srgb(0.45, 0.84, 0.96),
+                    );
+                });
 
                 // Utility buttons
                 bar.spawn(Node {
-                    column_gap: Val::Px(8.0),
+                    column_gap: Val::Px(6.0),
                     ..default()
                 })
                 .with_children(|btns| {
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.amulets.button"),
+                        CityAction::ToggleAmuletsModal,
+                        if ctx.city.equipped_amulet.is_some() {
+                            COLOR_ACCENT_TEAL
+                        } else {
+                            COLOR_PANEL_CARD
+                        },
+                    );
                     spawn_small_button(
                         btns,
                         sound_label,
@@ -178,40 +209,27 @@ fn spawn_city_tree(
                 });
             });
 
-            // Illustrated Aurora Fjord panorama strip
-            root.spawn((
-                ImageNode::new(fjord_art.fjord_panorama.clone()),
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(112.0),
-                    border: UiRect::all(Val::Px(1.5)),
-                    ..default()
-                },
-                BorderColor(COLOR_PANEL_BORDER),
-                BorderRadius::all(Val::Px(10.0)),
-            ));
-
-            // Active Saga Quest banner
+            // 2. Compact Active Saga Quest Ribbon
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
                     justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                    padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
                     column_gap: Val::Px(12.0),
                     border: UiRect::all(Val::Px(1.5)),
                     ..default()
                 },
                 BackgroundColor(COLOR_PANEL_CARD),
                 BorderColor(COLOR_ACCENT_GOLD),
-                BorderRadius::all(Val::Px(10.0)),
+                BorderRadius::all(Val::Px(8.0)),
             ))
             .with_children(|qbar| {
                 if let Some(quest) = ctx.city.active_quest(&ctx.data.quests) {
                     let ready = ctx.city.is_quest_ready(quest);
                     qbar.spawn(Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(2.0),
+                        row_gap: Val::Px(1.0),
                         ..default()
                     })
                     .with_children(|info| {
@@ -257,37 +275,497 @@ fn spawn_city_tree(
                 }
             });
 
-            // Nordic Amulets strip
-            root.spawn((
+            // 3. Main Split View: Interactive Fjord Map (Left) + Building Inspector Drawer (Right)
+            root.spawn(Node {
+                width: Val::Percent(100.0),
+                flex_grow: 1.0,
+                column_gap: Val::Px(12.0),
+                ..default()
+            })
+            .with_children(|main| {
+                // LEFT: Full Interactive Painted Fjord Map
+                main.spawn((
+                    ImageNode::new(fjord_art.fjord_map.clone()),
+                    Node {
+                        width: Val::Percent(66.0),
+                        height: Val::Percent(100.0),
+                        border: UiRect::all(Val::Px(2.0)),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    BorderColor(COLOR_PANEL_BORDER),
+                    BorderRadius::all(Val::Px(12.0)),
+                ))
+                .with_children(|map| {
+                    for b in &ctx.data.buildings {
+                        spawn_map_building_pin(map, b, ctx, fjord_art);
+                    }
+                });
+
+                // RIGHT: Spacious Building Inspector Drawer
+                main.spawn((
+                    Node {
+                        width: Val::Percent(34.0),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::SpaceBetween,
+                        padding: UiRect::all(Val::Px(14.0)),
+                        row_gap: Val::Px(10.0),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(COLOR_PANEL_DARK),
+                    BorderColor(COLOR_PANEL_BORDER),
+                    BorderRadius::all(Val::Px(12.0)),
+                ))
+                .with_children(|inspector| {
+                    if let Some(selected) = ctx.data.building_by_id(&ctx.selected_building_id) {
+                        spawn_building_inspector(inspector, selected, ctx, fjord_art);
+                    } else {
+                        inspector.spawn((
+                            Text::new(i18n.t("city.panel.building.select_hint")),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_MUTED),
+                        ));
+                    }
+                });
+            });
+
+            // 4. Optional Nordic Amulets Modal Overlay
+            if ctx.amulets_modal_open {
+                spawn_amulets_modal(root, ctx);
+            }
+        });
+}
+
+fn spawn_map_building_pin(
+    map: &mut ChildBuilder,
+    b: &BuildingDef,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+) {
+    let i18n = &ctx.data.i18n;
+    let tier = ctx.city.building_tier(&b.id);
+    let unlocked = ctx.city.is_building_unlocked(b);
+    let selected = ctx.selected_building_id == b.id;
+    let can_upgrade = unlocked
+        && ctx
+            .city
+            .next_upgrade_cost(b)
+            .map(|c| ctx.city.resources.can_afford(c))
+            .unwrap_or(false);
+
+    let border_col = if selected {
+        COLOR_ACCENT_GOLD
+    } else if can_upgrade {
+        COLOR_ACCENT_GREEN
+    } else if !unlocked {
+        COLOR_BUTTON_DISABLED
+    } else {
+        COLOR_PANEL_BORDER
+    };
+
+    let img_tint = if !unlocked {
+        Color::srgba(0.38, 0.42, 0.50, 0.85)
+    } else if tier == 0 {
+        Color::srgba(0.62, 0.70, 0.80, 0.95)
+    } else {
+        Color::WHITE
+    };
+
+    // Positioned directly on its scenic clearing in the Fjord Map
+    map.spawn((
+        Button,
+        CityAction::SelectBuilding(b.id.clone()),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent((b.map_x_pct - 9.0).max(2.0)),
+            top: Val::Percent((b.map_y_pct - 12.0).max(4.0)),
+            width: Val::Px(134.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: UiRect::all(Val::Px(4.0)),
+            row_gap: Val::Px(3.0),
+            border: UiRect::all(Val::Px(if selected { 3.0 } else { 2.0 })),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.06, 0.09, 0.14, 0.88)),
+        BorderColor(border_col),
+        BorderRadius::all(Val::Px(10.0)),
+    ))
+    .with_children(|pin| {
+        if let Some(img) = fjord_art.building_image(&b.id) {
+            pin.spawn((
+                ImageNode {
+                    image: img,
+                    color: img_tint,
+                    ..default()
+                },
                 Node {
                     width: Val::Percent(100.0),
-                    flex_wrap: FlexWrap::Wrap,
-                    align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
-                    column_gap: Val::Px(12.0),
-                    row_gap: Val::Px(6.0),
+                    height: Val::Px(64.0),
+                    ..default()
+                },
+                BorderRadius::all(Val::Px(6.0)),
+            ));
+        }
+
+        pin.spawn((
+            Text::new(i18n.t(&b.name_key)),
+            TextFont {
+                font_size: FONT_SMALL,
+                ..default()
+            },
+            TextColor(if selected {
+                COLOR_ACCENT_GOLD
+            } else {
+                COLOR_TEXT_PRIMARY
+            }),
+        ));
+
+        let badge = if !unlocked {
+            "---".to_string()
+        } else if can_upgrade {
+            format!("{} ({}/{})", i18n.t("city.panel.building.status.ready"), tier, b.max_tier)
+        } else if tier == 0 {
+            i18n.t("city.panel.building.status.ruined").to_string()
+        } else {
+            format!("T{} / {}", tier, b.max_tier)
+        };
+        pin.spawn((
+            Text::new(badge),
+            TextFont {
+                font_size: 12.0,
+                ..default()
+            },
+            TextColor(if can_upgrade {
+                COLOR_ACCENT_GREEN
+            } else if tier > 0 {
+                COLOR_ACCENT_GOLD
+            } else {
+                COLOR_TEXT_MUTED
+            }),
+        ));
+    });
+}
+
+fn spawn_building_inspector(
+    inspector: &mut ChildBuilder,
+    b: &BuildingDef,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+) {
+    let i18n = &ctx.data.i18n;
+    let tier = ctx.city.building_tier(&b.id);
+    let stars = ctx.city.building_mastery_stars(&b.id);
+    let unlocked = ctx.city.is_building_unlocked(b);
+    let next_cost = ctx.city.next_upgrade_cost(b);
+    let can_afford = next_cost
+        .map(|c| ctx.city.resources.can_afford(c))
+        .unwrap_or(false);
+
+    // Top content group
+    inspector
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(8.0),
+            ..default()
+        })
+        .with_children(|top| {
+            // Large painted illustration
+            if let Some(img) = fjord_art.building_image(&b.id) {
+                let tint = if !unlocked {
+                    Color::srgb(0.42, 0.46, 0.54)
+                } else if tier == 0 {
+                    Color::srgb(0.68, 0.76, 0.86)
+                } else {
+                    Color::WHITE
+                };
+                top.spawn((
+                    ImageNode {
+                        image: img,
+                        color: tint,
+                        ..default()
+                    },
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(156.0),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BorderColor(if tier > 0 {
+                        COLOR_ACCENT_GOLD
+                    } else {
+                        COLOR_PANEL_BORDER
+                    }),
+                    BorderRadius::all(Val::Px(10.0)),
+                ));
+            }
+
+            // Title + Tier / Mastery
+            top.spawn((
+                Text::new(i18n.t(&b.name_key)),
+                TextFont {
+                    font_size: FONT_TITLE_MD - 4.0,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+            ));
+
+            let status_line = format!(
+                "{}   |   {}",
+                if tier == 0 {
+                    i18n.t("city.panel.building.status.ruined").to_string()
+                } else {
+                    i18n.t_fmt(
+                        "city.panel.building.level",
+                        &[
+                            ("level", tier.to_string()),
+                            ("max", b.max_tier.to_string()),
+                        ],
+                    )
+                },
+                i18n.t_fmt(
+                    "city.panel.building.mastery",
+                    &[("stars", stars.to_string())],
+                ),
+            );
+            top.spawn((
+                Text::new(status_line),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_MUTED),
+            ));
+
+            top.spawn((
+                Text::new(i18n.t(&b.desc_key)),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_PRIMARY),
+            ));
+
+            // Clear, highlighted Village Effect box ("what this building actually does!")
+            top.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(10.0)),
+                    row_gap: Val::Px(4.0),
                     border: UiRect::all(Val::Px(1.5)),
                     ..default()
                 },
-                BackgroundColor(COLOR_PANEL_DARK),
-                BorderColor(COLOR_PANEL_BORDER),
-                BorderRadius::all(Val::Px(10.0)),
+                BackgroundColor(Color::srgba(0.10, 0.22, 0.26, 0.90)),
+                BorderColor(COLOR_ACCENT_TEAL),
+                BorderRadius::all(Val::Px(8.0)),
             ))
-            .with_children(|abar| {
-                abar.spawn((
-                    Text::new(i18n.t("city.panel.amulets.title")),
+            .with_children(|box_node| {
+                box_node.spawn((
+                    Text::new(i18n.t("city.panel.building.benefit_title")),
                     TextFont {
-                        font_size: FONT_BODY,
+                        font_size: FONT_SMALL,
                         ..default()
                     },
                     TextColor(COLOR_ACCENT_GOLD),
                 ));
+                box_node.spawn((
+                    Text::new(i18n.t(&b.bonus_key)),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(COLOR_TEXT_PRIMARY),
+                ));
+            });
+
+            // Color-coded upgrade cost breakdown
+            if !unlocked {
+                top.spawn((
+                    Text::new(i18n.t("city.panel.building.locked")),
+                    TextFont {
+                        font_size: FONT_BODY,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_CRIMSON),
+                ));
+            } else if let Some(cost) = next_cost {
+                top.spawn((
+                    Text::new(i18n.t("city.panel.building.cost_title")),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(COLOR_TEXT_MUTED),
+                ));
+                top.spawn(Node {
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(4.0),
+                    ..default()
+                })
+                .with_children(|costs| {
+                    let res = ctx.city.resources;
+                    let entries = [
+                        (i18n.t("resources.label.wood"), res.wood, cost.wood),
+                        (i18n.t("resources.label.stone"), res.stone, cost.stone),
+                        (i18n.t("resources.label.gold"), res.gold, cost.gold),
+                        (i18n.t("resources.label.mead"), res.mead, cost.mead),
+                    ];
+                    for (label, have, need) in entries {
+                        if need == 0 {
+                            continue;
+                        }
+                        let ok = have >= need;
+                        spawn_resource_pill(
+                            costs,
+                            &format!("{}: {}/{}", label, have, need),
+                            if ok {
+                                COLOR_ACCENT_GREEN
+                            } else {
+                                COLOR_ACCENT_CRIMSON
+                            },
+                        );
+                    }
+                });
+            }
+
+            // Optional error notice
+            if let Some(notice_key) = &ctx.status_notice_key {
+                top.spawn((
+                    Text::new(i18n.t(notice_key)),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_CRIMSON),
+                ));
+            }
+        });
+
+    // Bottom Action Buttons
+    inspector
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(8.0),
+            ..default()
+        })
+        .with_children(|actions| {
+            // Play buttons row
+            actions
+                .spawn(Node {
+                    width: Val::Percent(100.0),
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|play_row| {
+                    spawn_full_button(
+                        play_row,
+                        i18n.t("city.button.play_level"),
+                        CityAction::PlayBuildingLevel(b.level_id.clone()),
+                        if unlocked {
+                            COLOR_ACCENT_TEAL
+                        } else {
+                            COLOR_BUTTON_DISABLED
+                        },
+                        COLOR_TEXT_PRIMARY,
+                    );
+                    if unlocked && stars >= 1 {
+                        if let Some(mastery_id) = &b.mastery_level_id {
+                            spawn_full_button(
+                                play_row,
+                                i18n.t("city.button.play_mastery"),
+                                CityAction::PlayBuildingLevel(mastery_id.clone()),
+                                COLOR_ACCENT_GOLD,
+                                COLOR_TEXT_DARK,
+                            );
+                        }
+                    }
+                });
+
+            // Upgrade button
+            let upg_bg = if unlocked && next_cost.is_some() && can_afford {
+                COLOR_ACCENT_GREEN
+            } else {
+                COLOR_BUTTON_DISABLED
+            };
+            spawn_full_button(
+                actions,
+                if next_cost.is_some() {
+                    i18n.t("city.button.upgrade")
+                } else {
+                    i18n.t("city.button.max_level")
+                },
+                CityAction::UpgradeBuilding(b.id.clone()),
+                upg_bg,
+                COLOR_TEXT_PRIMARY,
+            );
+        });
+}
+
+fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+    let i18n = &ctx.data.i18n;
+    root.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.78)),
+    ))
+    .with_children(|backdrop| {
+        backdrop
+            .spawn((
+                Node {
+                    width: Val::Px(540.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(22.0)),
+                    row_gap: Val::Px(12.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(COLOR_PANEL_DARK),
+                BorderColor(COLOR_ACCENT_GOLD),
+                BorderRadius::all(Val::Px(14.0)),
+            ))
+            .with_children(|modal| {
+                modal
+                    .spawn(Node {
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|hdr| {
+                        hdr.spawn((
+                            Text::new(i18n.t("city.panel.amulets.title")),
+                            TextFont {
+                                font_size: FONT_HEADING,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                        spawn_small_button(
+                            hdr,
+                            i18n.t("city.panel.amulets.close"),
+                            CityAction::ToggleAmuletsModal,
+                            COLOR_ACCENT_CRIMSON,
+                        );
+                    });
 
                 for amulet in &ctx.data.amulets {
                     let crafted = ctx.city.crafted_amulets.contains(&amulet.id);
                     let equipped = ctx.city.equipped_amulet.as_deref() == Some(amulet.id.as_str());
                     let can_afford = ctx.city.resources.can_afford(&amulet.cost);
-                    let state_label = if equipped {
+                    let action_lbl = if equipped {
                         i18n.t("city.panel.amulets.equipped")
                     } else if crafted {
                         i18n.t("city.panel.amulets.equip")
@@ -303,206 +781,101 @@ fn spawn_city_tree(
                     } else {
                         COLOR_BUTTON_DISABLED
                     };
-                    let label = format!("{} [{}]", i18n.t(&amulet.name_key), state_label);
-                    spawn_small_button(
-                        abar,
-                        &label,
-                        CityAction::CraftOrEquipAmulet(amulet.id.clone()),
-                        btn_bg,
-                    );
-                }
-            });
 
-            // Optional status notice (e.g. not enough resources / endurance)
-            if let Some(notice_key) = &ctx.status_notice_key {
-                root.spawn((
-                    Text::new(i18n.t(notice_key)),
-                    TextFont {
-                        font_size: FONT_BODY,
-                        ..default()
-                    },
-                    TextColor(COLOR_ACCENT_CRIMSON),
-                ));
-            }
-
-            // Buildings grid (responsive wrap)
-            root.spawn(Node {
-                width: Val::Percent(100.0),
-                flex_grow: 1.0,
-                flex_wrap: FlexWrap::Wrap,
-                align_content: AlignContent::FlexStart,
-                row_gap: Val::Px(14.0),
-                column_gap: Val::Px(14.0),
-                ..default()
-            })
-            .with_children(|grid| {
-                for b in &ctx.data.buildings {
-                    let tier = ctx.city.building_tier(&b.id);
-                    let stars = ctx.city.building_mastery_stars(&b.id);
-                    let unlocked = ctx.city.is_building_unlocked(b);
-                    let next_cost = ctx.city.next_upgrade_cost(b);
-                    let can_afford = next_cost
-                        .map(|c| ctx.city.resources.can_afford(c))
-                        .unwrap_or(false);
-
-                    grid.spawn((
-                        Node {
-                            width: Val::Px(330.0),
-                            flex_direction: FlexDirection::Column,
-                            justify_content: JustifyContent::SpaceBetween,
-                            padding: UiRect::all(Val::Px(14.0)),
-                            row_gap: Val::Px(8.0),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(COLOR_PANEL_CARD),
-                        BorderColor(if unlocked {
-                            COLOR_PANEL_BORDER
-                        } else {
-                            COLOR_BUTTON_DISABLED
-                        }),
-                        BorderRadius::all(Val::Px(10.0)),
-                    ))
-                    .with_children(|card| {
-                        // Building illustration (ruined at Tier 0, rebuilt & glowing at Tier 1+)
-                        if let Some(img) = fjord_art.building_image(&b.id, tier) {
-                            card.spawn((
-                                ImageNode::new(img),
-                                Node {
-                                    width: Val::Percent(100.0),
-                                    height: Val::Px(74.0),
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    ..default()
-                                },
-                                BorderColor(if tier > 0 {
-                                    COLOR_ACCENT_GOLD
-                                } else {
-                                    COLOR_PANEL_BORDER
-                                }),
-                                BorderRadius::all(Val::Px(6.0)),
-                            ));
-                        }
-
-                        // Name + Tier
-                        card.spawn((
-                            Text::new(i18n.t(&b.name_key)),
-                            TextFont {
-                                font_size: FONT_HEADING,
+                    modal
+                        .spawn((
+                            Node {
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::all(Val::Px(12.0)),
+                                column_gap: Val::Px(12.0),
+                                border: UiRect::all(Val::Px(1.5)),
                                 ..default()
                             },
-                            TextColor(COLOR_ACCENT_GOLD),
-                        ));
-
-                        let meta = format!(
-                            "{}   |   {}",
-                            i18n.t_fmt(
-                                "city.panel.building.level",
-                                &[
-                                    ("level", tier.to_string()),
-                                    ("max", b.max_tier.to_string()),
-                                ],
-                            ),
-                            i18n.t_fmt(
-                                "city.panel.building.mastery",
-                                &[("stars", stars.to_string())],
-                            ),
-                        );
-                        card.spawn((
-                            Text::new(meta),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_TEXT_MUTED),
-                        ));
-
-                        card.spawn((
-                            Text::new(i18n.t(&b.desc_key)),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_TEXT_PRIMARY),
-                        ));
-
-                        // Cost / lock line
-                        let cost_text = if !unlocked {
-                            i18n.t("city.panel.building.locked").to_string()
-                        } else if let Some(c) = next_cost {
-                            i18n.t_fmt(
-                                "city.panel.building.cost",
-                                &[
-                                    ("wood", c.wood.to_string()),
-                                    ("stone", c.stone.to_string()),
-                                    ("gold", c.gold.to_string()),
-                                ],
-                            )
-                        } else {
-                            i18n.t("city.button.max_level").to_string()
-                        };
-                        card.spawn((
-                            Text::new(cost_text),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(if unlocked && can_afford {
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderColor(if equipped {
                                 COLOR_ACCENT_GOLD
                             } else {
-                                COLOR_TEXT_MUTED
+                                COLOR_PANEL_BORDER
                             }),
-                        ));
-
-                        // Action buttons row
-                        card.spawn(Node {
-                            flex_wrap: FlexWrap::Wrap,
-                            column_gap: Val::Px(8.0),
-                            row_gap: Val::Px(6.0),
-                            margin: UiRect::top(Val::Px(4.0)),
-                            ..default()
-                        })
+                            BorderRadius::all(Val::Px(10.0)),
+                        ))
                         .with_children(|row| {
-                            spawn_small_button(
-                                row,
-                                i18n.t("city.button.play_level"),
-                                CityAction::PlayBuildingLevel(b.level_id.clone()),
-                                if unlocked {
-                                    COLOR_ACCENT_TEAL
-                                } else {
-                                    COLOR_BUTTON_DISABLED
-                                },
-                            );
-
-                            if unlocked && stars >= 1 {
-                                if let Some(mastery_id) = &b.mastery_level_id {
-                                    spawn_small_button(
-                                        row,
-                                        i18n.t("city.button.play_mastery"),
-                                        CityAction::PlayBuildingLevel(mastery_id.clone()),
-                                        COLOR_ACCENT_GOLD,
-                                    );
+                            row.spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(3.0),
+                                ..default()
+                            })
+                            .with_children(|info| {
+                                info.spawn((
+                                    Text::new(i18n.t(&amulet.name_key)),
+                                    TextFont {
+                                        font_size: FONT_BODY,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                                info.spawn((
+                                    Text::new(i18n.t(&amulet.desc_key)),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_PRIMARY),
+                                ));
+                                if !crafted {
+                                    let c = amulet.cost;
+                                    info.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            "city.panel.building.cost",
+                                            &[
+                                                ("wood", c.wood.to_string()),
+                                                ("stone", c.stone.to_string()),
+                                                ("gold", c.gold.to_string()),
+                                            ],
+                                        )),
+                                        TextFont {
+                                            font_size: 12.5,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_TEXT_MUTED),
+                                    ));
                                 }
-                            }
+                            });
 
-                            let upgrade_color = if unlocked && next_cost.is_some() && can_afford {
-                                COLOR_ACCENT_GREEN
-                            } else {
-                                COLOR_BUTTON_DISABLED
-                            };
                             spawn_small_button(
                                 row,
-                                if next_cost.is_some() {
-                                    i18n.t("city.button.upgrade")
-                                } else {
-                                    i18n.t("city.button.max_level")
-                                },
-                                CityAction::UpgradeBuilding(b.id.clone()),
-                                upgrade_color,
+                                action_lbl,
+                                CityAction::CraftOrEquipAmulet(amulet.id.clone()),
+                                btn_bg,
                             );
                         });
-                    });
                 }
             });
+    });
+}
+
+fn spawn_resource_pill(parent: &mut ChildBuilder, text: &str, text_color: Color) {
+    parent
+        .spawn((
+            Node {
+                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(COLOR_PANEL_CARD),
+            BorderColor(COLOR_PANEL_BORDER),
+            BorderRadius::all(Val::Px(6.0)),
+        ))
+        .with_children(|pill| {
+            pill.spawn((
+                Text::new(text),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(text_color),
+            ));
         });
 }
 
@@ -517,7 +890,7 @@ fn spawn_small_button(
             Button,
             action,
             Node {
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 border: UiRect::all(Val::Px(1.0)),
@@ -535,6 +908,41 @@ fn spawn_small_button(
                     ..default()
                 },
                 TextColor(COLOR_TEXT_PRIMARY),
+            ));
+        });
+}
+
+fn spawn_full_button(
+    parent: &mut ChildBuilder,
+    label: &str,
+    action: CityAction,
+    bg_color: Color,
+    text_color: Color,
+) {
+    parent
+        .spawn((
+            Button,
+            action,
+            Node {
+                flex_grow: 1.0,
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(11.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(1.5)),
+                ..default()
+            },
+            BackgroundColor(bg_color),
+            BorderColor(COLOR_PANEL_BORDER),
+            BorderRadius::all(Val::Px(8.0)),
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: FONT_BODY,
+                    ..default()
+                },
+                TextColor(text_color),
             ));
         });
 }
@@ -558,6 +966,12 @@ pub fn handle_city_buttons(
             continue;
         }
         match action {
+            CityAction::SelectBuilding(id) => {
+                ctx.selected_building_id = id.clone();
+                ctx.status_notice_key = None;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
+            }
             CityAction::PlayBuildingLevel(level_id) => {
                 let is_unlocked = ctx
                     .data
@@ -572,6 +986,7 @@ pub fn handle_city_buttons(
                 } else {
                     match ctx.start_level(level_id) {
                         Ok(()) => {
+                            ctx.amulets_modal_open = false;
                             next_state.set(AppState::Match3);
                             return;
                         }
@@ -609,6 +1024,11 @@ pub fn handle_city_buttons(
                     }
                 }
             }
+            CityAction::ToggleAmuletsModal => {
+                ctx.amulets_modal_open = !ctx.amulets_modal_open;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
+            }
             CityAction::CraftOrEquipAmulet(amulet_id) => {
                 if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {
                     match ctx.city.try_craft_amulet(&amulet) {
@@ -635,6 +1055,7 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::BackToTitle => {
+                ctx.amulets_modal_open = false;
                 next_state.set(AppState::Title);
                 return;
             }

@@ -74,17 +74,30 @@ pub struct AmuletDef {
     pub effect: AmuletEffect,
 }
 
+/// Aggregate passive bonuses granted by all rebuilt village buildings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CityBonuses {
+    pub extra_max_energy: u32,
+    pub score_bonus_pct: u32,
+    pub resource_bonus_pct: u32,
+    pub extra_moves: u32,
+    pub energy_regen_speed_pct: u32,
+}
+
 /// Static building definition loaded from `assets/data/buildings.ron`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildingDef {
     pub id: String,
     pub name_key: String,
     pub desc_key: String,
+    pub bonus_key: String,
     pub max_tier: u32,
     pub requires_great_hall_tier: u32,
     pub level_id: String,
     #[serde(default)]
     pub mastery_level_id: Option<String>,
+    pub map_x_pct: f32,
+    pub map_y_pct: f32,
     pub upgrade_costs: Vec<ResourceBundle>,
     pub glory_per_tier: u32,
 }
@@ -222,7 +235,23 @@ impl CityState {
         }
     }
 
-    /// Attempts to upgrade a building, deducting resources and granting clan glory.
+    /// Computes aggregate passive bonuses granted by all rebuilt buildings.
+    pub fn compute_bonuses(&self) -> CityBonuses {
+        CityBonuses {
+            extra_max_energy: self.building_tier("great_hall") * 10,
+            score_bonus_pct: self.building_tier("forge") * 10,
+            resource_bonus_pct: self.building_tier("longship_dock") * 15,
+            extra_moves: self.building_tier("odin_shrine"),
+            energy_regen_speed_pct: self.building_tier("meadery") * 20,
+        }
+    }
+
+    /// Returns effective max endurance including Great Hall bonus.
+    pub fn max_energy(&self, balance: &BalanceConfig) -> u32 {
+        balance.max_energy + self.compute_bonuses().extra_max_energy
+    }
+
+    /// Attempts to upgrade a building, deducting resources and granting clan glory and concrete perks.
     pub fn try_upgrade_building(&mut self, def: &BuildingDef) -> Result<u32, &'static str> {
         if !self.is_building_unlocked(def) {
             return Err("city.panel.building.locked");
@@ -237,9 +266,23 @@ impl CityState {
         let new_tier = self.building_tier(&def.id) + 1;
         self.building_tiers.insert(def.id.clone(), new_tier);
         self.glory += def.glory_per_tier;
-        if def.id == "forge" {
-            self.tools.mjolnir += 1;
-            self.tools.thor_bolt += 1;
+        match def.id.as_str() {
+            "forge" => {
+                self.tools.mjolnir += 1;
+                self.tools.thor_bolt += 1;
+            }
+            "odin_shrine" => {
+                self.tools.bifrost_prism += 1;
+                self.tools.drakkar_charge += 1;
+            }
+            "great_hall" => {
+                self.energy += 10;
+            }
+            "meadery" => {
+                // Full refill up to at least 80 (clamped cleanly by caller or next regen).
+                self.energy = self.energy.max(50 + self.building_tier("great_hall") * 10);
+            }
+            _ => {}
         }
         Ok(new_tier)
     }
@@ -286,9 +329,10 @@ impl CityState {
         }
     }
 
-    /// Restores endurance up to the configured cap.
+    /// Restores endurance up to the effective cap (including Great Hall bonus).
     pub fn regenerate_energy(&mut self, amount: u32, balance: &BalanceConfig) {
-        self.energy = (self.energy + amount).min(balance.max_energy);
+        let cap = self.max_energy(balance);
+        self.energy = (self.energy + amount).min(cap);
     }
 
     /// Records a Match-3 victory, granting earned rewards and mastery progress.
