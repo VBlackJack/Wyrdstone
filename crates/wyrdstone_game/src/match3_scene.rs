@@ -119,6 +119,12 @@ pub enum BoardAnimPhase {
         elapsed: f32,
         duration: f32,
     },
+    VictoryCelebration {
+        elapsed: f32,
+        duration: f32,
+        next_burst_at: f32,
+        burst_index: u32,
+    },
 }
 
 /// Tracks board layout metrics, pointer/touch gesture state, hints, shake, and animation phase.
@@ -1364,15 +1370,20 @@ pub fn tick_board_animation(
     };
     let dt = time.delta_secs();
 
-    // Tick optional level countdown timer.
-    let timer_changed = ctx
-        .active_session
-        .as_mut()
-        .map(|s| s.tick_timer(dt))
-        .unwrap_or(false);
-    if timer_changed {
-        input_state.dirty_hud = true;
-        check_level_finished(&mut ctx, &mut next_state);
+    // Tick optional level countdown timer (paused during VictoryCelebration).
+    if !matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
+        let timer_changed = ctx
+            .active_session
+            .as_mut()
+            .map(|s| s.tick_timer(dt))
+            .unwrap_or(false);
+        if timer_changed {
+            input_state.dirty_hud = true;
+            if ctx.active_session.as_ref().map(|s| s.outcome) == Some(LevelOutcome::Defeat) {
+                finalize_level_transition(&mut ctx, &mut next_state);
+                return;
+            }
+        }
     }
 
     // Take ownership of phase to transition cleanly without borrow conflicts.
@@ -1716,8 +1727,43 @@ pub fn tick_board_animation(
                         input_state.dirty_board = true;
                         input_state.dirty_hud = true;
                     }
-                    check_level_finished(&mut ctx, &mut next_state);
-                    input_state.phase = BoardAnimPhase::Idle;
+                    let outcome = ctx
+                        .active_session
+                        .as_ref()
+                        .map(|s| s.outcome)
+                        .unwrap_or(LevelOutcome::InProgress);
+                    match outcome {
+                        LevelOutcome::Victory => {
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                            let banner = ctx.data.i18n.t("result.victory.title").to_string();
+                            commands.spawn((
+                                FloatingScore {
+                                    elapsed: 0.0,
+                                    lifetime: 1.65,
+                                },
+                                Text2d::new(banner),
+                                TextFont {
+                                    font_size: 46.0,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                                Transform::from_xyz(0.0, 10.0, Z_SELECTION_RING + 3.0),
+                            ));
+                            input_state.phase = BoardAnimPhase::VictoryCelebration {
+                                elapsed: 0.0,
+                                duration: 1.75,
+                                next_burst_at: 0.14,
+                                burst_index: 0,
+                            };
+                        }
+                        LevelOutcome::Defeat => {
+                            finalize_level_transition(&mut ctx, &mut next_state);
+                            input_state.phase = BoardAnimPhase::Idle;
+                        }
+                        LevelOutcome::InProgress => {
+                            input_state.phase = BoardAnimPhase::Idle;
+                        }
+                    }
                 }
             } else {
                 input_state.phase = BoardAnimPhase::Falling {
@@ -1728,6 +1774,67 @@ pub fn tick_board_animation(
                 };
             }
         }
+        BoardAnimPhase::VictoryCelebration {
+            mut elapsed,
+            duration,
+            mut next_burst_at,
+            mut burst_index,
+        } => {
+            elapsed += dt;
+            // Celebratory golden wave pulsing across all tiles on the board.
+            for (tile, mut tf, mut sprite) in &mut tile_q {
+                let wave = ((elapsed * 9.0) - (tile.pos.col + tile.pos.row) as f32 * 0.45).sin();
+                tf.scale = Vec3::splat(1.0 + 0.10 * wave.max(0.0));
+                sprite.color = Color::srgb(
+                    1.0 + 0.20 * wave.max(0.0),
+                    1.0 + 0.16 * wave.max(0.0),
+                    1.0,
+                );
+            }
+
+            // Periodic fireworks bursts across the board with ascending harp chimes and +bonus popups.
+            if elapsed >= next_burst_at && elapsed < duration - 0.15 {
+                next_burst_at += 0.22;
+                burst_index += 1;
+                if let Some(session) = ctx.active_session.as_ref() {
+                    let cols = session.board.cols();
+                    let rows = session.board.rows();
+                    let mut burst_cells = Vec::new();
+                    for k in 0..4usize {
+                        let c = ((burst_index as usize * 3 + k * 5) % cols).min(cols - 1);
+                        let r = ((burst_index as usize * 2 + k * 3) % rows).min(rows - 1);
+                        let p = CellPos::new(c, r);
+                        if session.board.get(p).map(|cell| !cell.blocked).unwrap_or(false) {
+                            burst_cells.push(p);
+                        }
+                    }
+                    if !burst_cells.is_empty() {
+                        spawn_clear_particles(&mut commands, &burst_cells, session, &input_state);
+                        let bonus_pts = ctx.data.balance.remaining_move_bonus;
+                        spawn_floating_score(
+                            &mut commands,
+                            &[burst_cells[0]],
+                            format!("+{bonus_pts}"),
+                            COLOR_ACCENT_GOLD,
+                            &input_state,
+                        );
+                        play_sfx(&mut commands, &sound_bank, SfxKind::MatchCombo(burst_index));
+                    }
+                }
+            }
+
+            if elapsed >= duration {
+                finalize_level_transition(&mut ctx, &mut next_state);
+                input_state.phase = BoardAnimPhase::Idle;
+            } else {
+                input_state.phase = BoardAnimPhase::VictoryCelebration {
+                    elapsed,
+                    duration,
+                    next_burst_at,
+                    burst_index,
+                };
+            }
+        }
     }
 }
 
@@ -1735,7 +1842,7 @@ fn ease_out_quad(t: f32) -> f32 {
     1.0 - (1.0 - t) * (1.0 - t)
 }
 
-fn check_level_finished(ctx: &mut GameContext, next_state: &mut NextState<AppState>) {
+fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<AppState>) {
     let finished = ctx.active_session.as_ref().and_then(|s| match s.outcome {
         LevelOutcome::InProgress => None,
         outcome => Some((
