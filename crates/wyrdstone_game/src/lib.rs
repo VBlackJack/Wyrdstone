@@ -80,7 +80,8 @@ pub fn run_app() {
         .add_systems(OnEnter(AppState::FjordCity), city_ui::setup_city_ui)
         .add_systems(
             Update,
-            city_ui::handle_city_buttons.run_if(in_state(AppState::FjordCity)),
+            (city_ui::handle_city_buttons, city_ui::animate_city_ambience)
+                .run_if(in_state(AppState::FjordCity)),
         )
         .add_systems(OnExit(AppState::FjordCity), city_ui::cleanup_city_ui)
         // Match-3 board scene

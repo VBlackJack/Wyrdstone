@@ -192,6 +192,16 @@ impl ToolInventory {
     }
 }
 
+/// Persistent lifetime statistics for the Clan Chronicles screen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClanStats {
+    pub total_victories: u32,
+    pub total_runes_cleared: u64,
+    pub best_combo: u32,
+    pub best_score: u32,
+    pub last_daily_day_index: u64,
+}
+
 /// Mutable player progression in the Wyrdstone Fjord.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CityState {
@@ -210,6 +220,8 @@ pub struct CityState {
     pub found_relics: HashSet<String>,
     #[serde(default)]
     pub claimed_collections: HashSet<String>,
+    #[serde(default)]
+    pub stats: ClanStats,
 }
 
 impl CityState {
@@ -239,6 +251,7 @@ impl CityState {
             equipped_amulet: None,
             found_relics: HashSet::new(),
             claimed_collections: HashSet::new(),
+            stats: ClanStats::default(),
         }
     }
 
@@ -412,6 +425,21 @@ impl CityState {
             }
         }
         self.glory += 10;
+        self.stats.total_victories += 1;
+    }
+
+    /// Returns true when today's Daily Trial has not yet been completed.
+    pub fn is_daily_available(&self, day_index: u64) -> bool {
+        self.stats.last_daily_day_index < day_index
+    }
+
+    /// Marks today's Daily Trial as completed and grants bonus glory + 1 Bifrost Prism.
+    pub fn record_daily_victory(&mut self, day_index: u64, rewards: &ResourceBundle) {
+        self.resources.add(rewards);
+        self.stats.last_daily_day_index = day_index;
+        self.stats.total_victories += 1;
+        self.tools.bifrost_prism += 1;
+        self.glory += 35;
     }
 
     /// Evaluates whether a quest condition is currently satisfied.

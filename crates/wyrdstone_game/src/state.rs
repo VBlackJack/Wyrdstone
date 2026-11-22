@@ -46,6 +46,7 @@ pub struct GameContext {
     pub selected_building_id: String,
     pub amulets_modal_open: bool,
     pub collections_modal_open: bool,
+    pub stats_modal_open: bool,
     pub help_modal_open: bool,
     pub confirm_reset: bool,
     pub active_session: Option<LevelSession>,
@@ -107,6 +108,7 @@ impl GameContext {
             selected_building_id: default_bldg,
             amulets_modal_open: false,
             collections_modal_open: false,
+            stats_modal_open: false,
             help_modal_open: false,
             confirm_reset: false,
             active_session: None,
@@ -159,6 +161,21 @@ impl GameContext {
         self.persist();
     }
 
+    /// Launches today's deterministic Daily Trial board (free of Endurance cost once per day).
+    pub fn start_daily_trial(&mut self) -> Result<(), &'static str> {
+        let day_idx = today_day_index();
+        let level_def = wyrdstone_core::LevelDef::daily_challenge(day_idx);
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let city_bonuses = self.city.compute_bonuses();
+        let session =
+            LevelSession::start_with_bonuses(level_def, amulet, city_bonuses, &mut self.rng);
+        self.active_level_id = Some(format!("daily_{day_idx}"));
+        self.active_session = Some(session);
+        self.armed_tool = None;
+        self.status_notice_key = None;
+        Ok(())
+    }
+
     /// Launches a Match-3 level by ID, spending endurance and applying amulet + village bonuses.
     pub fn start_level(&mut self, level_id: &str) -> Result<(), &'static str> {
         if !self.city.try_spend_energy(&self.data.balance) {
@@ -194,11 +211,16 @@ fn resolve_save_path() -> Option<PathBuf> {
     }
 }
 
-fn now_unix_secs() -> u64 {
+pub fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Returns the current UTC day number for Daily Trial tracking.
+pub fn today_day_index() -> u64 {
+    now_unix_secs() / 86_400
 }
 
 /// Regenerates endurance periodically, sped up by the Mead Hall tier.

@@ -78,6 +78,10 @@ pub struct BlastBeam {
     pub lifetime: f32,
 }
 
+/// Gently pulses placed board boosters so they stand out crisply.
+#[derive(Component)]
+pub struct BoosterPulse;
+
 #[derive(Component)]
 pub enum Match3UiAction {
     Retreat,
@@ -378,6 +382,7 @@ fn spawn_board_sprites(
                 commands.spawn((
                     Match3Entity,
                     BoardTileVisual { pos },
+                    BoosterPulse,
                     Sprite {
                         image: textures.booster_bifrost.clone(),
                         custom_size: Some(tile_size),
@@ -402,6 +407,7 @@ fn spawn_board_sprites(
                     commands.spawn((
                         Match3Entity,
                         BoardTileVisual { pos },
+                        BoosterPulse,
                         Sprite {
                             image: booster_tex,
                             custom_size: Some(tile_size),
@@ -1465,12 +1471,14 @@ pub fn tick_board_animation(
             if elapsed >= duration {
                 let balance = ctx.data.balance.clone();
                 let mut gained_score = 0u32;
+                let mut cleared_total = 0u64;
                 let mut fall_map = HashMap::new();
                 {
                     let ctx_ref = ctx.as_mut();
                     if let Some(session) = ctx_ref.active_session.as_mut() {
                         let step = session.board.commit_clear_step(&prepared, combo, &balance);
                         gained_score = step.score_gained;
+                        cleared_total = step.cleared_runes.values().map(|&v| v as u64).sum();
                         session.apply_step_progress(&step);
                         let fall_moves: Vec<FallMove> =
                             session.board.apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
@@ -1478,10 +1486,19 @@ pub fn tick_board_animation(
                             fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
                         }
                     }
+                    ctx_ref.city.stats.total_runes_cleared += cleared_total;
+                    ctx_ref.city.stats.best_combo = ctx_ref.city.stats.best_combo.max(combo);
                 }
                 if gained_score > 0 {
-                    let popup_label = if combo >= 2 {
-                        format!("+{} (x{})", gained_score, combo)
+                    let i18n = &ctx.data.i18n;
+                    let popup_label = if combo >= 5 {
+                        i18n.t_fmt("match3.callout.combo5", &[("combo", combo.to_string())])
+                    } else if combo == 4 {
+                        i18n.t_fmt("match3.callout.combo4", &[("combo", combo.to_string())])
+                    } else if combo == 3 {
+                        i18n.t_fmt("match3.callout.combo3", &[("combo", combo.to_string())])
+                    } else if combo == 2 {
+                        format!("+{} (x2)", gained_score)
                     } else {
                         format!("+{}", gained_score)
                     };
@@ -1661,8 +1678,14 @@ fn check_level_finished(ctx: &mut GameContext, next_state: &mut NextState<AppSta
         ctx.last_outcome = Some(outcome);
         ctx.last_rewards = rewards;
         ctx.last_score = score;
+        ctx.city.stats.best_score = ctx.city.stats.best_score.max(score);
         if outcome == LevelOutcome::Victory {
-            ctx.city.record_level_victory(&building_id, &rewards);
+            if building_id == "daily_trial" {
+                ctx.city
+                    .record_daily_victory(crate::state::today_day_index(), &rewards);
+            } else {
+                ctx.city.record_level_victory(&building_id, &rewards);
+            }
             let collections = ctx.data.collections.clone();
             ctx.last_discovered_relic_key = ctx.city.discover_next_relic(&collections);
         } else {
@@ -1721,6 +1744,7 @@ pub fn animate_particles(
     mut particles: Query<(Entity, &mut BurstParticle, &mut Transform, &mut Sprite), (Without<Camera2d>, Without<BlastBeam>)>,
     mut beams: Query<(Entity, &mut BlastBeam, &mut Transform, &mut Sprite), (Without<Camera2d>, Without<BurstParticle>)>,
     mut popups: Query<(Entity, &mut FloatingScore, &mut Transform, &mut TextColor), (Without<BurstParticle>, Without<Camera2d>, Without<BlastBeam>)>,
+    mut boosters: Query<&mut Transform, (With<BoosterPulse>, Without<BurstParticle>, Without<BlastBeam>, Without<FloatingScore>, Without<Camera2d>)>,
     mut cameras: Query<&mut Transform, With<Camera2d>>,
 ) {
     let dt = time.delta_secs();
@@ -1771,6 +1795,14 @@ pub fn animate_particles(
         let progress = f.elapsed / f.lifetime;
         tf.translation.y += FLOATING_TEXT_RISE_SPEED_PX * dt;
         col.0 = col.0.with_alpha((1.0 - progress).max(0.0));
+    }
+
+    // Gently pulse placed board boosters when idle so they catch the player's eye.
+    if input_state.is_idle() {
+        let pulse = 1.0 + 0.07 * (time.elapsed_secs() * 4.2).sin();
+        for mut tf in &mut boosters {
+            tf.scale = Vec3::splat(pulse);
+        }
     }
 
     // Tactile camera screen shake on heavy blasts.

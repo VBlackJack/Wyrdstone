@@ -18,16 +18,30 @@
 
 use crate::audio::{play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank};
 use crate::fjord_art::FjordTextures;
-use crate::state::{AppState, GameContext};
+use crate::state::{today_day_index, AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
-use wyrdstone_core::{BuildingDef, Objective};
+use wyrdstone_core::{BuildingDef, Objective, QuestCondition};
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
+const SNOWFLAKE_COUNT: usize = 22;
 
 #[derive(Component)]
 pub struct CityRoot;
+
+/// Marker on the building pin targeted by the active Saga quest so its border pulses gold.
+#[derive(Component)]
+pub struct QuestBeaconPin;
+
+/// Gentle falling snowflake drifting across the Fjord map.
+#[derive(Component)]
+pub struct FjordSnowflake {
+    pub x_pct: f32,
+    pub y_pct: f32,
+    pub speed_y: f32,
+    pub phase: f32,
+}
 
 /// Tracks whether the City layout was last built in portrait mode and displayed endurance.
 #[derive(Resource, Default)]
@@ -40,11 +54,13 @@ pub struct CityLayoutMode {
 pub enum CityAction {
     SelectBuilding(String),
     PlayBuildingLevel(String),
+    PlayDailyTrial,
     UpgradeBuilding(String),
     DrinkMead,
     ClaimQuest(String),
     ToggleAmuletsModal,
     ToggleCollectionsModal,
+    ToggleStatsModal,
     ToggleHelpModal,
     ClaimCollection(String),
     CraftOrEquipAmulet(String),
@@ -224,6 +240,21 @@ fn spawn_city_tree(
                     ..default()
                 })
                 .with_children(|btns| {
+                    let daily_ready = ctx.city.is_daily_available(today_day_index());
+                    spawn_small_button(
+                        btns,
+                        if daily_ready {
+                            i18n.t("city.panel.daily.button")
+                        } else {
+                            i18n.t("city.panel.daily.done")
+                        },
+                        CityAction::PlayDailyTrial,
+                        if daily_ready {
+                            COLOR_ACCENT_GOLD
+                        } else {
+                            COLOR_BUTTON_DISABLED
+                        },
+                    );
                     spawn_small_button(
                         btns,
                         i18n.t("city.panel.collections.button"),
@@ -243,6 +274,12 @@ fn spawn_city_tree(
                         } else {
                             COLOR_PANEL_CARD
                         },
+                    );
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.stats.button"),
+                        CityAction::ToggleStatsModal,
+                        COLOR_PANEL_CARD,
                     );
                     spawn_small_button(
                         btns,
@@ -427,8 +464,43 @@ fn spawn_city_tree(
                     BorderRadius::all(Val::Px(12.0)),
                 ))
                 .with_children(|map| {
+                    // Gentle falling Nordic snow drifting over the fjord.
+                    for i in 0..SNOWFLAKE_COUNT {
+                        let x_pct = ((i * 37 + 11) % 96) as f32 + 2.0;
+                        let y_pct = ((i * 53 + 7) % 94) as f32 + 2.0;
+                        let size = if i % 3 == 0 { 4.5 } else { 3.0 };
+                        map.spawn((
+                            FjordSnowflake {
+                                x_pct,
+                                y_pct,
+                                speed_y: 4.5 + (i % 5) as f32 * 1.4,
+                                phase: i as f32 * 0.9,
+                            },
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(x_pct),
+                                top: Val::Percent(y_pct),
+                                width: Val::Px(size),
+                                height: Val::Px(size),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.92, 0.97, 1.0, 0.55)),
+                            BorderRadius::all(Val::Px(size)),
+                        ));
+                    }
+
+                    let quest_target_bldg = ctx.city.active_quest(&ctx.data.quests).and_then(|q| {
+                        match &q.condition {
+                            QuestCondition::WinBuildingLevel { building_id, .. }
+                            | QuestCondition::ReachBuildingTier { building_id, .. } => {
+                                Some(building_id.as_str())
+                            }
+                            QuestCondition::CraftAnyAmulet => None,
+                        }
+                    });
                     for b in &ctx.data.buildings {
-                        spawn_map_building_pin(map, b, ctx, fjord_art);
+                        let is_quest_target = quest_target_bldg == Some(b.id.as_str());
+                        spawn_map_building_pin(map, b, ctx, fjord_art, is_quest_target);
                     }
                 });
 
@@ -466,11 +538,13 @@ fn spawn_city_tree(
                 });
             });
 
-            // 4. Optional Modal Overlays (Amulets, Relic Collections, Wyrdstone Guide)
+            // 4. Optional Modal Overlays (Amulets, Relic Collections, Clan Chronicles, Guide)
             if ctx.amulets_modal_open {
                 spawn_amulets_modal(root, ctx);
             } else if ctx.collections_modal_open {
                 spawn_collections_modal(root, ctx);
+            } else if ctx.stats_modal_open {
+                spawn_stats_modal(root, ctx);
             } else if ctx.help_modal_open {
                 spawn_help_modal(root, ctx);
             }
@@ -482,6 +556,7 @@ fn spawn_map_building_pin(
     b: &BuildingDef,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    is_quest_target: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let tier = ctx.city.building_tier(&b.id);
@@ -513,7 +588,7 @@ fn spawn_map_building_pin(
     };
 
     // Positioned directly on its scenic clearing in the Fjord Map
-    map.spawn((
+    let mut pin_cmd = map.spawn((
         Button,
         CityAction::SelectBuilding(b.id.clone()),
         Node {
@@ -525,14 +600,17 @@ fn spawn_map_building_pin(
             align_items: AlignItems::Center,
             padding: UiRect::all(Val::Px(4.0)),
             row_gap: Val::Px(3.0),
-            border: UiRect::all(Val::Px(if selected { 3.0 } else { 2.0 })),
+            border: UiRect::all(Val::Px(if selected || is_quest_target { 3.0 } else { 2.0 })),
             ..default()
         },
         BackgroundColor(Color::srgba(0.06, 0.09, 0.14, 0.88)),
         BorderColor(border_col),
         BorderRadius::all(Val::Px(10.0)),
-    ))
-    .with_children(|pin| {
+    ));
+    if is_quest_target {
+        pin_cmd.insert(QuestBeaconPin);
+    }
+    pin_cmd.with_children(|pin| {
         if let Some(img) = fjord_art.building_image(&b.id) {
             pin.spawn((
                 ImageNode {
@@ -1244,6 +1322,81 @@ fn spawn_collections_modal(root: &mut ChildBuilder, ctx: &GameContext) {
     });
 }
 
+fn spawn_stats_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+    let i18n = &ctx.data.i18n;
+    let st = ctx.city.stats;
+    root.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),
+    ))
+    .with_children(|backdrop| {
+        backdrop
+            .spawn((
+                Node {
+                    width: Val::Px(440.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(22.0)),
+                    row_gap: Val::Px(10.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(COLOR_PANEL_DARK),
+                BorderColor(COLOR_ACCENT_GOLD),
+                BorderRadius::all(Val::Px(14.0)),
+            ))
+            .with_children(|card| {
+                card.spawn(Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|hdr| {
+                    hdr.spawn((
+                        Text::new(i18n.t("city.panel.stats.title")),
+                        TextFont {
+                            font_size: FONT_HEADING,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    spawn_small_button(
+                        hdr,
+                        i18n.t("city.panel.amulets.close"),
+                        CityAction::ToggleStatsModal,
+                        COLOR_ACCENT_CRIMSON,
+                    );
+                });
+
+                let rows = [
+                    i18n.t_fmt("city.panel.stats.victories", &[("val", st.total_victories.to_string())]),
+                    i18n.t_fmt("city.panel.stats.runes", &[("val", st.total_runes_cleared.to_string())]),
+                    i18n.t_fmt("city.panel.stats.best_combo", &[("val", st.best_combo.to_string())]),
+                    i18n.t_fmt("city.panel.stats.best_score", &[("val", st.best_score.to_string())]),
+                    i18n.t_fmt("city.panel.stats.relics", &[("val", ctx.city.found_relics.len().to_string())]),
+                ];
+                for line in rows {
+                    card.spawn((
+                        Text::new(line),
+                        TextFont {
+                            font_size: FONT_BODY,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_PRIMARY),
+                    ));
+                }
+            });
+    });
+}
+
 fn spawn_help_modal(root: &mut ChildBuilder, ctx: &GameContext) {
     let i18n = &ctx.data.i18n;
     root.spawn((
@@ -1493,6 +1646,18 @@ pub fn handle_city_buttons(
                     }
                 }
             }
+            CityAction::PlayDailyTrial => {
+                if ctx.city.is_daily_available(today_day_index()) && ctx.start_daily_trial().is_ok()
+                {
+                    ctx.amulets_modal_open = false;
+                    ctx.collections_modal_open = false;
+                    ctx.stats_modal_open = false;
+                    ctx.help_modal_open = false;
+                    next_state.set(AppState::Match3);
+                    return;
+                }
+                play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+            }
             CityAction::UpgradeBuilding(building_id) => {
                 if let Some(def) = ctx.data.building_by_id(building_id).cloned() {
                     match ctx.city.try_upgrade_building(&def) {
@@ -1554,10 +1719,19 @@ pub fn handle_city_buttons(
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
+            CityAction::ToggleStatsModal => {
+                ctx.stats_modal_open = !ctx.stats_modal_open;
+                ctx.amulets_modal_open = false;
+                ctx.collections_modal_open = false;
+                ctx.help_modal_open = false;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
+            }
             CityAction::ToggleHelpModal => {
                 ctx.help_modal_open = !ctx.help_modal_open;
                 ctx.amulets_modal_open = false;
                 ctx.collections_modal_open = false;
+                ctx.stats_modal_open = false;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
@@ -1620,5 +1794,31 @@ pub fn handle_city_buttons(
             sound_bank.muted,
             layout_mode.is_portrait,
         );
+    }
+}
+
+/// Animates gentle falling snow and pulses the active Saga quest building beacon on the Fjord map.
+pub fn animate_city_ambience(
+    time: Res<Time>,
+    mut snow_q: Query<(&mut FjordSnowflake, &mut Node)>,
+    mut beacon_q: Query<&mut BorderColor, With<QuestBeaconPin>>,
+) {
+    let dt = time.delta_secs();
+    let t = time.elapsed_secs();
+
+    for (mut flake, mut node) in &mut snow_q {
+        flake.y_pct += flake.speed_y * dt;
+        if flake.y_pct > 98.0 {
+            flake.y_pct = 1.0;
+        }
+        let sway = (t * 1.1 + flake.phase).sin() * 1.6;
+        node.top = Val::Percent(flake.y_pct);
+        node.left = Val::Percent((flake.x_pct + sway).clamp(1.0, 98.0));
+    }
+
+    let glow = 0.5 + 0.5 * (t * 4.5).sin();
+    let beacon_col = Color::srgb(0.95 + 0.05 * glow, 0.72 + 0.25 * glow, 0.24 + 0.45 * glow);
+    for mut border in &mut beacon_q {
+        border.0 = beacon_col;
     }
 }

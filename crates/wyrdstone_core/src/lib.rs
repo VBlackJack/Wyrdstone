@@ -28,8 +28,8 @@ pub use board::{
     ActiveTool, Board, Booster, Cell, CellPos, FallMove, MatchStepOutcome, PreparedClear, RuneType,
 };
 pub use city::{
-    AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, CollectionDef, QuestCondition,
-    QuestDef, ResourceBundle, ToolInventory,
+    AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats, CollectionDef,
+    QuestCondition, QuestDef, ResourceBundle, ToolInventory,
 };
 pub use i18n::{I18nCatalog, Language};
 pub use level::{LevelDef, LevelOutcome, LevelSession, Objective, ObjectiveProgress};

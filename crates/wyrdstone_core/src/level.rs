@@ -67,6 +67,84 @@ pub struct LevelDef {
     pub base_reward: ResourceBundle,
 }
 
+impl LevelDef {
+    /// Deterministically generates today's Daily Trial board from the UTC day index.
+    pub fn daily_challenge(day_index: u64) -> Self {
+        let variant = (day_index % 3) as usize;
+        let target_rune = RuneType::ALL[(day_index as usize) % RuneType::ALL.len()];
+        let (objectives, ice_cells, chained_cells, crate_cells, relic_cells) = match variant {
+            0 => (
+                vec![
+                    Objective::ClearIce { target: 12 },
+                    Objective::CollectRune {
+                        rune: target_rune,
+                        target: 22,
+                    },
+                ],
+                vec![
+                    (2, 2, 2), (3, 2, 1), (4, 2, 1), (5, 2, 2),
+                    (2, 3, 1), (5, 3, 1), (2, 4, 1), (5, 4, 1),
+                    (2, 5, 2), (3, 5, 1), (4, 5, 1), (5, 5, 2),
+                ],
+                vec![(3, 3), (4, 4)],
+                vec![(1, 3, 1), (6, 4, 1)],
+                vec![],
+            ),
+            1 => (
+                vec![
+                    Objective::DropRelics { target: 2 },
+                    Objective::ClearIce { target: 8 },
+                ],
+                vec![
+                    (2, 4, 2), (3, 4, 1), (4, 4, 1), (5, 4, 2),
+                    (2, 6, 1), (3, 6, 1), (4, 6, 1), (5, 6, 1),
+                ],
+                vec![(2, 2), (5, 2)],
+                vec![(3, 5, 2), (4, 5, 2)],
+                vec![(2, 0), (5, 0)],
+            ),
+            _ => (
+                vec![
+                    Objective::ReachScore { target: 5000 },
+                    Objective::CollectRune {
+                        rune: target_rune,
+                        target: 24,
+                    },
+                ],
+                vec![
+                    (1, 2, 1), (2, 2, 2), (5, 2, 2), (6, 2, 1),
+                    (1, 5, 1), (2, 5, 2), (5, 5, 2), (6, 5, 1),
+                ],
+                vec![(3, 3), (4, 3), (3, 4), (4, 4)],
+                vec![(0, 3, 1), (7, 4, 1)],
+                vec![],
+            ),
+        };
+
+        Self {
+            id: format!("daily_{day_index}"),
+            building_id: "daily_trial".to_string(),
+            cols: 8,
+            rows: 8,
+            max_moves: 25,
+            time_limit_seconds: None,
+            rune_types_count: 6,
+            objectives,
+            ice_cells,
+            chained_cells,
+            crate_cells,
+            relic_cells,
+            blocked_cells: vec![(0, 0), (7, 0), (0, 7), (7, 7)],
+            base_reward: ResourceBundle {
+                wood: 140,
+                stone: 140,
+                gold: 180,
+                mead: 40,
+            },
+        }
+    }
+}
+
 /// Terminal state of a Match-3 level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LevelOutcome {
