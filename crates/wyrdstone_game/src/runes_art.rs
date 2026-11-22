@@ -16,12 +16,20 @@
 
 //! Procedural Nordic rune stone, obstacle, and booster textures generated at startup.
 
-use crate::theme::{rune_base_rgb, RUNE_TEX_SIZE};
+use crate::theme::RUNE_TEX_SIZE;
+use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
 use wyrdstone_core::{Booster, RuneType};
+
+const RUNE_FIRE_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_fire.png");
+const RUNE_ICE_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_ice.png");
+const RUNE_WOOD_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_wood.png");
+const RUNE_STONE_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_stone.png");
+const RUNE_GOLD_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_gold.png");
+const RUNE_WATER_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_water.png");
 
 /// Handles to all procedurally generated 2D board textures.
 #[derive(Resource)]
@@ -55,13 +63,15 @@ impl RuneTextures {
     }
 }
 
-/// Startup system that builds all procedural rune and board textures.
+/// PreStartup system that loads the painted rune gemstones and builds board overlays.
 pub fn init_rune_textures(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let mut runes = HashMap::new();
-    for rune in RuneType::ALL {
-        let img = build_rune_stone_image(rune);
-        runes.insert(rune, images.add(img));
-    }
+    runes.insert(RuneType::Fire, images.add(decode_rune_png(RUNE_FIRE_PNG)));
+    runes.insert(RuneType::Ice, images.add(decode_rune_png(RUNE_ICE_PNG)));
+    runes.insert(RuneType::Wood, images.add(decode_rune_png(RUNE_WOOD_PNG)));
+    runes.insert(RuneType::Stone, images.add(decode_rune_png(RUNE_STONE_PNG)));
+    runes.insert(RuneType::Gold, images.add(decode_rune_png(RUNE_GOLD_PNG)));
+    runes.insert(RuneType::Water, images.add(decode_rune_png(RUNE_WATER_PNG)));
 
     let textures = RuneTextures {
         runes,
@@ -127,90 +137,16 @@ fn draw_thick_line(pixels: &mut [u8], x0: i32, y0: i32, x1: i32, y1: i32, radius
     }
 }
 
-fn build_rune_stone_image(rune: RuneType) -> Image {
-    let mut px = new_canvas();
-    let [br, bg, bb] = rune_base_rgb(rune);
-    let s = RUNE_TEX_SIZE as i32;
-    let half = s as f32 * 0.5;
-
-    // Rich carved Nordic gemstone tablet with dark outer rim, radial inner glow, and top specular sheen.
-    for y in 3..(s - 3) {
-        for x in 3..(s - 3) {
-            let dx = (x - 3).min(s - 4 - x);
-            let dy = (y - 3).min(s - 4 - y);
-            if dx + dy < 9 {
-                continue;
-            }
-            let edge = dx.min(dy);
-            let dist = (((x as f32 - half).powi(2) + (y as f32 - half).powi(2)).sqrt() / half).min(1.0);
-            let radial_glow = 1.24 - dist * 0.42;
-            let spec = if y < s / 3 && edge > 3 {
-                (1.0 - (y as f32 / (s as f32 / 3.0))) * 0.28
-            } else {
-                0.0
-            };
-            let shade = if edge <= 1 {
-                0.42 // Dark carved stone outline
-            } else if edge <= 3 {
-                if x < s / 2 || y < s / 2 { 1.32 } else { 0.62 }
-            } else {
-                radial_glow + spec
-            };
-            let r = (br as f32 * shade + spec * 90.0).clamp(0.0, 255.0) as u8;
-            let g = (bg as f32 * shade + spec * 90.0).clamp(0.0, 255.0) as u8;
-            let b = (bb as f32 * shade + spec * 90.0).clamp(0.0, 255.0) as u8;
-            set_px(&mut px, x, y, [r, g, b, 255]);
-        }
-    }
-
-    // Draw carved shadow first, then luminous ivory Elder Futhark rune on top.
-    let shadow = [24, 18, 28, 220];
-    let glyph = [254, 250, 236, 255];
-    for &(ox, oy, col) in &[(2, 2, shadow), (0, 0, glyph)] {
-        match rune {
-            // Fehu (Fire)
-            RuneType::Fire => {
-                draw_thick_line(&mut px, 24 + ox, 15 + oy, 24 + ox, 49 + oy, 2, col);
-                draw_thick_line(&mut px, 24 + ox, 24 + oy, 42 + ox, 14 + oy, 2, col);
-                draw_thick_line(&mut px, 24 + ox, 34 + oy, 40 + ox, 24 + oy, 2, col);
-            }
-            // Isa + crystal cross (Ice)
-            RuneType::Ice => {
-                draw_thick_line(&mut px, 32 + ox, 13 + oy, 32 + ox, 51 + oy, 2, col);
-                draw_thick_line(&mut px, 19 + ox, 23 + oy, 45 + ox, 41 + oy, 2, col);
-                draw_thick_line(&mut px, 45 + ox, 23 + oy, 19 + ox, 41 + oy, 2, col);
-            }
-            // Algiz (Wood / Yggdrasil)
-            RuneType::Wood => {
-                draw_thick_line(&mut px, 32 + ox, 14 + oy, 32 + ox, 50 + oy, 2, col);
-                draw_thick_line(&mut px, 32 + ox, 32 + oy, 18 + ox, 16 + oy, 2, col);
-                draw_thick_line(&mut px, 32 + ox, 32 + oy, 46 + ox, 16 + oy, 2, col);
-            }
-            // Othala (Stone / Heritage)
-            RuneType::Stone => {
-                draw_thick_line(&mut px, 32 + ox, 14 + oy, 44 + ox, 27 + oy, 2, col);
-                draw_thick_line(&mut px, 44 + ox, 27 + oy, 32 + ox, 40 + oy, 2, col);
-                draw_thick_line(&mut px, 32 + ox, 40 + oy, 20 + ox, 27 + oy, 2, col);
-                draw_thick_line(&mut px, 20 + ox, 27 + oy, 32 + ox, 14 + oy, 2, col);
-                draw_thick_line(&mut px, 27 + ox, 35 + oy, 19 + ox, 49 + oy, 2, col);
-                draw_thick_line(&mut px, 37 + ox, 35 + oy, 45 + ox, 49 + oy, 2, col);
-            }
-            // Sowilo (Gold / Sun)
-            RuneType::Gold => {
-                draw_thick_line(&mut px, 42 + ox, 14 + oy, 22 + ox, 30 + oy, 2, col);
-                draw_thick_line(&mut px, 22 + ox, 30 + oy, 42 + ox, 34 + oy, 2, col);
-                draw_thick_line(&mut px, 42 + ox, 34 + oy, 22 + ox, 50 + oy, 2, col);
-            }
-            // Laguz (Water / Fjord)
-            RuneType::Water => {
-                draw_thick_line(&mut px, 24 + ox, 14 + oy, 24 + ox, 50 + oy, 2, col);
-                draw_thick_line(&mut px, 24 + ox, 14 + oy, 43 + ox, 28 + oy, 2, col);
-                draw_thick_line(&mut px, 20 + ox, 46 + oy, 44 + ox, 46 + oy, 1, col);
-            }
-        }
-    }
-
-    finish_image(px)
+fn decode_rune_png(bytes: &[u8]) -> Image {
+    Image::from_buffer(
+        bytes,
+        ImageType::Extension("png"),
+        CompressedImageFormats::NONE,
+        true,
+        ImageSampler::linear(),
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .expect("Bundled rune PNG must decode cleanly")
 }
 
 fn build_cell_bg_image() -> Image {
