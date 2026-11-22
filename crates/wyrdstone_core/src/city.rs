@@ -96,6 +96,8 @@ pub struct BuildingDef {
     pub level_id: String,
     #[serde(default)]
     pub mastery_level_id: Option<String>,
+    #[serde(default)]
+    pub legendary_level_id: Option<String>,
     pub map_x_pct: f32,
     pub map_y_pct: f32,
     pub upgrade_costs: Vec<ResourceBundle>,
@@ -394,10 +396,21 @@ impl CityState {
         }
     }
 
-    /// Records a Match-3 victory, granting earned rewards and mastery progress.
+    /// Records a Match-3 victory, granting earned rewards, mastery progress, and a free tool per new star.
     pub fn record_level_victory(&mut self, building_id: &str, rewards: &ResourceBundle) {
         self.resources.add(rewards);
+        let prev_stars = self.building_mastery_stars(building_id);
         *self.building_wins.entry(building_id.to_string()).or_insert(0) += 1;
+        let new_stars = self.building_mastery_stars(building_id);
+        if new_stars > prev_stars {
+            match new_stars {
+                1 => self.tools.mjolnir += 1,
+                2 => self.tools.surtr_ember += 1,
+                3 => self.tools.thor_bolt += 1,
+                4 => self.tools.bifrost_prism += 1,
+                _ => self.tools.drakkar_charge += 1,
+            }
+        }
         self.glory += 10;
     }
 

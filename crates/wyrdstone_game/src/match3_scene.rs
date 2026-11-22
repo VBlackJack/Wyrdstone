@@ -71,6 +71,13 @@ pub struct FloatingScore {
     pub lifetime: f32,
 }
 
+/// Expanding lightning beam or fiery shockwave VFX for boosters and active tools.
+#[derive(Component)]
+pub struct BlastBeam {
+    pub elapsed: f32,
+    pub lifetime: f32,
+}
+
 #[derive(Component)]
 pub enum Match3UiAction {
     Retreat,
@@ -182,6 +189,7 @@ pub fn cleanup_match3_scene(
     huds: Query<Entity, With<Match3HudRoot>>,
     particles: Query<Entity, With<BurstParticle>>,
     popups: Query<Entity, With<FloatingScore>>,
+    beams: Query<Entity, With<BlastBeam>>,
     mut cameras: Query<&mut Transform, With<Camera2d>>,
 ) {
     for e in &sprites {
@@ -197,6 +205,9 @@ pub fn cleanup_match3_scene(
         commands.entity(e).despawn_recursive();
     }
     for e in &popups {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &beams {
         commands.entity(e).despawn_recursive();
     }
     for mut cam in &mut cameras {
@@ -494,6 +505,81 @@ fn spawn_clear_particles(
                 Transform::from_xyz(center.x, center.y, Z_SELECTION_RING + 1.0),
             ));
         }
+    }
+}
+
+fn spawn_blast_beam(
+    commands: &mut Commands,
+    center: Vec2,
+    size: Vec2,
+    color: Color,
+) {
+    commands.spawn((
+        BlastBeam {
+            elapsed: 0.0,
+            lifetime: 0.30,
+        },
+        Sprite {
+            color,
+            custom_size: Some(size),
+            ..default()
+        },
+        Transform::from_xyz(center.x, center.y, Z_SELECTION_RING + 1.5),
+    ));
+}
+
+fn spawn_tool_vfx(
+    commands: &mut Commands,
+    tool: ActiveTool,
+    cell: CellPos,
+    cols: usize,
+    rows: usize,
+    layout: &Match3InputState,
+) {
+    let center = cell_to_world(cell, layout);
+    let board_w = cols as f32 * layout.cell_step;
+    let board_h = rows as f32 * layout.cell_step;
+    let center_y = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
+    match tool {
+        ActiveTool::ThorBolt => {
+            spawn_blast_beam(
+                commands,
+                Vec2::new(0.0, center.y),
+                Vec2::new(board_w, layout.tile_size * 0.52),
+                Color::srgba(0.45, 0.92, 1.0, 0.92),
+            );
+        }
+        ActiveTool::DrakkarCharge => {
+            spawn_blast_beam(
+                commands,
+                Vec2::new(0.0, center.y),
+                Vec2::new(board_w, layout.tile_size * 0.55),
+                Color::srgba(1.0, 0.85, 0.32, 0.92),
+            );
+            spawn_blast_beam(
+                commands,
+                Vec2::new(center.x, center_y),
+                Vec2::new(layout.tile_size * 0.55, board_h),
+                Color::srgba(1.0, 0.85, 0.32, 0.92),
+            );
+        }
+        ActiveTool::SurtrEmber => {
+            spawn_blast_beam(
+                commands,
+                center,
+                Vec2::splat(layout.cell_step * 3.1),
+                Color::srgba(1.0, 0.48, 0.16, 0.78),
+            );
+        }
+        ActiveTool::Mjolnir => {
+            spawn_blast_beam(
+                commands,
+                center,
+                Vec2::splat(layout.cell_step * 1.4),
+                Color::srgba(0.65, 0.92, 1.0, 0.90),
+            );
+        }
+        _ => {}
     }
 }
 
@@ -1079,6 +1165,7 @@ pub fn handle_board_pointer_input(
                             ctx.armed_tool = None;
                             ctx.persist();
                             play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
+                            spawn_tool_vfx(&mut commands, tool, cell, cols, rows, &input_state);
                             let clear_dur = ctx.data.balance.clear_anim_seconds;
                             input_state.selected = None;
                             input_state.shake_secs = SHAKE_DURATION_SECS;
@@ -1630,9 +1717,10 @@ pub fn animate_particles(
     time: Res<Time>,
     mut input_state: ResMut<Match3InputState>,
     mut resize_events: EventReader<WindowResized>,
-    mut backdrops: Query<&mut Sprite, (With<Match3Backdrop>, Without<BurstParticle>)>,
-    mut particles: Query<(Entity, &mut BurstParticle, &mut Transform, &mut Sprite), Without<Camera2d>>,
-    mut popups: Query<(Entity, &mut FloatingScore, &mut Transform, &mut TextColor), (Without<BurstParticle>, Without<Camera2d>)>,
+    mut backdrops: Query<&mut Sprite, (With<Match3Backdrop>, Without<BurstParticle>, Without<BlastBeam>)>,
+    mut particles: Query<(Entity, &mut BurstParticle, &mut Transform, &mut Sprite), (Without<Camera2d>, Without<BlastBeam>)>,
+    mut beams: Query<(Entity, &mut BlastBeam, &mut Transform, &mut Sprite), (Without<Camera2d>, Without<BurstParticle>)>,
+    mut popups: Query<(Entity, &mut FloatingScore, &mut Transform, &mut TextColor), (Without<BurstParticle>, Without<Camera2d>, Without<BlastBeam>)>,
     mut cameras: Query<&mut Transform, With<Camera2d>>,
 ) {
     let dt = time.delta_secs();
@@ -1659,6 +1747,18 @@ pub fn animate_particles(
         tf.translation.y += p.velocity.y * dt * (1.0 - progress * 0.5);
         tf.scale = Vec3::splat((1.0 - progress).max(0.1));
         sprite.color = sprite.color.with_alpha(1.0 - progress);
+    }
+
+    // Expanding lightning / fire shockwave beams.
+    for (entity, mut b, mut tf, mut sprite) in &mut beams {
+        b.elapsed += dt;
+        if b.elapsed >= b.lifetime {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let progress = b.elapsed / b.lifetime;
+        tf.scale = Vec3::splat(1.0 + progress * 0.25);
+        sprite.color = sprite.color.with_alpha((1.0 - progress).powf(1.4));
     }
 
     // Rising floating score popups.

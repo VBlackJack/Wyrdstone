@@ -9,6 +9,7 @@
         requires_great_hall_tier: 0,
         level_id: "great_hall_1",
         mastery_level_id: Some("great_hall_2"),
+        legendary_level_id: Some("great_hall_3"),
         map_x_pct: 44.0,
         map_y_pct: 40.0,
         upgrade_costs: [
@@ -27,6 +28,7 @@
         requires_great_hall_tier: 1,
         level_id: "forge_1",
         mastery_level_id: Some("forge_2"),
+        legendary_level_id: Some("forge_3"),
         map_x_pct: 17.0,
         map_y_pct: 54.0,
         upgrade_costs: [
@@ -45,6 +47,7 @@
         requires_great_hall_tier: 1,
         level_id: "dock_1",
         mastery_level_id: Some("dock_2"),
+        legendary_level_id: Some("dock_3"),
         map_x_pct: 46.0,
         map_y_pct: 73.0,
         upgrade_costs: [
@@ -63,6 +66,7 @@
         requires_great_hall_tier: 1,
         level_id: "shrine_1",
         mastery_level_id: Some("shrine_2"),
+        legendary_level_id: Some("shrine_3"),
         map_x_pct: 76.0,
         map_y_pct: 42.0,
         upgrade_costs: [
@@ -81,6 +85,7 @@
         requires_great_hall_tier: 0,
         level_id: "meadery_1",
         mastery_level_id: Some("meadery_2"),
+        legendary_level_id: Some("meadery_3"),
         map_x_pct: 73.0,
         map_y_pct: 69.0,
         upgrade_costs: [

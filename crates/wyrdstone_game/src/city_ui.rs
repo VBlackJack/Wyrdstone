@@ -910,6 +910,17 @@ fn spawn_building_inspector(
                             );
                         }
                     }
+                    if unlocked && stars >= 3 {
+                        if let Some(leg_id) = &b.legendary_level_id {
+                            spawn_full_button(
+                                play_row,
+                                i18n.t("city.button.play_legendary"),
+                                CityAction::PlayBuildingLevel(leg_id.clone()),
+                                Color::srgb(0.66, 0.30, 0.82),
+                                COLOR_TEXT_PRIMARY,
+                            );
+                        }
+                    }
                 });
 
             // Upgrade button

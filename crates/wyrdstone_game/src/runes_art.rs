@@ -30,6 +30,10 @@ const RUNE_WOOD_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_wood.p
 const RUNE_STONE_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_stone.png");
 const RUNE_GOLD_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_gold.png");
 const RUNE_WATER_PNG: &[u8] = include_bytes!("../../../assets/sprites/rune_water.png");
+const CRATE_WOOD_PNG: &[u8] = include_bytes!("../../../assets/sprites/crate_wood.png");
+const CRATE_IRON_PNG: &[u8] = include_bytes!("../../../assets/sprites/crate_iron.png");
+const RELIC_CHALICE_PNG: &[u8] = include_bytes!("../../../assets/sprites/relic_chalice.png");
+const BOOSTER_BIFROST_PNG: &[u8] = include_bytes!("../../../assets/sprites/booster_bifrost.png");
 
 /// Handles to all procedurally generated 2D board textures.
 #[derive(Resource)]
@@ -76,14 +80,14 @@ pub fn init_rune_textures(mut commands: Commands, mut images: ResMut<Assets<Imag
         cell_bg: images.add(build_cell_bg_image()),
         ice_top_layer1: images.add(build_ice_top_frost_image(1)),
         ice_top_layer2: images.add(build_ice_top_frost_image(2)),
-        crate_layer1: images.add(build_crate_image(1)),
-        crate_layer2: images.add(build_crate_image(2)),
-        relic_icon: images.add(build_relic_image()),
+        crate_layer1: images.add(decode_rune_png(CRATE_WOOD_PNG)),
+        crate_layer2: images.add(decode_rune_png(CRATE_IRON_PNG)),
+        relic_icon: images.add(decode_rune_png(RELIC_CHALICE_PNG)),
         chain_overlay: images.add(build_chain_image()),
         booster_h: images.add(build_line_booster_image(true)),
         booster_v: images.add(build_line_booster_image(false)),
         booster_bomb: images.add(build_bomb_booster_image()),
-        booster_bifrost: images.add(build_bifrost_image()),
+        booster_bifrost: images.add(decode_rune_png(BOOSTER_BIFROST_PNG)),
         selection_ring: images.add(build_selection_ring_image()),
     };
 
@@ -297,37 +301,6 @@ fn build_bomb_booster_image() -> Image {
     finish_image(px)
 }
 
-fn build_bifrost_image() -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    let c = s / 2;
-    let palette: [[u8; 3]; 6] = [
-        [240, 75, 75],
-        [248, 178, 52],
-        [92, 214, 122],
-        [72, 206, 242],
-        [108, 128, 248],
-        [218, 108, 238],
-    ];
-    for y in 6..(s - 6) {
-        for x in 6..(s - 6) {
-            let d2 = (x - c) * (x - c) + (y - c) * (y - c);
-            if d2 <= 24 * 24 {
-                let band = (((x + y) / 7) as usize) % palette.len();
-                let [r, g, b] = palette[band];
-                let core = d2 <= 8 * 8;
-                let rgba = if core {
-                    [255, 255, 255, 255]
-                } else {
-                    [r, g, b, 250]
-                };
-                set_px(&mut px, x, y, rgba);
-            }
-        }
-    }
-    finish_image(px)
-}
-
 fn build_selection_ring_image() -> Image {
     let mut px = new_canvas();
     let s = RUNE_TEX_SIZE as i32;
@@ -337,70 +310,6 @@ fn build_selection_ring_image() -> Image {
             if border {
                 set_px(&mut px, x, y, [255, 224, 102, 255]);
             }
-        }
-    }
-    finish_image(px)
-}
-
-fn build_crate_image(layers: u8) -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    for y in 4..(s - 4) {
-        for x in 4..(s - 4) {
-            let border = x <= 8 || y <= 8 || x >= s - 9 || y >= s - 9;
-            let plank = (y % 12) == 0;
-            let rgba = if border {
-                [92, 66, 44, 255]
-            } else if plank {
-                [76, 54, 36, 255]
-            } else {
-                [132, 96, 62, 255]
-            };
-            set_px(&mut px, x, y, rgba);
-        }
-    }
-    // Diagonal wooden brace
-    draw_thick_line(&mut px, 10, 10, 54, 54, 2, [96, 70, 46, 255]);
-    if layers >= 2 {
-        // Iron & frost reinforcement for 2-layer crates
-        draw_thick_line(&mut px, 54, 10, 10, 54, 2, [168, 214, 236, 255]);
-        draw_thick_line(&mut px, 8, 32, 56, 32, 2, [196, 212, 226, 255]);
-    }
-    finish_image(px)
-}
-
-fn build_relic_image() -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    let c = s / 2;
-    // Soft golden aura halo
-    for y in 4..(s - 4) {
-        for x in 4..(s - 4) {
-            let d2 = (x - c) * (x - c) + (y - c) * (y - c);
-            if d2 <= 25 * 25 {
-                let alpha = if d2 <= 18 * 18 { 95 } else { 45 };
-                set_px(&mut px, x, y, [255, 218, 92, alpha]);
-            }
-        }
-    }
-    // Golden Viking goblet / relic emblem
-    let gold = [248, 204, 62, 255];
-    let bright = [255, 244, 178, 255];
-    // Cup bowl
-    for y in 14..32 {
-        let half_w = 14 - ((y - 14) / 3);
-        for x in (c - half_w)..=(c + half_w) {
-            let col = if x < c - half_w + 3 { bright } else { gold };
-            set_px(&mut px, x, y, col);
-        }
-    }
-    // Stem & base
-    draw_thick_line(&mut px, c, 32, c, 48, 3, gold);
-    draw_thick_line(&mut px, c - 12, 49, c + 12, 49, 3, gold);
-    // Ruby jewel in the center
-    for y in 20..26 {
-        for x in (c - 3)..=(c + 3) {
-            set_px(&mut px, x, y, [224, 52, 68, 255]);
         }
     }
     finish_image(px)
