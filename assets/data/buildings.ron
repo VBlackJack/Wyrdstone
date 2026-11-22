@@ -1,0 +1,73 @@
+// Copyright 2026 Julien Bombled - Apache 2.0
+[
+    BuildingDef(
+        id: "great_hall",
+        name_key: "building.great_hall.name",
+        desc_key: "building.great_hall.desc",
+        max_tier: 3,
+        requires_great_hall_tier: 0,
+        level_id: "great_hall_1",
+        upgrade_costs: [
+            ResourceBundle(wood: 60, stone: 40, gold: 40, mead: 0),
+            ResourceBundle(wood: 140, stone: 100, gold: 100, mead: 15),
+            ResourceBundle(wood: 260, stone: 200, gold: 220, mead: 40),
+        ],
+        glory_per_tier: 25,
+    ),
+    BuildingDef(
+        id: "forge",
+        name_key: "building.forge.name",
+        desc_key: "building.forge.desc",
+        max_tier: 3,
+        requires_great_hall_tier: 1,
+        level_id: "forge_1",
+        upgrade_costs: [
+            ResourceBundle(wood: 50, stone: 80, gold: 60, mead: 0),
+            ResourceBundle(wood: 120, stone: 180, gold: 130, mead: 10),
+            ResourceBundle(wood: 220, stone: 320, gold: 260, mead: 30),
+        ],
+        glory_per_tier: 30,
+    ),
+    BuildingDef(
+        id: "longship_dock",
+        name_key: "building.longship_dock.name",
+        desc_key: "building.longship_dock.desc",
+        max_tier: 3,
+        requires_great_hall_tier: 1,
+        level_id: "dock_1",
+        upgrade_costs: [
+            ResourceBundle(wood: 100, stone: 50, gold: 80, mead: 10),
+            ResourceBundle(wood: 200, stone: 110, gold: 170, mead: 25),
+            ResourceBundle(wood: 340, stone: 220, gold: 300, mead: 50),
+        ],
+        glory_per_tier: 35,
+    ),
+    BuildingDef(
+        id: "odin_shrine",
+        name_key: "building.odin_shrine.name",
+        desc_key: "building.odin_shrine.desc",
+        max_tier: 3,
+        requires_great_hall_tier: 1,
+        level_id: "shrine_1",
+        upgrade_costs: [
+            ResourceBundle(wood: 70, stone: 110, gold: 120, mead: 15),
+            ResourceBundle(wood: 160, stone: 240, gold: 250, mead: 35),
+            ResourceBundle(wood: 280, stone: 400, gold: 420, mead: 60),
+        ],
+        glory_per_tier: 45,
+    ),
+    BuildingDef(
+        id: "meadery",
+        name_key: "building.meadery.name",
+        desc_key: "building.meadery.desc",
+        max_tier: 3,
+        requires_great_hall_tier: 0,
+        level_id: "meadery_1",
+        upgrade_costs: [
+            ResourceBundle(wood: 75, stone: 45, gold: 50, mead: 0),
+            ResourceBundle(wood: 160, stone: 100, gold: 120, mead: 15),
+            ResourceBundle(wood: 280, stone: 180, gold: 220, mead: 35),
+        ],
+        glory_per_tier: 25,
+    ),
+]

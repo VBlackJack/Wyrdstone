@@ -1,0 +1,58 @@
+# Copyright 2026 Julien Bombled
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+[package]
+name = "wyrdstone_game"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "wyrdstone_game"
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "wyrdstone"
+path = "src/main.rs"
+
+[dependencies]
+wyrdstone_core = { path = "../wyrdstone_core" }
+rand.workspace = true
+bevy = { version = "0.15", default-features = false, features = [
+    "bevy_winit",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_sprite",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_asset",
+    "bevy_state",
+    "default_font",
+    "png",
+    "multi_threaded",
+    "tonemapping_luts",
+] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+directories = "5.0"
+
+[target.'cfg(target_os = "android")'.dependencies]
+bevy = { version = "0.15", default-features = false, features = ["android-game-activity"] }
+
+[package.metadata.android]
+package = "com.julienbombled.wyrdstone"
+label = "Wyrdstone"
+build_targets = ["aarch64-linux-android"]
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 35
+
+[package.metadata.android.application]
+label = "Wyrdstone"

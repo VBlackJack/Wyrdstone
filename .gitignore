@@ -1,0 +1,31 @@
+# Build outputs
+/target/
+**/*.rs.bk
+*.pdb
+
+# Android build artifacts
+/android/build/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Local working notes and agent configs
+/local/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.claude/
+.codex/
+.gemini/
+.agent/
+
+# Save files and runtime logs
+*.log
+wyrdstone_save.json
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

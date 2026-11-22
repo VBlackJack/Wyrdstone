@@ -1,0 +1,45 @@
+// Copyright 2026 Julien Bombled - Apache 2.0
+[
+    QuestDef(
+        id: "q1",
+        title_key: "quest.q1.title",
+        desc_key: "quest.q1.desc",
+        condition: WinBuildingLevel(building_id: "great_hall", wins: 1),
+        reward: ResourceBundle(wood: 35, stone: 25, gold: 30, mead: 5),
+    ),
+    QuestDef(
+        id: "q2",
+        title_key: "quest.q2.title",
+        desc_key: "quest.q2.desc",
+        condition: ReachBuildingTier(building_id: "great_hall", tier: 1),
+        reward: ResourceBundle(wood: 40, stone: 40, gold: 45, mead: 10),
+    ),
+    QuestDef(
+        id: "q3",
+        title_key: "quest.q3.title",
+        desc_key: "quest.q3.desc",
+        condition: WinBuildingLevel(building_id: "forge", wins: 1),
+        reward: ResourceBundle(wood: 40, stone: 50, gold: 50, mead: 10),
+    ),
+    QuestDef(
+        id: "q4",
+        title_key: "quest.q4.title",
+        desc_key: "quest.q4.desc",
+        condition: ReachBuildingTier(building_id: "forge", tier: 1),
+        reward: ResourceBundle(wood: 60, stone: 60, gold: 70, mead: 15),
+    ),
+    QuestDef(
+        id: "q5",
+        title_key: "quest.q5.title",
+        desc_key: "quest.q5.desc",
+        condition: WinBuildingLevel(building_id: "longship_dock", wins: 1),
+        reward: ResourceBundle(wood: 75, stone: 55, gold: 80, mead: 15),
+    ),
+    QuestDef(
+        id: "q6",
+        title_key: "quest.q6.title",
+        desc_key: "quest.q6.desc",
+        condition: ReachBuildingTier(building_id: "odin_shrine", tier: 1),
+        reward: ResourceBundle(wood: 100, stone: 100, gold: 120, mead: 30),
+    ),
+]

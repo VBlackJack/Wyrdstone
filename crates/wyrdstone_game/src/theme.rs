@@ -1,0 +1,79 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Centralized Norse color palette and UI layout constants.
+
+use bevy::prelude::*;
+use wyrdstone_core::RuneType;
+
+/// Window defaults for desktop targets.
+pub const WINDOW_DEFAULT_WIDTH: f32 = 1120.0;
+pub const WINDOW_DEFAULT_HEIGHT: f32 = 760.0;
+
+/// Procedural rune texture resolution in pixels.
+pub const RUNE_TEX_SIZE: usize = 64;
+
+/// Board layout ratios and spacing constants.
+pub const BOARD_TOP_RESERVED_PX: f32 = 128.0;
+pub const BOARD_BOTTOM_RESERVED_PX: f32 = 116.0;
+pub const BOARD_SIDE_MARGIN_PX: f32 = 32.0;
+pub const TILE_GAP_RATIO: f32 = 0.08;
+pub const MAX_TILE_SIZE_PX: f32 = 72.0;
+pub const MIN_TILE_SIZE_PX: f32 = 34.0;
+pub const TILE_LERP_SPEED: f32 = 16.0;
+
+/// Z-layer ordering for 2D board sprites.
+pub const Z_BOARD_BG: f32 = 0.0;
+pub const Z_CELL_BG: f32 = 1.0;
+pub const Z_ICE_OVERLAY: f32 = 2.0;
+pub const Z_RUNE_SPRITE: f32 = 3.0;
+pub const Z_BOOSTER_BADGE: f32 = 4.0;
+pub const Z_CHAIN_OVERLAY: f32 = 5.0;
+pub const Z_SELECTION_RING: f32 = 6.0;
+
+/// Typography scale constants.
+pub const FONT_TITLE_LG: f32 = 58.0;
+pub const FONT_TITLE_MD: f32 = 28.0;
+pub const FONT_HEADING: f32 = 21.0;
+pub const FONT_BODY: f32 = 16.0;
+pub const FONT_SMALL: f32 = 13.5;
+
+/// Nordic fjord UI color palette.
+pub const COLOR_BG_DEEP: Color = Color::srgb(0.06, 0.09, 0.14);
+pub const COLOR_PANEL_DARK: Color = Color::srgb(0.11, 0.15, 0.22);
+pub const COLOR_PANEL_CARD: Color = Color::srgb(0.15, 0.20, 0.28);
+pub const COLOR_PANEL_BORDER: Color = Color::srgb(0.32, 0.42, 0.54);
+pub const COLOR_ACCENT_GOLD: Color = Color::srgb(0.93, 0.74, 0.29);
+pub const COLOR_ACCENT_GOLD_HOVER: Color = Color::srgb(0.98, 0.83, 0.44);
+pub const COLOR_ACCENT_TEAL: Color = Color::srgb(0.22, 0.62, 0.68);
+pub const COLOR_ACCENT_GREEN: Color = Color::srgb(0.24, 0.64, 0.42);
+pub const COLOR_ACCENT_CRIMSON: Color = Color::srgb(0.76, 0.24, 0.26);
+pub const COLOR_TEXT_PRIMARY: Color = Color::srgb(0.94, 0.95, 0.97);
+pub const COLOR_TEXT_MUTED: Color = Color::srgb(0.68, 0.75, 0.84);
+pub const COLOR_TEXT_DARK: Color = Color::srgb(0.08, 0.10, 0.14);
+pub const COLOR_BUTTON_DISABLED: Color = Color::srgb(0.24, 0.27, 0.32);
+
+/// Returns RGB tuple `[r, g, b]` in 0..=255 for procedural rune stone rendering.
+pub const fn rune_base_rgb(rune: RuneType) -> [u8; 3] {
+    match rune {
+        RuneType::Fire => [204, 62, 46],   // Muspel crimson
+        RuneType::Ice => [78, 188, 224],   // Niflheim frost cyan
+        RuneType::Wood => [62, 168, 92],   // Yggdrasil emerald
+        RuneType::Stone => [138, 128, 168], // Midgard slate violet
+        RuneType::Gold => [232, 178, 46],  // Asgard solar gold
+        RuneType::Water => [52, 108, 212], // Fjord deep blue
+    }
+}

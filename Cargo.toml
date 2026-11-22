@@ -1,0 +1,37 @@
+# Copyright 2026 Julien Bombled
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/wyrdstone_core",
+    "crates/wyrdstone_game",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Julien Bombled"]
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ron = "0.8"
+rand = "0.8"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
