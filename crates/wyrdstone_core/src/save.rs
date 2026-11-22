@@ -17,6 +17,7 @@
 //! Bundled game data loader and persistent JSON save schema.
 
 use crate::balance::BalanceConfig;
+use crate::boss::BossDef;
 use crate::city::{AmuletDef, BuildingDef, CityState, CollectionDef, QuestDef, ToolRecipeDef};
 use crate::i18n::{I18nCatalog, Language};
 use crate::level::LevelDef;
@@ -48,6 +49,7 @@ const BUNDLED_QUESTS_RON: &str = include_str!("../../../assets/data/quests.ron")
 const BUNDLED_AMULETS_RON: &str = include_str!("../../../assets/data/amulets.ron");
 const BUNDLED_COLLECTIONS_RON: &str = include_str!("../../../assets/data/collections.ron");
 const BUNDLED_TOOL_SHOP_RON: &str = include_str!("../../../assets/data/tool_shop.ron");
+const BUNDLED_BOSSES_RON: &str = include_str!("../../../assets/data/bosses.ron");
 
 /// All static game definitions loaded once at startup.
 #[derive(Debug, Clone)]
@@ -59,6 +61,7 @@ pub struct GameDataBundle {
     pub amulets: Vec<AmuletDef>,
     pub collections: Vec<CollectionDef>,
     pub tool_shop: Vec<ToolRecipeDef>,
+    pub bosses: Vec<BossDef>,
     pub i18n: I18nCatalog,
 }
 
@@ -79,6 +82,8 @@ impl GameDataBundle {
             .map_err(|e| format!("Failed to parse collections.ron: {e}"))?;
         let tool_shop: Vec<ToolRecipeDef> = ron::from_str(BUNDLED_TOOL_SHOP_RON)
             .map_err(|e| format!("Failed to parse tool_shop.ron: {e}"))?;
+        let bosses: Vec<BossDef> = ron::from_str(BUNDLED_BOSSES_RON)
+            .map_err(|e| format!("Failed to parse bosses.ron: {e}"))?;
         let i18n = I18nCatalog::from_json_strs(BUNDLED_EN_JSON, BUNDLED_FR_JSON, initial_language)
             .map_err(|e| format!("Failed to parse locales: {e}"))?;
 
@@ -90,8 +95,14 @@ impl GameDataBundle {
             amulets,
             collections,
             tool_shop,
+            bosses,
             i18n,
         })
+    }
+
+    /// Finds a boss definition by its unique identifier.
+    pub fn boss_by_id(&self, id: &str) -> Option<&BossDef> {
+        self.bosses.iter().find(|b| b.id == id)
     }
 
     /// Finds a level definition by its unique identifier.

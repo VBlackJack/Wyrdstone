@@ -18,8 +18,9 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME, SAVE_SCHEMA_VERSION};
 use wyrdstone_core::{
-    ActiveTool, AmuletEffect, Board, Booster, Cell, CellPos, CityState, GameDataBundle, Language,
-    LevelDef, LevelOutcome, LevelSession, QuestCondition, ResourceBundle, RuneType, SaveData,
+    ActiveTool, AmuletEffect, Board, Booster, Cell, CellPos, CityBonuses, CityState, ClanRank,
+    ExpeditionBoon, ExpeditionRun, GameDataBundle, Language, LevelDef, LevelOutcome, LevelSession,
+    PatronGod, QuestCondition, ResourceBundle, RuneType, SaveData, ACHIEVEMENTS, FURY_CHARGE_MAX,
 };
 
 #[test]
@@ -519,4 +520,80 @@ fn p2_tools_crates_relics_timer_and_amulets_work() {
         &mut rng,
     );
     assert!(prism.valid);
+}
+
+#[test]
+fn patron_fury_boss_raids_expedition_and_achievements_work() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(9001);
+
+    // 1. All Boss definitions and Patron / Achievement i18n keys resolve.
+    assert_eq!(data.bosses.len(), 3);
+    for boss in &data.bosses {
+        assert_ne!(data.i18n.t(&boss.name_key), boss.name_key);
+        assert_ne!(data.i18n.t(&boss.title_key), boss.title_key);
+        assert_ne!(data.i18n.t(&boss.desc_key), boss.desc_key);
+    }
+    for god in PatronGod::ALL {
+        assert_ne!(data.i18n.t(god.name_key()), god.name_key());
+        assert_ne!(data.i18n.t(god.desc_key()), god.desc_key());
+    }
+    for ach in ACHIEVEMENTS {
+        assert_ne!(data.i18n.t(ach.title_key), ach.title_key);
+        assert_ne!(data.i18n.t(ach.desc_key), ach.desc_key);
+    }
+
+    // 2. Boss Raid: weakness deals 2x damage, riposte fires every 3 turns, Patron Fury works.
+    let fenrir = data.boss_by_id("boss_fenrir").unwrap().clone();
+    let mut session = LevelSession::start_boss(
+        fenrir.clone(),
+        None,
+        CityBonuses::default(),
+        PatronGod::Odin,
+        &mut rng,
+    );
+    assert!(session.boss.is_some());
+    assert_eq!(session.boss.as_ref().unwrap().hp, fenrir.max_hp);
+
+    // Charge Odin's Fury and unleash it (+2 extra moves + Bomb).
+    let moves_before = session.moves_left;
+    session.fury = FURY_CHARGE_MAX;
+    assert!(session.can_trigger_fury());
+    let _ = session.trigger_patron_fury(&mut rng);
+    assert_eq!(session.fury, 0);
+    assert_eq!(session.moves_left, moves_before + 2);
+
+    // Tick 3 turns to trigger Fenrir's chain riposte.
+    assert!(session.tick_boss_riposte_if_needed(&mut rng).is_empty());
+    assert!(session.tick_boss_riposte_if_needed(&mut rng).is_empty());
+    let riposte_hits = session.tick_boss_riposte_if_needed(&mut rng);
+    assert!(
+        !riposte_hits.is_empty(),
+        "Boss must counter-attack on turn 3"
+    );
+
+    // 3. Endless Drakkar Expedition: wave generation + boon selection.
+    let mut city = CityState::new(&data.balance);
+    let mut run = ExpeditionRun::new();
+    let w1_session = LevelSession::start_expedition_wave(
+        &run,
+        None,
+        CityBonuses::default(),
+        PatronGod::Thor,
+        &mut rng,
+    );
+    assert!(w1_session.board.has_valid_moves());
+    run.roll_boon_choices(&mut rng);
+    assert_eq!(run.pending_boons.len(), 3);
+    run.apply_boon(ExpeditionBoon::ExtraMoves(3), &mut city);
+    assert_eq!(run.wave, 2);
+    assert_eq!(run.extra_moves, 3);
+
+    // 4. Clan Ranks & Achievements claiming.
+    assert_eq!(city.clan_rank(), ClanRank::Scout);
+    city.record_boss_victory(&fenrir);
+    assert_eq!(city.clan_rank(), ClanRank::Huscarl);
+    assert!(city.has_any_claimable_achievement(&data.buildings, data.bosses.len()));
+    assert!(city.try_claim_achievement("ach_first_boss", &data.buildings, data.bosses.len()));
+    assert!(!city.try_claim_achievement("ach_first_boss", &data.buildings, data.bosses.len()));
 }

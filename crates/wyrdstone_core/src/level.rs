@@ -17,8 +17,13 @@
 //! Level definitions, objective tracking, timed mode, frost spread, amulet modifiers, and Match-3 session state.
 
 use crate::balance::BalanceConfig;
-use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, RuneType};
+use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, PreparedClear, RuneType};
+use crate::boss::{BossDef, BossState};
 use crate::city::{AmuletEffect, CityBonuses, ResourceBundle};
+use crate::expedition::ExpeditionRun;
+use crate::patron::{
+    PatronGod, FURY_CHARGE_MAX, FURY_PER_COMBO_STEP, FURY_PER_OBSTACLE, FURY_PER_TILE,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -246,6 +251,11 @@ pub struct LevelSession {
     pub last_shuffled: bool,
     pub turn_ice_broken: u32,
     pub last_frost_spread: Option<CellPos>,
+    pub patron: PatronGod,
+    pub fury: u32,
+    pub fury_max: u32,
+    pub fury_resource_bonus_pct: u32,
+    pub boss: Option<BossState>,
 }
 
 impl LevelSession {
@@ -268,6 +278,55 @@ impl LevelSession {
         level: LevelDef,
         amulet: Option<AmuletEffect>,
         city_bonuses: CityBonuses,
+        rng: &mut R,
+    ) -> Self {
+        Self::start_full(level, amulet, city_bonuses, PatronGod::default(), None, rng)
+    }
+
+    /// Starts a Mythological Boss Raid encounter.
+    pub fn start_boss<R: Rng>(
+        boss: BossDef,
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        rng: &mut R,
+    ) -> Self {
+        let level = boss.to_level_def();
+        Self::start_full(
+            level,
+            amulet,
+            city_bonuses,
+            patron,
+            Some(BossState::new(boss)),
+            rng,
+        )
+    }
+
+    /// Starts an Endless Drakkar Expedition wave applying accumulated roguelite boons.
+    pub fn start_expedition_wave<R: Rng>(
+        run: &ExpeditionRun,
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        rng: &mut R,
+    ) -> Self {
+        let level = run.generate_wave_level(rng);
+        let mut session = Self::start_full(level, amulet, city_bonuses, patron, None, rng);
+        session.score_bonus_pct += run.score_bonus_pct;
+        session.fury = run.fury_headstart.min(FURY_CHARGE_MAX);
+        for _ in 0..run.starting_boosters {
+            session.board.spawn_random_starting_booster(rng);
+        }
+        session
+    }
+
+    /// Full session constructor supporting Patron God, optional Boss Raid, amulet, and city bonuses.
+    pub fn start_full<R: Rng>(
+        level: LevelDef,
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        boss: Option<BossState>,
         rng: &mut R,
     ) -> Self {
         let mut board = Board::new_for_level(&level, rng);
@@ -329,7 +388,35 @@ impl LevelSession {
             last_shuffled: false,
             turn_ice_broken: 0,
             last_frost_spread: None,
+            patron,
+            fury: 0,
+            fury_max: FURY_CHARGE_MAX,
+            fury_resource_bonus_pct: 0,
+            boss,
         }
+    }
+
+    /// Returns true when the Divine Fury gauge is fully charged and ready to unleash.
+    pub fn can_trigger_fury(&self) -> bool {
+        self.outcome == LevelOutcome::InProgress && self.fury >= self.fury_max
+    }
+
+    /// Unleashes the active Patron God's Divine Fury power (free, consumes no move).
+    pub fn trigger_patron_fury<R: Rng>(&mut self, rng: &mut R) -> Option<PreparedClear> {
+        if !self.can_trigger_fury() {
+            return None;
+        }
+        self.fury = 0;
+        match self.patron {
+            PatronGod::Freya => {
+                self.fury_resource_bonus_pct += 25;
+            }
+            PatronGod::Odin => {
+                self.moves_left += 2;
+            }
+            PatronGod::Thor | PatronGod::Loki => {}
+        }
+        self.board.apply_patron_fury(self.patron, rng)
     }
 
     /// Advances the optional countdown timer and triggers Defeat when time expires.
@@ -405,6 +492,17 @@ impl LevelSession {
         self.last_shuffled = step.shuffled;
         self.turn_ice_broken += step.ice_broken;
 
+        let tiles_cleared: u32 = step.cleared_runes.values().copied().sum();
+        let obstacles_broken = step.ice_broken + step.chains_broken + step.crates_broken;
+        let combo_bonus = step.max_combo.saturating_sub(1) * FURY_PER_COMBO_STEP;
+        let fury_gain =
+            tiles_cleared * FURY_PER_TILE + obstacles_broken * FURY_PER_OBSTACLE + combo_bonus;
+        self.fury = (self.fury + fury_gain).min(self.fury_max);
+
+        if let Some(boss) = self.boss.as_mut() {
+            boss.apply_step_damage(step, self.score_bonus_pct);
+        }
+
         for prog in &mut self.objectives {
             match &prog.objective {
                 Objective::ClearIce { .. } => {
@@ -416,12 +514,25 @@ impl LevelSession {
                     }
                 }
                 Objective::ReachScore { .. } => {
-                    prog.done = self.score.min(prog.target);
+                    if let Some(boss) = &self.boss {
+                        prog.done = boss.def.max_hp.saturating_sub(boss.hp).min(prog.target);
+                    } else {
+                        prog.done = self.score.min(prog.target);
+                    }
                 }
                 Objective::DropRelics { .. } => {
                     prog.done = (prog.done + step.relics_dropped).min(prog.target);
                 }
             }
+        }
+    }
+
+    /// Executes the boss counter-attack countdown at end of turn if a Boss Raid is active.
+    pub fn tick_boss_riposte_if_needed<R: Rng>(&mut self, rng: &mut R) -> Vec<CellPos> {
+        if let Some(boss) = self.boss.as_mut() {
+            boss.tick_turn_and_riposte(&mut self.board, rng)
+        } else {
+            Vec::new()
         }
     }
 
@@ -443,7 +554,12 @@ impl LevelSession {
         if self.outcome != LevelOutcome::InProgress {
             return;
         }
-        if self.objectives.iter().all(ObjectiveProgress::is_complete) {
+        let won = if let Some(boss) = &self.boss {
+            boss.is_defeated()
+        } else {
+            self.objectives.iter().all(ObjectiveProgress::is_complete)
+        };
+        if won {
             self.score += self.moves_left * balance.remaining_move_bonus;
             self.outcome = LevelOutcome::Victory;
         } else if self.moves_left == 0 {
@@ -477,7 +593,7 @@ impl LevelSession {
         }
         let move_bonus = (self.moves_left * balance.move_reward_bonus_pct_per_move)
             .min(balance.move_reward_bonus_cap_pct);
-        let bonus_pct = move_bonus + self.resource_bonus_pct;
+        let bonus_pct = move_bonus + self.resource_bonus_pct + self.fury_resource_bonus_pct;
         let scale = |base: u32| base + (base * bonus_pct) / 100;
         ResourceBundle {
             wood: scale(self.level.base_reward.wood),

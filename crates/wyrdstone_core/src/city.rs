@@ -16,8 +16,11 @@
 
 //! Fjord city-builder progression: resources, buildings, passive harvests, mastery, amulets, quests, and tools.
 
+use crate::achievements::{is_achievement_unlocked, ClanRank, ACHIEVEMENTS};
 use crate::balance::BalanceConfig;
 use crate::board::ActiveTool;
+use crate::boss::BossDef;
+use crate::patron::PatronGod;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -237,6 +240,10 @@ pub struct ClanStats {
     pub daily_streak: u32,
     #[serde(default)]
     pub daily_completions: u32,
+    #[serde(default)]
+    pub bosses_defeated: u32,
+    #[serde(default)]
+    pub best_expedition_wave: u32,
 }
 
 /// Mutable player progression in the Wyrdstone Fjord.
@@ -265,6 +272,12 @@ pub struct CityState {
     pub level_best_stars: HashMap<String, u8>,
     #[serde(default)]
     pub last_harvest_unix_secs: HashMap<String, u64>,
+    #[serde(default)]
+    pub selected_patron: PatronGod,
+    #[serde(default)]
+    pub defeated_bosses: HashSet<String>,
+    #[serde(default)]
+    pub claimed_achievements: HashSet<String>,
 }
 
 impl CityState {
@@ -298,7 +311,15 @@ impl CityState {
             completed_levels: HashSet::new(),
             level_best_stars: HashMap::new(),
             last_harvest_unix_secs: HashMap::new(),
+            selected_patron: PatronGod::default(),
+            defeated_bosses: HashSet::new(),
+            claimed_achievements: HashSet::new(),
         }
+    }
+
+    /// Returns the player's current Viking Clan Rank based on total Glory.
+    pub fn clan_rank(&self) -> ClanRank {
+        ClanRank::from_glory(self.glory)
     }
 
     pub fn building_tier(&self, building_id: &str) -> u32 {
@@ -743,6 +764,81 @@ impl CityState {
         self.resources.add(&col.reward_resources);
         self.tools.add(&col.reward_tools);
         self.glory += balance.collection_glory;
+        true
+    }
+
+    /// Collects all ready passive building tributes at once.
+    pub fn collect_all_harvests(
+        &mut self,
+        buildings: &[BuildingDef],
+        now_secs: u64,
+        balance: &BalanceConfig,
+    ) -> (usize, ResourceBundle) {
+        let mut count = 0usize;
+        let mut total = ResourceBundle::default();
+        for b in buildings {
+            if let Some(r) = self.try_collect_harvest(&b.id, now_secs, balance) {
+                count += 1;
+                total.add(&r);
+            }
+        }
+        (count, total)
+    }
+
+    /// Records a Mythological Boss Raid victory, granting massive spoils, tools, and glory.
+    pub fn record_boss_victory(&mut self, boss: &BossDef) {
+        self.resources.add(&boss.reward_resources);
+        self.tools.add(&boss.reward_tools);
+        self.glory += boss.glory_reward;
+        self.defeated_bosses.insert(boss.id.clone());
+        self.stats.bosses_defeated += 1;
+        self.stats.total_victories += 1;
+    }
+
+    /// Records an Endless Drakkar Expedition wave victory and updates best wave record.
+    pub fn record_expedition_wave(
+        &mut self,
+        wave: u32,
+        rewards: &ResourceBundle,
+        balance: &BalanceConfig,
+    ) {
+        self.resources.add(rewards);
+        self.stats.best_expedition_wave = self.stats.best_expedition_wave.max(wave);
+        self.stats.total_victories += 1;
+        self.glory += balance.victory_glory + wave * 5;
+    }
+
+    /// Returns true if at least one Skald's Feat is unlocked and ready to claim.
+    pub fn has_any_claimable_achievement(
+        &self,
+        buildings: &[BuildingDef],
+        total_bosses: usize,
+    ) -> bool {
+        ACHIEVEMENTS.iter().any(|ach| {
+            !self.claimed_achievements.contains(ach.id)
+                && is_achievement_unlocked(ach.id, self, buildings, total_bosses)
+        })
+    }
+
+    /// Claims a completed Skald's Feat reward.
+    pub fn try_claim_achievement(
+        &mut self,
+        ach_id: &str,
+        buildings: &[BuildingDef],
+        total_bosses: usize,
+    ) -> bool {
+        if self.claimed_achievements.contains(ach_id) {
+            return false;
+        }
+        let Some(ach) = ACHIEVEMENTS.iter().find(|a| a.id == ach_id) else {
+            return false;
+        };
+        if !is_achievement_unlocked(ach_id, self, buildings, total_bosses) {
+            return false;
+        }
+        self.claimed_achievements.insert(ach_id.to_string());
+        self.resources.add(&ach.reward);
+        self.glory += ach.glory;
         true
     }
 }

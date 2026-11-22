@@ -16,21 +16,29 @@
 
 //! Core game logic for Wyrdstone, independent of rendering and platform layers.
 
+pub mod achievements;
 pub mod balance;
 pub mod board;
+pub mod boss;
 pub mod city;
+pub mod expedition;
 pub mod i18n;
 pub mod level;
+pub mod patron;
 pub mod save;
 
+pub use achievements::{is_achievement_unlocked, AchievementDef, ClanRank, ACHIEVEMENTS};
 pub use balance::BalanceConfig;
 pub use board::{
     ActiveTool, Board, Booster, Cell, CellPos, FallMove, MatchStepOutcome, PreparedClear, RuneType,
 };
+pub use boss::{BossDef, BossRiposteKind, BossState};
 pub use city::{
     AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats, CollectionDef,
     QuestCondition, QuestDef, ResourceBundle, ToolInventory, ToolRecipeDef,
 };
+pub use expedition::{ExpeditionBoon, ExpeditionRun};
 pub use i18n::{I18nCatalog, Language};
 pub use level::{LevelDef, LevelOutcome, LevelSession, Objective, ObjectiveProgress};
+pub use patron::{PatronGod, FURY_CHARGE_MAX};
 pub use save::{GameDataBundle, SaveData};

@@ -17,7 +17,9 @@
 //! Match-3 board simulation: runes, obstacles, relics, boosters, cascades, and all six active tools.
 
 use crate::balance::BalanceConfig;
+use crate::boss::BossRiposteKind;
 use crate::level::LevelDef;
+use crate::patron::PatronGod;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -1334,6 +1336,161 @@ impl Board {
         let idx = self.idx(chosen);
         self.cells[idx].ice_layers = 1;
         Some(chosen)
+    }
+
+    /// Returns the cells affected when hovering a target cell with an armed active tool.
+    pub fn tool_preview_cells(&self, tool: ActiveTool, target: CellPos) -> Vec<CellPos> {
+        self.prepare_tool_step(tool, target)
+            .map(|p| p.cells)
+            .unwrap_or_default()
+    }
+
+    /// Executes a Patron God's Divine Fury power, returning a `PreparedClear` if tiles are blasted.
+    pub fn apply_patron_fury<R: Rng>(
+        &mut self,
+        god: PatronGod,
+        rng: &mut R,
+    ) -> Option<PreparedClear> {
+        match god {
+            PatronGod::Thor => {
+                let mut priority: Vec<CellPos> = Vec::new();
+                let mut fallback: Vec<CellPos> = Vec::new();
+                for row in 0..self.rows {
+                    for col in 0..self.cols {
+                        let p = CellPos::new(col, row);
+                        let c = self.cells[self.idx(p)];
+                        if c.blocked || c.relic {
+                            continue;
+                        }
+                        if c.crate_layers > 0 || c.chained || c.ice_layers > 0 {
+                            priority.push(p);
+                        } else if c.rune.is_some() {
+                            fallback.push(p);
+                        }
+                    }
+                }
+                priority.shuffle(rng);
+                fallback.shuffle(rng);
+                priority.extend(fallback);
+                priority.truncate(4);
+                if priority.is_empty() {
+                    None
+                } else {
+                    Some(PreparedClear {
+                        cells: priority,
+                        spawned_boosters: Vec::new(),
+                        converted_boosters: Vec::new(),
+                        is_direct_blast: true,
+                    })
+                }
+            }
+            PatronGod::Freya => {
+                let target = self.most_frequent_rune()?;
+                let mut set = HashSet::new();
+                self.collect_all_of_rune(target, &mut set);
+                if set.is_empty() {
+                    None
+                } else {
+                    Some(PreparedClear {
+                        cells: set.into_iter().collect(),
+                        spawned_boosters: Vec::new(),
+                        converted_boosters: Vec::new(),
+                        is_direct_blast: true,
+                    })
+                }
+            }
+            PatronGod::Loki => {
+                self.spawn_random_starting_booster(rng);
+                self.spawn_random_starting_booster(rng);
+                None
+            }
+            PatronGod::Odin => {
+                let candidates: Vec<CellPos> = (0..self.rows)
+                    .flat_map(|row| (0..self.cols).map(move |col| CellPos::new(col, row)))
+                    .filter(|&p| {
+                        let c = self.cells[self.idx(p)];
+                        !c.blocked
+                            && !c.chained
+                            && c.crate_layers == 0
+                            && !c.relic
+                            && c.rune.is_some()
+                            && c.booster == Booster::None
+                    })
+                    .collect();
+                if let Some(&pos) = candidates.choose(rng) {
+                    let idx = self.idx(pos);
+                    self.cells[idx].booster = Booster::Bomb;
+                }
+                None
+            }
+        }
+    }
+
+    /// Executes a boss counter-attack on random vulnerable cells and returns the affected coordinates.
+    pub fn apply_boss_riposte<R: Rng>(
+        &mut self,
+        riposte: BossRiposteKind,
+        rng: &mut R,
+    ) -> Vec<CellPos> {
+        let mut hit = Vec::new();
+        match riposte {
+            BossRiposteKind::ChainRunes(count) => {
+                let mut cands: Vec<CellPos> = (0..self.rows)
+                    .flat_map(|r| (0..self.cols).map(move |c| CellPos::new(c, r)))
+                    .filter(|&p| {
+                        let c = self.cells[self.idx(p)];
+                        !c.blocked
+                            && !c.chained
+                            && c.crate_layers == 0
+                            && !c.relic
+                            && c.rune.is_some()
+                    })
+                    .collect();
+                cands.shuffle(rng);
+                for pos in cands.into_iter().take(count) {
+                    let idx = self.idx(pos);
+                    self.cells[idx].chained = true;
+                    hit.push(pos);
+                }
+            }
+            BossRiposteKind::FreezeCells(count) => {
+                let mut cands: Vec<CellPos> = (0..self.rows)
+                    .flat_map(|r| (0..self.cols).map(move |c| CellPos::new(c, r)))
+                    .filter(|&p| {
+                        let c = self.cells[self.idx(p)];
+                        !c.blocked && c.ice_layers == 0 && c.crate_layers == 0 && !c.relic
+                    })
+                    .collect();
+                cands.shuffle(rng);
+                for pos in cands.into_iter().take(count) {
+                    let idx = self.idx(pos);
+                    self.cells[idx].ice_layers = 1;
+                    hit.push(pos);
+                }
+            }
+            BossRiposteKind::DropCrates(count) => {
+                let mut cands: Vec<CellPos> = (0..self.rows)
+                    .flat_map(|r| (0..self.cols).map(move |c| CellPos::new(c, r)))
+                    .filter(|&p| {
+                        let c = self.cells[self.idx(p)];
+                        !c.blocked
+                            && !c.chained
+                            && c.crate_layers == 0
+                            && !c.relic
+                            && c.booster == Booster::None
+                            && c.rune.is_some()
+                    })
+                    .collect();
+                cands.shuffle(rng);
+                for pos in cands.into_iter().take(count) {
+                    let idx = self.idx(pos);
+                    self.cells[idx].crate_layers = 1;
+                    self.cells[idx].rune = None;
+                    hit.push(pos);
+                }
+            }
+        }
+        hit
     }
 }
 
