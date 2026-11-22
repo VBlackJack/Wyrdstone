@@ -59,7 +59,7 @@ pub fn run_app() {
         .insert_resource(ctx)
         .init_state::<AppState>()
         .add_systems(
-            Startup,
+            PreStartup,
             (
                 setup_camera,
                 runes_art::init_rune_textures,
