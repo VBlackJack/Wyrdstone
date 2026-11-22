@@ -100,6 +100,7 @@ fn spawn_title_tree(
                 parent
                     .spawn((
                         Node {
+                            max_width: Val::Percent(92.0),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             row_gap: Val::Px(10.0),
@@ -116,7 +117,8 @@ fn spawn_title_tree(
                             ImageNode::new(fjord_art.logo.clone()),
                             Node {
                                 width: Val::Px(480.0),
-                                height: Val::Px(270.0),
+                                max_width: Val::Percent(100.0),
+                                aspect_ratio: Some(16.0 / 9.0),
                                 ..default()
                             },
                             BorderRadius::all(Val::Px(10.0)),
@@ -192,7 +194,10 @@ fn spawn_title_tree(
                         ];
                         if ctx.has_existing_save {
                             let (lbl, col) = if ctx.confirm_reset {
-                                (i18n.t("app.title.button.confirm_reset"), COLOR_ACCENT_CRIMSON)
+                                (
+                                    i18n.t("app.title.button.confirm_reset"),
+                                    COLOR_ACCENT_CRIMSON,
+                                )
                             } else {
                                 (
                                     i18n.t("app.title.button.new_saga"),
@@ -277,7 +282,7 @@ pub fn handle_title_buttons(
                 }
                 TitleAction::ToggleAudio => {
                     ctx.confirm_reset = false;
-                    toggle_mute(&mut sound_bank, &mut bgm_sinks);
+                    toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
                     for entity in &roots {
                         commands.entity(entity).despawn_recursive();
                     }

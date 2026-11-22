@@ -123,7 +123,15 @@ fn set_px(pixels: &mut [u8], x: i32, y: i32, rgba: [u8; 4]) {
     pixels[idx..idx + 4].copy_from_slice(&rgba);
 }
 
-fn draw_thick_line(pixels: &mut [u8], x0: i32, y0: i32, x1: i32, y1: i32, radius: i32, rgba: [u8; 4]) {
+fn draw_thick_line(
+    pixels: &mut [u8],
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    radius: i32,
+    rgba: [u8; 4],
+) {
     let steps = (x1 - x0).abs().max((y1 - y0).abs()).max(1);
     for i in 0..=steps {
         let t = i as f32 / steps as f32;
@@ -214,14 +222,17 @@ fn build_ice_top_frost_image(layers: u8) -> Image {
             let dist = (dx * dx + dy * dy).sqrt();
             let clear_radius = if layers >= 2 { 16.0 } else { 19.0 };
             let outer_radius = 29.0;
-            let frost_ring = ((dist - clear_radius) / (outer_radius - clear_radius)).clamp(0.0, 1.0);
+            let frost_ring =
+                ((dist - clear_radius) / (outer_radius - clear_radius)).clamp(0.0, 1.0);
 
             let center_tint = if layers >= 2 { 26.0 } else { 12.0 };
             let ring_alpha = frost_ring.powf(1.3) * if layers >= 2 { 195.0 } else { 145.0 };
 
             // Subtle diagonal specular ice sheen (only outside the very center).
             let diag = x + y;
-            let glare = if dist > clear_radius * 0.75 && ((diag - 34).abs() <= 3 || (diag - 48).abs() <= 2) {
+            let glare = if dist > clear_radius * 0.75
+                && ((diag - 34).abs() <= 3 || (diag - 48).abs() <= 2)
+            {
                 55.0
             } else {
                 0.0

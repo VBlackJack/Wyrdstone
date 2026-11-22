@@ -21,6 +21,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME};
 use wyrdstone_core::{
     ActiveTool, CityState, GameDataBundle, Language, LevelOutcome, LevelSession, ResourceBundle,
     SaveData,
@@ -37,6 +38,18 @@ pub enum AppState {
     LevelResult,
 }
 
+/// Exclusive active modal overlay across Fjord City and Match-3 scenes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActiveModal {
+    #[default]
+    None,
+    Amulets,
+    Collections,
+    Shop,
+    Stats,
+    Help,
+}
+
 /// Shared mutable state across all Wyrdstone scenes.
 #[derive(Resource)]
 pub struct GameContext {
@@ -44,18 +57,20 @@ pub struct GameContext {
     pub city: CityState,
     pub has_existing_save: bool,
     pub selected_building_id: String,
-    pub amulets_modal_open: bool,
-    pub collections_modal_open: bool,
-    pub shop_modal_open: bool,
-    pub stats_modal_open: bool,
-    pub help_modal_open: bool,
+    pub selected_difficulty: u8,
+    pub active_modal: ActiveModal,
     pub confirm_reset: bool,
+    pub audio_muted: bool,
+    pub bgm_volume: f32,
+    pub sfx_volume: f32,
     pub active_session: Option<LevelSession>,
     pub active_level_id: Option<String>,
     pub armed_tool: Option<ActiveTool>,
     pub last_outcome: Option<LevelOutcome>,
     pub last_rewards: ResourceBundle,
     pub last_score: u32,
+    pub last_stars: u8,
+    pub last_daily_streak: Option<u32>,
     pub last_discovered_relic_key: Option<String>,
     pub status_notice_key: Option<String>,
     pub celebration_message: Option<String>,
@@ -72,21 +87,35 @@ impl GameContext {
             .expect("Bundled Wyrdstone data must be valid");
         let save_path = resolve_save_path();
 
-        let (city, has_existing_save) = match save_path
+        let mut audio_muted = false;
+        let mut bgm_volume = DEFAULT_BGM_VOLUME;
+        let mut sfx_volume = DEFAULT_SFX_VOLUME;
+
+        let loaded_save = save_path
             .as_ref()
-            .and_then(|p| SaveData::load_from_path(p).ok().flatten())
-        {
+            .and_then(|p| match SaveData::load_from_path(p) {
+                Ok(opt) => opt,
+                Err(err) => {
+                    warn!("Wyrdstone save load error: {err}");
+                    None
+                }
+            });
+
+        let (city, has_existing_save) = match loaded_save {
             Some(mut saved) => {
                 data.i18n.set_language(saved.language);
+                audio_muted = saved.muted;
+                bgm_volume = saved.bgm_volume.clamp(0.0, 1.0);
+                sfx_volume = saved.sfx_volume.clamp(0.0, 1.0);
                 let now = now_unix_secs();
                 if saved.last_saved_unix_secs > 0 && now > saved.last_saved_unix_secs {
-                    saved
-                        .city
-                        .apply_offline_energy_regen(now - saved.last_saved_unix_secs, &data.balance);
+                    saved.city.apply_offline_energy_regen(
+                        now - saved.last_saved_unix_secs,
+                        &data.balance,
+                    );
                 } else if saved.last_saved_unix_secs == 0
                     && saved.city.energy < data.balance.energy_cost_per_level
                 {
-                    // Legacy save before offline regen existed: restore full endurance once.
                     let cap = saved.city.max_energy(&data.balance);
                     saved.city.energy = cap;
                 }
@@ -107,18 +136,20 @@ impl GameContext {
             city,
             has_existing_save,
             selected_building_id: default_bldg,
-            amulets_modal_open: false,
-            collections_modal_open: false,
-            shop_modal_open: false,
-            stats_modal_open: false,
-            help_modal_open: false,
+            selected_difficulty: 0,
+            active_modal: ActiveModal::None,
             confirm_reset: false,
+            audio_muted,
+            bgm_volume,
+            sfx_volume,
             active_session: None,
             active_level_id: None,
             armed_tool: None,
             last_outcome: None,
             last_rewards: ResourceBundle::default(),
             last_score: 0,
+            last_stars: 0,
+            last_daily_streak: None,
             last_discovered_relic_key: None,
             status_notice_key: None,
             celebration_message: None,
@@ -129,7 +160,16 @@ impl GameContext {
         }
     }
 
-    /// Persists current progression to disk when a save path is available.
+    /// Toggles an exclusive modal overlay.
+    pub fn toggle_modal(&mut self, modal: ActiveModal) {
+        self.active_modal = if self.active_modal == modal {
+            ActiveModal::None
+        } else {
+            modal
+        };
+    }
+
+    /// Persists current progression and audio settings to disk atomically.
     pub fn persist(&mut self) {
         self.has_existing_save = true;
         if let Some(path) = &self.save_path {
@@ -137,9 +177,14 @@ impl GameContext {
                 schema_version: wyrdstone_core::save::SAVE_SCHEMA_VERSION,
                 language: self.data.i18n.language(),
                 last_saved_unix_secs: now_unix_secs(),
+                muted: self.audio_muted,
+                bgm_volume: self.bgm_volume,
+                sfx_volume: self.sfx_volume,
                 city: self.city.clone(),
             };
-            let _ = snapshot.save_to_path(path);
+            if let Err(err) = snapshot.save_to_path(path) {
+                warn!("Wyrdstone save write error: {err}");
+            }
         }
     }
 
@@ -152,12 +197,16 @@ impl GameContext {
             .first()
             .map(|b| b.id.clone())
             .unwrap_or_else(|| "great_hall".to_string());
-        self.amulets_modal_open = false;
-        self.collections_modal_open = false;
-        self.help_modal_open = false;
+        self.selected_difficulty = 0;
+        self.active_modal = ActiveModal::None;
         self.confirm_reset = false;
         self.active_session = None;
+        self.active_level_id = None;
+        self.last_outcome = None;
+        self.last_stars = 0;
+        self.last_daily_streak = None;
         self.last_discovered_relic_key = None;
+        self.status_notice_key = None;
         self.celebration_message = None;
         self.celebration_timer_secs = 0.0;
         self.persist();
@@ -168,30 +217,32 @@ impl GameContext {
         let day_idx = today_day_index();
         let level_def = wyrdstone_core::LevelDef::daily_challenge(day_idx);
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
-        let city_bonuses = self.city.compute_bonuses();
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
         let session =
             LevelSession::start_with_bonuses(level_def, amulet, city_bonuses, &mut self.rng);
         self.active_level_id = Some(format!("daily_{day_idx}"));
         self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
         self.armed_tool = None;
         self.status_notice_key = None;
         Ok(())
     }
 
-    /// Launches a Match-3 level by ID, spending endurance and applying amulet + village bonuses.
+    /// Launches a Match-3 level by ID, verifying existence before spending endurance.
     pub fn start_level(&mut self, level_id: &str) -> Result<(), &'static str> {
+        let Some(level_def) = self.data.level_by_id(level_id).cloned() else {
+            return Err("city.error.level_not_found");
+        };
         if !self.city.try_spend_energy(&self.data.balance) {
             return Err("city.error.not_enough_energy");
         }
-        let Some(level_def) = self.data.level_by_id(level_id).cloned() else {
-            return Err("city.error.not_enough_energy");
-        };
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
-        let city_bonuses = self.city.compute_bonuses();
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
         let session =
             LevelSession::start_with_bonuses(level_def, amulet, city_bonuses, &mut self.rng);
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
         self.armed_tool = None;
         self.status_notice_key = None;
         self.persist();
@@ -227,7 +278,12 @@ pub fn today_day_index() -> u64 {
 
 /// Regenerates endurance periodically, sped up by the Mead Hall tier.
 pub fn tick_energy_regen(time: Res<Time>, mut ctx: ResMut<GameContext>) {
-    let speed_mult = 1.0 + (ctx.city.compute_bonuses().energy_regen_speed_pct as f32 / 100.0);
+    let speed_mult = 1.0
+        + (ctx
+            .city
+            .compute_bonuses(&ctx.data.balance)
+            .energy_regen_speed_pct as f32
+            / 100.0);
     let scaled_delta = time.delta().mul_f32(speed_mult);
     if ctx.energy_regen_timer.tick(scaled_delta).just_finished() {
         let balance = ctx.data.balance.clone();

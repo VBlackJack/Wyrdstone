@@ -16,13 +16,12 @@
 
 //! Procedural Nordic WAV synthesizer for SFX and ambient fjord music.
 
+use crate::state::GameContext;
 use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 use std::f32::consts::TAU;
 
 const SAMPLE_RATE: u32 = 22_050;
-const SFX_VOLUME: f32 = 0.55;
-const BGM_VOLUME: f32 = 0.22;
 
 /// D-minor pentatonic frequencies (Hz) for escalating combo chimes.
 const COMBO_NOTES_HZ: [f32; 6] = [293.66, 349.23, 392.00, 440.00, 523.25, 587.33];
@@ -44,10 +43,12 @@ pub enum SfxKind {
 #[derive(Component)]
 pub struct BgmTrack;
 
-/// Holds synthesized in-memory WAV audio handles and mute state.
+/// Holds synthesized in-memory WAV audio handles, mute state, and persisted volumes.
 #[derive(Resource)]
 pub struct SoundBank {
     pub muted: bool,
+    pub bgm_volume: f32,
+    pub sfx_volume: f32,
     pub swap: Handle<AudioSource>,
     pub invalid: Handle<AudioSource>,
     pub combo_chimes: Vec<Handle<AudioSource>>,
@@ -61,13 +62,22 @@ pub struct SoundBank {
 }
 
 /// Synthesizes all Nordic SFX and ambient music at startup and begins the BGM loop.
-pub fn init_sound_bank(mut commands: Commands, mut audio_assets: ResMut<Assets<AudioSource>>) {
+pub fn init_sound_bank(
+    mut commands: Commands,
+    ctx: Res<GameContext>,
+    mut audio_assets: ResMut<Assets<AudioSource>>,
+) {
     let swap = add_wav(&mut audio_assets, synth_stone_slide(0.11, 210.0, 320.0));
     let invalid = add_wav(&mut audio_assets, synth_stone_slide(0.14, 150.0, 95.0));
 
     let combo_chimes = COMBO_NOTES_HZ
         .iter()
-        .map(|&freq| add_wav(&mut audio_assets, synth_harp_chord(0.32, &[freq, freq * 1.5])))
+        .map(|&freq| {
+            add_wav(
+                &mut audio_assets,
+                synth_harp_chord(0.32, &[freq, freq * 1.5]),
+            )
+        })
         .collect();
 
     let tool_blast = add_wav(&mut audio_assets, synth_thunder_strike(0.38));
@@ -90,18 +100,21 @@ pub fn init_sound_bank(mut commands: Commands, mut audio_assets: ResMut<Assets<A
     let bgm_fjord = add_wav(&mut audio_assets, synth_nordic_ambient_loop(8.0));
     let bgm_match3 = add_wav(&mut audio_assets, synth_nordic_battle_loop(6.4));
 
+    let initial_vol = if ctx.audio_muted { 0.0 } else { ctx.bgm_volume };
     commands.spawn((
         BgmTrack,
         AudioPlayer::new(bgm_fjord.clone()),
         PlaybackSettings {
             mode: PlaybackMode::Loop,
-            volume: Volume::new(BGM_VOLUME),
+            volume: Volume::new(initial_vol),
             ..default()
         },
     ));
 
     commands.insert_resource(SoundBank {
-        muted: false,
+        muted: ctx.audio_muted,
+        bgm_volume: ctx.bgm_volume,
+        sfx_volume: ctx.sfx_volume,
         swap,
         invalid,
         combo_chimes,
@@ -121,7 +134,13 @@ pub fn switch_bgm_to_match3(
     bank: Res<SoundBank>,
     tracks: Query<Entity, With<BgmTrack>>,
 ) {
-    replace_bgm(&mut commands, &tracks, bank.bgm_match3.clone(), bank.muted);
+    replace_bgm(
+        &mut commands,
+        &tracks,
+        bank.bgm_match3.clone(),
+        bank.muted,
+        bank.bgm_volume,
+    );
 }
 
 /// Restores the calm Fjord ambient loop when leaving Match-3.
@@ -130,7 +149,13 @@ pub fn switch_bgm_to_fjord(
     bank: Res<SoundBank>,
     tracks: Query<Entity, With<BgmTrack>>,
 ) {
-    replace_bgm(&mut commands, &tracks, bank.bgm_fjord.clone(), bank.muted);
+    replace_bgm(
+        &mut commands,
+        &tracks,
+        bank.bgm_fjord.clone(),
+        bank.muted,
+        bank.bgm_volume,
+    );
 }
 
 fn replace_bgm(
@@ -138,6 +163,7 @@ fn replace_bgm(
     tracks: &Query<Entity, With<BgmTrack>>,
     handle: Handle<AudioSource>,
     muted: bool,
+    bgm_volume: f32,
 ) {
     for entity in tracks {
         commands.entity(entity).despawn_recursive();
@@ -147,7 +173,7 @@ fn replace_bgm(
         AudioPlayer::new(handle),
         PlaybackSettings {
             mode: PlaybackMode::Loop,
-            volume: Volume::new(if muted { 0.0 } else { BGM_VOLUME }),
+            volume: Volume::new(if muted { 0.0 } else { bgm_volume }),
             ..default()
         },
     ));
@@ -155,14 +181,16 @@ fn replace_bgm(
 
 /// Plays a one-shot sound effect if audio is not muted.
 pub fn play_sfx(commands: &mut Commands, bank: &SoundBank, kind: SfxKind) {
-    if bank.muted {
+    if bank.muted || bank.sfx_volume <= 0.001 {
         return;
     }
     let handle = match kind {
         SfxKind::Swap => bank.swap.clone(),
         SfxKind::Invalid => bank.invalid.clone(),
         SfxKind::MatchCombo(combo) => {
-            let idx = combo.saturating_sub(1).min((bank.combo_chimes.len() - 1) as u32) as usize;
+            let idx = combo
+                .saturating_sub(1)
+                .min((bank.combo_chimes.len() - 1) as u32) as usize;
             bank.combo_chimes[idx].clone()
         }
         SfxKind::ToolBlast => bank.tool_blast.clone(),
@@ -176,19 +204,59 @@ pub fn play_sfx(commands: &mut Commands, bank: &SoundBank, kind: SfxKind) {
         AudioPlayer::new(handle),
         PlaybackSettings {
             mode: PlaybackMode::Despawn,
-            volume: Volume::new(SFX_VOLUME),
+            volume: Volume::new(bank.sfx_volume),
             ..default()
         },
     ));
 }
 
-/// Toggles global mute and updates the background music sink volume.
-pub fn toggle_mute(bank: &mut SoundBank, bgm_sinks: &mut Query<&mut AudioSink, With<BgmTrack>>) {
+/// Toggles global mute, updates the BGM sink, and persists the preference.
+pub fn toggle_mute(
+    ctx: &mut GameContext,
+    bank: &mut SoundBank,
+    bgm_sinks: &mut Query<&mut AudioSink, With<BgmTrack>>,
+) {
     bank.muted = !bank.muted;
-    let target_vol = if bank.muted { 0.0 } else { BGM_VOLUME };
+    ctx.audio_muted = bank.muted;
+    let target_vol = if bank.muted { 0.0 } else { bank.bgm_volume };
     for sink in bgm_sinks.iter_mut() {
         sink.set_volume(target_vol);
     }
+    ctx.persist();
+}
+
+/// Cycles BGM volume in 25% steps (0% -> 25% -> 50% -> 75% -> 100%) and persists.
+pub fn cycle_bgm_volume(
+    ctx: &mut GameContext,
+    bank: &mut SoundBank,
+    bgm_sinks: &mut Query<&mut AudioSink, With<BgmTrack>>,
+) {
+    let steps = [0.0f32, 0.12, 0.22, 0.35, 0.50];
+    let next = steps
+        .iter()
+        .copied()
+        .find(|&v| v > bank.bgm_volume + 0.02)
+        .unwrap_or(steps[0]);
+    bank.bgm_volume = next;
+    ctx.bgm_volume = next;
+    let target_vol = if bank.muted { 0.0 } else { bank.bgm_volume };
+    for sink in bgm_sinks.iter_mut() {
+        sink.set_volume(target_vol);
+    }
+    ctx.persist();
+}
+
+/// Cycles SFX volume in steps and persists.
+pub fn cycle_sfx_volume(ctx: &mut GameContext, bank: &mut SoundBank) {
+    let steps = [0.0f32, 0.25, 0.55, 0.80, 1.0];
+    let next = steps
+        .iter()
+        .copied()
+        .find(|&v| v > bank.sfx_volume + 0.02)
+        .unwrap_or(steps[0]);
+    bank.sfx_volume = next;
+    ctx.sfx_volume = next;
+    ctx.persist();
 }
 
 fn add_wav(assets: &mut Assets<AudioSource>, samples: Vec<f32>) -> Handle<AudioSource> {
@@ -257,7 +325,8 @@ fn synth_arpeggio(duration_secs: f32, notes: &[f32]) -> Vec<f32> {
             let t = j as f32 / SAMPLE_RATE as f32;
             let norm = j as f32 / note_len as f32;
             let env = (1.0 - norm).powf(1.7) * (norm * 24.0).min(1.0);
-            let s = ((TAU * freq * t).sin() * 0.7 + (TAU * freq * 2.0 * t).sin() * 0.2) * env * 0.45;
+            let s =
+                ((TAU * freq * t).sin() * 0.7 + (TAU * freq * 2.0 * t).sin() * 0.2) * env * 0.45;
             out[start + j] = (out[start + j] + s).clamp(-0.95, 0.95);
         }
     }
@@ -267,7 +336,6 @@ fn synth_arpeggio(duration_secs: f32, notes: &[f32]) -> Vec<f32> {
 fn synth_nordic_ambient_loop(duration_secs: f32) -> Vec<f32> {
     let n = (duration_secs * SAMPLE_RATE as f32) as usize;
     let mut out = Vec::with_capacity(n);
-    // Warm D2 + A2 Nordic drone with gentle slow LFO and sparse harp plucks.
     let harp_events: [(f32, f32); 6] = [
         (0.5, 293.66),
         (1.8, 440.00),
@@ -314,10 +382,10 @@ fn synth_nordic_ambient_loop(duration_secs: f32) -> Vec<f32> {
 fn synth_nordic_battle_loop(duration_secs: f32) -> Vec<f32> {
     let n = (duration_secs * SAMPLE_RATE as f32) as usize;
     let mut out = Vec::with_capacity(n);
-    let beat_secs = 0.4f32; // 150 BPM driving Norse rhythm
+    let beat_secs = 0.4f32;
     let melody: [f32; 16] = [
-        293.66, 349.23, 440.00, 392.00, 293.66, 440.00, 523.25, 440.00,
-        349.23, 392.00, 440.00, 523.25, 587.33, 523.25, 440.00, 392.00,
+        293.66, 349.23, 440.00, 392.00, 293.66, 440.00, 523.25, 440.00, 349.23, 392.00, 440.00,
+        523.25, 587.33, 523.25, 440.00, 392.00,
     ];
 
     for i in 0..n {
@@ -325,8 +393,7 @@ fn synth_nordic_battle_loop(duration_secs: f32) -> Vec<f32> {
         let beat_idx = (t / beat_secs) as usize;
         let beat_t = t - (beat_idx as f32) * beat_secs;
 
-        // Deep war drum on strong beats (0, 2, 4, 6...) + lighter tom on offbeats.
-        let strong = beat_idx % 2 == 0;
+        let strong = beat_idx.is_multiple_of(2);
         let drum_freq = if strong {
             88.0 - 38.0 * (beat_t / beat_secs).min(1.0)
         } else {
@@ -335,7 +402,6 @@ fn synth_nordic_battle_loop(duration_secs: f32) -> Vec<f32> {
         let drum_env = (1.0 - (beat_t / 0.22).min(1.0)).powf(2.2);
         let drum = (TAU * drum_freq * beat_t).sin() * drum_env * if strong { 0.42 } else { 0.22 };
 
-        // Energetic D-minor pentatonic harp arpeggio.
         let note_hz = melody[beat_idx % melody.len()];
         let harp_env = (1.0 - (beat_t / beat_secs).min(1.0)).powf(1.8) * (beat_t * 35.0).min(1.0);
         let harp = ((TAU * note_hz * beat_t).sin() * 0.65
@@ -343,7 +409,6 @@ fn synth_nordic_battle_loop(duration_secs: f32) -> Vec<f32> {
             * harp_env
             * 0.28;
 
-        // Subtle warm D2 bass drone.
         let bass = (TAU * 73.42 * t).sin() * 0.14;
 
         let edge = 0.08;
@@ -367,13 +432,13 @@ fn encode_pcm16_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     buf.extend_from_slice(&file_size.to_le_bytes());
     buf.extend_from_slice(b"WAVE");
     buf.extend_from_slice(b"fmt ");
-    buf.extend_from_slice(&16u32.to_le_bytes()); // PCM chunk size
-    buf.extend_from_slice(&1u16.to_le_bytes()); // PCM format
-    buf.extend_from_slice(&1u16.to_le_bytes()); // Mono
+    buf.extend_from_slice(&16u32.to_le_bytes());
+    buf.extend_from_slice(&1u16.to_le_bytes());
+    buf.extend_from_slice(&1u16.to_le_bytes());
     buf.extend_from_slice(&sample_rate.to_le_bytes());
-    buf.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // Byte rate
-    buf.extend_from_slice(&2u16.to_le_bytes()); // Block align
-    buf.extend_from_slice(&16u16.to_le_bytes()); // Bits per sample
+    buf.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    buf.extend_from_slice(&2u16.to_le_bytes());
+    buf.extend_from_slice(&16u16.to_le_bytes());
     buf.extend_from_slice(b"data");
     buf.extend_from_slice(&data_bytes.to_le_bytes());
     for &s in samples {

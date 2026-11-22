@@ -87,7 +87,10 @@ pub fn run_app() {
         // Match-3 board scene
         .add_systems(
             OnEnter(AppState::Match3),
-            (match3_scene::setup_match3_scene, audio::switch_bgm_to_match3),
+            (
+                match3_scene::setup_match3_scene,
+                audio::switch_bgm_to_match3,
+            ),
         )
         .add_systems(
             Update,
@@ -103,7 +106,10 @@ pub fn run_app() {
         )
         .add_systems(
             OnExit(AppState::Match3),
-            (match3_scene::cleanup_match3_scene, audio::switch_bgm_to_fjord),
+            (
+                match3_scene::cleanup_match3_scene,
+                audio::switch_bgm_to_fjord,
+            ),
         )
         // Level Result modal
         .add_systems(OnEnter(AppState::LevelResult), result_ui::setup_result_ui)
@@ -141,10 +147,11 @@ fn enter_title_after_boot(mut next_state: ResMut<NextState<AppState>>) {
 
 fn handle_global_shortcuts(
     keys: Res<ButtonInput<KeyCode>>,
+    mut ctx: ResMut<GameContext>,
     mut sound_bank: ResMut<audio::SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<audio::BgmTrack>>,
 ) {
     if keys.just_pressed(KeyCode::KeyM) {
-        audio::toggle_mute(&mut sound_bank, &mut bgm_sinks);
+        audio::toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
     }
 }

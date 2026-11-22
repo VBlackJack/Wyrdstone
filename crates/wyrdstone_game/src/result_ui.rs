@@ -17,7 +17,7 @@
 //! Victory and defeat modal screen after completing a Match-3 level.
 
 use crate::audio::{play_sfx, SfxKind, SoundBank};
-use crate::state::{AppState, GameContext};
+use crate::state::{today_day_index, AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
 use wyrdstone_core::LevelOutcome;
@@ -32,22 +32,20 @@ pub enum ResultAction {
 }
 
 /// Spawns the Victory / Defeat summary card.
-pub fn setup_result_ui(
-    mut commands: Commands,
-    ctx: Res<GameContext>,
-    sound_bank: Res<SoundBank>,
-) {
+pub fn setup_result_ui(mut commands: Commands, ctx: Res<GameContext>, sound_bank: Res<SoundBank>) {
     let i18n = &ctx.data.i18n;
     let is_victory = ctx.last_outcome == Some(LevelOutcome::Victory);
-    play_sfx(
-        &mut commands,
-        &sound_bank,
-        if is_victory {
-            SfxKind::Victory
-        } else {
-            SfxKind::Defeat
-        },
-    );
+    // Victory SFX already plays at the start of VictoryCelebration; only play Defeat SFX here.
+    if !is_victory {
+        play_sfx(&mut commands, &sound_bank, SfxKind::Defeat);
+    }
+
+    let is_daily = ctx
+        .active_level_id
+        .as_deref()
+        .map(|id| id.starts_with("daily_"))
+        .unwrap_or(false);
+    let can_replay = !is_daily || (!is_victory && ctx.city.is_daily_available(today_day_index()));
 
     let title = if is_victory {
         i18n.t("result.victory.title")
@@ -82,6 +80,7 @@ pub fn setup_result_ui(
             root.spawn((
                 Node {
                     width: Val::Px(460.0),
+                    max_width: Val::Percent(94.0),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
                     padding: UiRect::all(Val::Px(28.0)),
@@ -113,10 +112,9 @@ pub fn setup_result_ui(
                 ));
 
                 card.spawn((
-                    Text::new(i18n.t_fmt(
-                        "match3.hud.score",
-                        &[("score", ctx.last_score.to_string())],
-                    )),
+                    Text::new(
+                        i18n.t_fmt("match3.hud.score", &[("score", ctx.last_score.to_string())]),
+                    ),
                     TextFont {
                         font_size: FONT_HEADING,
                         ..default()
@@ -125,6 +123,31 @@ pub fn setup_result_ui(
                 ));
 
                 if is_victory {
+                    if ctx.last_stars > 0 {
+                        card.spawn((
+                            Text::new(i18n.t_fmt(
+                                "result.stars.label",
+                                &[("stars", ctx.last_stars.to_string())],
+                            )),
+                            TextFont {
+                                font_size: FONT_HEADING,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                    }
+                    if let Some(streak) = ctx.last_daily_streak {
+                        card.spawn((
+                            Text::new(
+                                i18n.t_fmt("result.daily.streak", &[("days", streak.to_string())]),
+                            ),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GREEN),
+                        ));
+                    }
                     let r = ctx.last_rewards;
                     card.spawn((
                         Text::new(i18n.t("result.rewards.title")),
@@ -178,13 +201,15 @@ pub fn setup_result_ui(
                         COLOR_ACCENT_GOLD,
                         COLOR_TEXT_DARK,
                     );
-                    spawn_result_btn(
-                        row,
-                        i18n.t("result.button.replay"),
-                        ResultAction::Replay,
-                        COLOR_ACCENT_TEAL,
-                        COLOR_TEXT_PRIMARY,
-                    );
+                    if can_replay {
+                        spawn_result_btn(
+                            row,
+                            i18n.t("result.button.replay"),
+                            ResultAction::Replay,
+                            COLOR_ACCENT_TEAL,
+                            COLOR_TEXT_PRIMARY,
+                        );
+                    }
                 });
             });
         });
@@ -246,9 +271,23 @@ pub fn handle_result_buttons(
             }
             ResultAction::Replay => {
                 if let Some(level_id) = ctx.active_level_id.clone() {
-                    if ctx.start_level(&level_id).is_ok() {
-                        next_state.set(AppState::Match3);
-                        return;
+                    let result = if level_id.starts_with("daily_") {
+                        if ctx.city.is_daily_available(today_day_index()) {
+                            ctx.start_daily_trial()
+                        } else {
+                            Err("city.panel.daily.done")
+                        }
+                    } else {
+                        ctx.start_level(&level_id)
+                    };
+                    match result {
+                        Ok(()) => {
+                            next_state.set(AppState::Match3);
+                            return;
+                        }
+                        Err(err_key) => {
+                            ctx.status_notice_key = Some(err_key.to_string());
+                        }
                     }
                 }
                 next_state.set(AppState::FjordCity);

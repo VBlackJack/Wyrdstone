@@ -94,24 +94,63 @@ pub fn init_fjord_textures(
     let logo = images.add(decode_png(WYRDSTONE_LOGO_PNG));
 
     let mut buildings = HashMap::new();
-    buildings.insert("great_hall".to_string(), images.add(decode_png(BLDG_GREAT_HALL_PNG)));
+    buildings.insert(
+        "great_hall".to_string(),
+        images.add(decode_png(BLDG_GREAT_HALL_PNG)),
+    );
     buildings.insert("forge".to_string(), images.add(decode_png(BLDG_FORGE_PNG)));
-    buildings.insert("longship_dock".to_string(), images.add(decode_png(BLDG_DOCK_PNG)));
-    buildings.insert("odin_shrine".to_string(), images.add(decode_png(BLDG_SHRINE_PNG)));
-    buildings.insert("meadery".to_string(), images.add(decode_png(BLDG_MEADERY_PNG)));
+    buildings.insert(
+        "longship_dock".to_string(),
+        images.add(decode_png(BLDG_DOCK_PNG)),
+    );
+    buildings.insert(
+        "odin_shrine".to_string(),
+        images.add(decode_png(BLDG_SHRINE_PNG)),
+    );
+    buildings.insert(
+        "meadery".to_string(),
+        images.add(decode_png(BLDG_MEADERY_PNG)),
+    );
 
     let mut portraits = HashMap::new();
-    portraits.insert("jarl".to_string(), images.add(decode_png(PORTRAIT_JARL_PNG)));
-    portraits.insert("brokk".to_string(), images.add(decode_png(PORTRAIT_BROKK_PNG)));
-    portraits.insert("volva".to_string(), images.add(decode_png(PORTRAIT_VOLVA_PNG)));
+    portraits.insert(
+        "jarl".to_string(),
+        images.add(decode_png(PORTRAIT_JARL_PNG)),
+    );
+    portraits.insert(
+        "brokk".to_string(),
+        images.add(decode_png(PORTRAIT_BROKK_PNG)),
+    );
+    portraits.insert(
+        "volva".to_string(),
+        images.add(decode_png(PORTRAIT_VOLVA_PNG)),
+    );
 
     let mut tool_icons = HashMap::new();
-    tool_icons.insert(ActiveTool::Mjolnir, images.add(decode_png(TOOL_MJOLNIR_PNG)));
-    tool_icons.insert(ActiveTool::SurtrEmber, images.add(decode_png(TOOL_SURTR_PNG)));
-    tool_icons.insert(ActiveTool::ThorBolt, images.add(decode_png(TOOL_THOR_BOLT_PNG)));
-    tool_icons.insert(ActiveTool::BifrostPrism, images.add(decode_png(TOOL_BIFROST_PNG)));
-    tool_icons.insert(ActiveTool::DrakkarCharge, images.add(decode_png(TOOL_DRAKKAR_PNG)));
-    tool_icons.insert(ActiveTool::LokiShuffle, images.add(decode_png(TOOL_LOKI_PNG)));
+    tool_icons.insert(
+        ActiveTool::Mjolnir,
+        images.add(decode_png(TOOL_MJOLNIR_PNG)),
+    );
+    tool_icons.insert(
+        ActiveTool::SurtrEmber,
+        images.add(decode_png(TOOL_SURTR_PNG)),
+    );
+    tool_icons.insert(
+        ActiveTool::ThorBolt,
+        images.add(decode_png(TOOL_THOR_BOLT_PNG)),
+    );
+    tool_icons.insert(
+        ActiveTool::BifrostPrism,
+        images.add(decode_png(TOOL_BIFROST_PNG)),
+    );
+    tool_icons.insert(
+        ActiveTool::DrakkarCharge,
+        images.add(decode_png(TOOL_DRAKKAR_PNG)),
+    );
+    tool_icons.insert(
+        ActiveTool::LokiShuffle,
+        images.add(decode_png(TOOL_LOKI_PNG)),
+    );
 
     commands.insert_resource(FjordTextures {
         fjord_map,
