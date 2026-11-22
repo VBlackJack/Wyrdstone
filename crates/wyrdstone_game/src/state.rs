@@ -51,6 +51,8 @@ pub struct GameContext {
     pub last_rewards: ResourceBundle,
     pub last_score: u32,
     pub status_notice_key: Option<String>,
+    pub celebration_message: Option<String>,
+    pub celebration_timer_secs: f32,
     pub energy_regen_timer: Timer,
     pub save_path: Option<PathBuf>,
     pub rng: StdRng,
@@ -94,6 +96,8 @@ impl GameContext {
             last_rewards: ResourceBundle::default(),
             last_score: 0,
             status_notice_key: None,
+            celebration_message: None,
+            celebration_timer_secs: 0.0,
             energy_regen_timer: Timer::from_seconds(regen_secs, TimerMode::Repeating),
             save_path,
             rng: StdRng::from_entropy(),
@@ -142,7 +146,9 @@ fn resolve_save_path() -> Option<PathBuf> {
     }
     #[cfg(target_os = "android")]
     {
-        None
+        Some(PathBuf::from(
+            "/data/data/com.julienbombled.wyrdstone/files/wyrdstone_save.json",
+        ))
     }
 }
 

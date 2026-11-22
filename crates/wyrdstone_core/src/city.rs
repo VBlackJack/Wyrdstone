@@ -114,10 +114,16 @@ pub enum QuestCondition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestDef {
     pub id: String,
+    #[serde(default = "default_speaker")]
+    pub speaker: String,
     pub title_key: String,
     pub desc_key: String,
     pub condition: QuestCondition,
     pub reward: ResourceBundle,
+}
+
+fn default_speaker() -> String {
+    "jarl".to_string()
 }
 
 /// Player inventory of the six active Match-3 tools.

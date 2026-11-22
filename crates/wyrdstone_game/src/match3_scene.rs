@@ -17,11 +17,12 @@
 //! Match-3 2D board rendering, stepped animations, particles, HUD, and mouse + Android touch input.
 
 use crate::audio::{play_sfx, SfxKind, SoundBank};
+use crate::fjord_art::FjordTextures;
 use crate::runes_art::RuneTextures;
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
+use bevy::window::{PrimaryWindow, WindowResized};
 use std::collections::{HashMap, HashSet};
 use wyrdstone_core::{
     ActiveTool, Booster, CellPos, FallMove, LevelOutcome, Objective, PreparedClear,
@@ -31,9 +32,17 @@ const PARTICLES_PER_CLEARED_TILE: usize = 6;
 const PARTICLE_LIFETIME_SECS: f32 = 0.34;
 const PARTICLE_SPEED_PX: f32 = 155.0;
 const PARTICLE_SIZE_PX: f32 = 7.0;
+const HINT_IDLE_SECS: f32 = 5.0;
+const FLOATING_TEXT_LIFETIME_SECS: f32 = 0.85;
+const FLOATING_TEXT_RISE_SPEED_PX: f32 = 58.0;
+const SHAKE_DURATION_SECS: f32 = 0.18;
+const SHAKE_AMPLITUDE_PX: f32 = 6.5;
 
 #[derive(Component)]
 pub struct Match3Entity;
+
+#[derive(Component)]
+pub struct Match3Backdrop;
 
 #[derive(Component)]
 pub struct Match3HudRoot;
@@ -51,6 +60,13 @@ pub struct SelectionMarker;
 #[derive(Component)]
 pub struct BurstParticle {
     pub velocity: Vec2,
+    pub elapsed: f32,
+    pub lifetime: f32,
+}
+
+/// Floating "+score" or "Combo xN!" text rising above cleared matches.
+#[derive(Component)]
+pub struct FloatingScore {
     pub elapsed: f32,
     pub lifetime: f32,
 }
@@ -93,7 +109,7 @@ pub enum BoardAnimPhase {
     },
 }
 
-/// Tracks board layout metrics, pointer/touch gesture state, and active animation phase.
+/// Tracks board layout metrics, pointer/touch gesture state, hints, shake, and animation phase.
 #[derive(Resource, Default)]
 pub struct Match3InputState {
     pub selected: Option<CellPos>,
@@ -105,6 +121,9 @@ pub struct Match3InputState {
     pub board_origin: Vec2,
     pub dirty_board: bool,
     pub dirty_hud: bool,
+    pub idle_secs: f32,
+    pub hint_pair: Option<(CellPos, CellPos)>,
+    pub shake_secs: f32,
     pub phase: BoardAnimPhase,
 }
 
@@ -114,38 +133,60 @@ impl Match3InputState {
     }
 }
 
-/// Initializes the Match-3 scene (2D sprites + HUD overlay).
+/// Initializes the Match-3 scene (painted sanctuary backdrop + 2D sprites + HUD overlay).
 pub fn setup_match3_scene(
     mut commands: Commands,
     ctx: Res<GameContext>,
     textures: Res<RuneTextures>,
+    fjord_art: Res<FjordTextures>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let mut input_state = Match3InputState::default();
 
-    if let (Some(session), Ok(window)) = (&ctx.active_session, windows.get_single()) {
-        compute_board_layout(
-            window.width(),
-            window.height(),
-            session.board.cols(),
-            session.board.rows(),
-            &mut input_state,
-        );
-        spawn_board_sprites(&mut commands, session, &textures, &input_state, None);
+    if let Ok(window) = windows.get_single() {
+        // Painted Norse sanctuary backdrop scaled to cover the viewport.
+        let bg_w = window.width().max(window.height() * (16.0 / 9.0));
+        let bg_h = window.height().max(window.width() * (9.0 / 16.0));
+        commands.spawn((
+            Match3Backdrop,
+            Sprite {
+                image: fjord_art.match3_bg.clone(),
+                custom_size: Some(Vec2::new(bg_w, bg_h)),
+                ..default()
+            },
+            Transform::from_xyz(0.0, 0.0, Z_BOARD_BG - 2.0),
+        ));
+
+        if let Some(session) = &ctx.active_session {
+            compute_board_layout(
+                window.width(),
+                window.height(),
+                session.board.cols(),
+                session.board.rows(),
+                &mut input_state,
+            );
+            spawn_board_sprites(&mut commands, session, &textures, &input_state, None);
+        }
     }
 
     spawn_match3_hud(&mut commands, &ctx);
     commands.insert_resource(input_state);
 }
 
-/// Cleans up all Match-3 sprites, particles, HUD, and input state on exit.
+/// Cleans up all Match-3 sprites, backdrop, particles, floating text, HUD, and camera offset on exit.
 pub fn cleanup_match3_scene(
     mut commands: Commands,
     sprites: Query<Entity, With<Match3Entity>>,
+    backdrops: Query<Entity, With<Match3Backdrop>>,
     huds: Query<Entity, With<Match3HudRoot>>,
     particles: Query<Entity, With<BurstParticle>>,
+    popups: Query<Entity, With<FloatingScore>>,
+    mut cameras: Query<&mut Transform, With<Camera2d>>,
 ) {
     for e in &sprites {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &backdrops {
         commands.entity(e).despawn_recursive();
     }
     for e in &huds {
@@ -153,6 +194,13 @@ pub fn cleanup_match3_scene(
     }
     for e in &particles {
         commands.entity(e).despawn_recursive();
+    }
+    for e in &popups {
+        commands.entity(e).despawn_recursive();
+    }
+    for mut cam in &mut cameras {
+        cam.translation.x = 0.0;
+        cam.translation.y = 0.0;
     }
     commands.remove_resource::<Match3InputState>();
 }
@@ -229,11 +277,11 @@ fn spawn_board_sprites(
     let board_h = rows as f32 * layout.cell_step + 16.0;
     let center_y = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
 
-    // Board frame backdrop
+    // Board frame backdrop (semi-transparent dark stone so sanctuary art breathes around it)
     commands.spawn((
         Match3Entity,
         Sprite {
-            color: COLOR_PANEL_DARK,
+            color: Color::srgba(0.06, 0.09, 0.14, 0.84),
             custom_size: Some(Vec2::new(board_w, board_h)),
             ..default()
         },
@@ -446,6 +494,36 @@ fn spawn_clear_particles(
             ));
         }
     }
+}
+
+fn spawn_floating_score(
+    commands: &mut Commands,
+    cells: &[CellPos],
+    label: String,
+    color: Color,
+    layout: &Match3InputState,
+) {
+    if cells.is_empty() {
+        return;
+    }
+    let mut sum = Vec2::ZERO;
+    for &p in cells {
+        sum += cell_to_world(p, layout);
+    }
+    let center = sum / cells.len() as f32;
+    commands.spawn((
+        FloatingScore {
+            elapsed: 0.0,
+            lifetime: FLOATING_TEXT_LIFETIME_SECS,
+        },
+        Text2d::new(label),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(color),
+        Transform::from_xyz(center.x, center.y + 8.0, Z_SELECTION_RING + 2.0),
+    ));
 }
 
 fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
@@ -845,6 +923,8 @@ pub fn handle_board_pointer_input(
     }
 
     if let Some(screen_pos) = pressed_screen {
+        input_state.idle_secs = 0.0;
+        input_state.hint_pair = None;
         if let Ok(world_pos) = camera.viewport_to_world_2d(cam_transform, screen_pos) {
             if let Some(cell) = world_to_cell(world_pos, cols, rows, &input_state) {
                 // Armed active tool triggers an animated clear phase directly.
@@ -860,6 +940,7 @@ pub fn handle_board_pointer_input(
                             play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
                             let clear_dur = ctx.data.balance.clear_anim_seconds;
                             input_state.selected = None;
+                            input_state.shake_secs = SHAKE_DURATION_SECS;
                             input_state.dirty_hud = true;
                             input_state.phase = BoardAnimPhase::Clearing {
                                 prepared: prep,
@@ -992,6 +1073,26 @@ pub fn tick_board_animation(
     let phase = std::mem::take(&mut input_state.phase);
     match phase {
         BoardAnimPhase::Idle => {
+            // Auto-hint after 5 seconds of inactivity so the player never feels stuck.
+            input_state.idle_secs += dt;
+            if input_state.idle_secs >= HINT_IDLE_SECS {
+                if input_state.hint_pair.is_none() {
+                    input_state.hint_pair = ctx
+                        .active_session
+                        .as_ref()
+                        .and_then(|s| s.board.find_hint_move());
+                }
+                if let Some((ha, hb)) = input_state.hint_pair {
+                    let pulse = 1.0 + 0.11 * ((input_state.idle_secs * 5.0).sin() * 0.5 + 0.5);
+                    let glow = Color::srgb(1.22, 1.18, 0.92);
+                    for (tile, mut tf, mut sprite) in &mut tile_q {
+                        if tile.pos == ha || tile.pos == hb {
+                            tf.scale = Vec3::splat(pulse);
+                            sprite.color = glow;
+                        }
+                    }
+                }
+            }
             input_state.phase = BoardAnimPhase::Idle;
         }
         BoardAnimPhase::Swapping {
@@ -1135,16 +1236,42 @@ pub fn tick_board_animation(
 
             if elapsed >= duration {
                 let balance = ctx.data.balance.clone();
-                let ctx_ref = ctx.as_mut();
+                let mut gained_score = 0u32;
                 let mut fall_map = HashMap::new();
-                if let Some(session) = ctx_ref.active_session.as_mut() {
-                    let step = session.board.commit_clear_step(&prepared, combo, &balance);
-                    session.apply_step_progress(&step);
-                    let fall_moves: Vec<FallMove> =
-                        session.board.apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
-                    for fm in fall_moves {
-                        fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
+                {
+                    let ctx_ref = ctx.as_mut();
+                    if let Some(session) = ctx_ref.active_session.as_mut() {
+                        let step = session.board.commit_clear_step(&prepared, combo, &balance);
+                        gained_score = step.score_gained;
+                        session.apply_step_progress(&step);
+                        let fall_moves: Vec<FallMove> =
+                            session.board.apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
+                        for fm in fall_moves {
+                            fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
+                        }
                     }
+                }
+                if gained_score > 0 {
+                    let popup_label = if combo >= 2 {
+                        format!("+{} (x{})", gained_score, combo)
+                    } else {
+                        format!("+{}", gained_score)
+                    };
+                    let popup_color = if combo >= 2 {
+                        COLOR_ACCENT_GOLD
+                    } else {
+                        COLOR_TEXT_PRIMARY
+                    };
+                    spawn_floating_score(
+                        &mut commands,
+                        &prepared.cells,
+                        popup_label,
+                        popup_color,
+                        &input_state,
+                    );
+                }
+                if combo >= 3 || prepared.cells.len() >= 6 {
+                    input_state.shake_secs = SHAKE_DURATION_SECS;
                 }
                 if let Some(session) = ctx.active_session.as_ref() {
                     rebuild_board_now(
@@ -1157,6 +1284,8 @@ pub fn tick_board_animation(
                         Some(&fall_map),
                     );
                 }
+                input_state.idle_secs = 0.0;
+                input_state.hint_pair = None;
                 input_state.dirty_hud = true;
                 input_state.phase = BoardAnimPhase::Falling {
                     moves: fall_map,
@@ -1346,14 +1475,32 @@ pub fn sync_match3_visuals(
     }
 }
 
-/// Moves and fades out burst particles spawned during rune clears.
+/// Moves and fades out burst particles, floating score popups, camera shake, and window resize.
+#[allow(clippy::too_many_arguments)]
 pub fn animate_particles(
     mut commands: Commands,
     time: Res<Time>,
-    mut query: Query<(Entity, &mut BurstParticle, &mut Transform, &mut Sprite)>,
+    mut input_state: ResMut<Match3InputState>,
+    mut resize_events: EventReader<WindowResized>,
+    mut backdrops: Query<&mut Sprite, (With<Match3Backdrop>, Without<BurstParticle>)>,
+    mut particles: Query<(Entity, &mut BurstParticle, &mut Transform, &mut Sprite), Without<Camera2d>>,
+    mut popups: Query<(Entity, &mut FloatingScore, &mut Transform, &mut TextColor), (Without<BurstParticle>, Without<Camera2d>)>,
+    mut cameras: Query<&mut Transform, With<Camera2d>>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut p, mut tf, mut sprite) in &mut query {
+
+    // Adapt sanctuary backdrop and board layout on window resize / mobile rotation.
+    for ev in resize_events.read() {
+        let bg_w = ev.width.max(ev.height * (16.0 / 9.0));
+        let bg_h = ev.height.max(ev.width * (9.0 / 16.0));
+        for mut bg in &mut backdrops {
+            bg.custom_size = Some(Vec2::new(bg_w, bg_h));
+        }
+        input_state.dirty_board = true;
+    }
+
+    // Burst spark particles.
+    for (entity, mut p, mut tf, mut sprite) in &mut particles {
         p.elapsed += dt;
         if p.elapsed >= p.lifetime {
             commands.entity(entity).despawn();
@@ -1364,5 +1511,33 @@ pub fn animate_particles(
         tf.translation.y += p.velocity.y * dt * (1.0 - progress * 0.5);
         tf.scale = Vec3::splat((1.0 - progress).max(0.1));
         sprite.color = sprite.color.with_alpha(1.0 - progress);
+    }
+
+    // Rising floating score popups.
+    for (entity, mut f, mut tf, mut col) in &mut popups {
+        f.elapsed += dt;
+        if f.elapsed >= f.lifetime {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let progress = f.elapsed / f.lifetime;
+        tf.translation.y += FLOATING_TEXT_RISE_SPEED_PX * dt;
+        col.0 = col.0.with_alpha((1.0 - progress).max(0.0));
+    }
+
+    // Tactile camera screen shake on heavy blasts.
+    if input_state.shake_secs > 0.0 {
+        input_state.shake_secs = (input_state.shake_secs - dt).max(0.0);
+        let intensity = (input_state.shake_secs / SHAKE_DURATION_SECS) * SHAKE_AMPLITUDE_PX;
+        let phase = time.elapsed_secs() * 58.0;
+        for mut cam in &mut cameras {
+            cam.translation.x = phase.sin() * intensity;
+            cam.translation.y = (phase * 1.37).cos() * intensity;
+        }
+    } else {
+        for mut cam in &mut cameras {
+            cam.translation.x = 0.0;
+            cam.translation.y = 0.0;
+        }
     }
 }

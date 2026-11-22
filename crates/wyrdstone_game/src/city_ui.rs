@@ -21,10 +21,19 @@ use crate::fjord_art::FjordTextures;
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
-use wyrdstone_core::BuildingDef;
+use bevy::window::{PrimaryWindow, WindowResized};
+use wyrdstone_core::{BuildingDef, Objective};
+
+const CELEBRATION_DURATION_SECS: f32 = 3.2;
 
 #[derive(Component)]
 pub struct CityRoot;
+
+/// Tracks whether the City layout was last built in portrait mode.
+#[derive(Resource, Default)]
+pub struct CityLayoutMode {
+    pub is_portrait: bool,
+}
 
 #[derive(Component)]
 pub enum CityAction {
@@ -45,8 +54,14 @@ pub fn setup_city_ui(
     ctx: Res<GameContext>,
     fjord_art: Res<FjordTextures>,
     sound_bank: Res<SoundBank>,
+    windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    spawn_city_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
+    let is_portrait = windows
+        .get_single()
+        .map(|w| w.width() < w.height())
+        .unwrap_or(false);
+    commands.insert_resource(CityLayoutMode { is_portrait });
+    spawn_city_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted, is_portrait);
 }
 
 /// Cleans up the Fjord City UI on state exit.
@@ -54,6 +69,7 @@ pub fn cleanup_city_ui(mut commands: Commands, roots: Query<Entity, With<CityRoo
     for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
+    commands.remove_resource::<CityLayoutMode>();
 }
 
 fn spawn_city_tree(
@@ -61,6 +77,7 @@ fn spawn_city_tree(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     muted: bool,
+    is_portrait: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let res = ctx.city.resources;
@@ -209,13 +226,13 @@ fn spawn_city_tree(
                 });
             });
 
-            // 2. Compact Active Saga Quest Ribbon
+            // 2. Compact Active Saga Quest Ribbon with Speaker Portrait
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
                     justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                     column_gap: Val::Px(12.0),
                     border: UiRect::all(Val::Px(1.5)),
                     ..default()
@@ -228,31 +245,51 @@ fn spawn_city_tree(
                 if let Some(quest) = ctx.city.active_quest(&ctx.data.quests) {
                     let ready = ctx.city.is_quest_ready(quest);
                     qbar.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(1.0),
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
                         ..default()
                     })
-                    .with_children(|info| {
-                        info.spawn((
-                            Text::new(format!(
-                                "{} - {}",
-                                i18n.t("city.panel.quests.title"),
-                                i18n.t(&quest.title_key)
-                            )),
-                            TextFont {
-                                font_size: FONT_BODY,
-                                ..default()
-                            },
-                            TextColor(COLOR_ACCENT_GOLD),
-                        ));
-                        info.spawn((
-                            Text::new(i18n.t(&quest.desc_key)),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_TEXT_PRIMARY),
-                        ));
+                    .with_children(|left| {
+                        if let Some(portrait) = fjord_art.portrait(&quest.speaker) {
+                            left.spawn((
+                                ImageNode::new(portrait),
+                                Node {
+                                    width: Val::Px(46.0),
+                                    height: Val::Px(46.0),
+                                    border: UiRect::all(Val::Px(1.5)),
+                                    ..default()
+                                },
+                                BorderColor(COLOR_ACCENT_GOLD),
+                                BorderRadius::all(Val::Px(8.0)),
+                            ));
+                        }
+                        left.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(1.0),
+                            ..default()
+                        })
+                        .with_children(|info| {
+                            info.spawn((
+                                Text::new(format!(
+                                    "{} - {}",
+                                    i18n.t("city.panel.quests.title"),
+                                    i18n.t(&quest.title_key)
+                                )),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                            info.spawn((
+                                Text::new(i18n.t(&quest.desc_key)),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                        });
                     });
 
                     if ready {
@@ -275,20 +312,68 @@ fn spawn_city_tree(
                 }
             });
 
-            // 3. Main Split View: Interactive Fjord Map (Left) + Building Inspector Drawer (Right)
+            // Optional Upgrade Celebration Banner
+            if let Some(msg) = &ctx.celebration_message {
+                root.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.14, 0.42, 0.26, 0.95)),
+                    BorderColor(COLOR_ACCENT_GOLD),
+                    BorderRadius::all(Val::Px(8.0)),
+                ))
+                .with_children(|cel| {
+                    cel.spawn((
+                        Text::new(msg.clone()),
+                        TextFont {
+                            font_size: FONT_BODY,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                });
+            }
+
+            // 3. Main Split View: Responsive (Row on Desktop/Landscape, Column on Mobile Portrait)
+            let (map_w, map_h, insp_w, insp_h) = if is_portrait {
+                (
+                    Val::Percent(100.0),
+                    Val::Percent(52.0),
+                    Val::Percent(100.0),
+                    Val::Percent(48.0),
+                )
+            } else {
+                (
+                    Val::Percent(66.0),
+                    Val::Percent(100.0),
+                    Val::Percent(34.0),
+                    Val::Percent(100.0),
+                )
+            };
+
             root.spawn(Node {
                 width: Val::Percent(100.0),
                 flex_grow: 1.0,
+                flex_direction: if is_portrait {
+                    FlexDirection::Column
+                } else {
+                    FlexDirection::Row
+                },
                 column_gap: Val::Px(12.0),
+                row_gap: Val::Px(10.0),
                 ..default()
             })
             .with_children(|main| {
-                // LEFT: Full Interactive Painted Fjord Map
+                // LEFT / TOP: Full Interactive Painted Fjord Map
                 main.spawn((
                     ImageNode::new(fjord_art.fjord_map.clone()),
                     Node {
-                        width: Val::Percent(66.0),
-                        height: Val::Percent(100.0),
+                        width: map_w,
+                        height: map_h,
                         border: UiRect::all(Val::Px(2.0)),
                         overflow: Overflow::clip(),
                         ..default()
@@ -302,15 +387,15 @@ fn spawn_city_tree(
                     }
                 });
 
-                // RIGHT: Spacious Building Inspector Drawer
+                // RIGHT / BOTTOM: Spacious Building Inspector Drawer
                 main.spawn((
                     Node {
-                        width: Val::Percent(34.0),
-                        height: Val::Percent(100.0),
+                        width: insp_w,
+                        height: insp_h,
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
                         padding: UiRect::all(Val::Px(14.0)),
-                        row_gap: Val::Px(10.0),
+                        row_gap: Val::Px(8.0),
                         border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
@@ -582,6 +667,88 @@ fn spawn_building_inspector(
                     TextColor(COLOR_TEXT_PRIMARY),
                 ));
             });
+
+            // Board Preview: show objectives & base spoils before spending Endurance
+            if let Some(level) = ctx.data.level_by_id(&b.level_id) {
+                let obj_summary: Vec<String> = level
+                    .objectives
+                    .iter()
+                    .map(|o| match o {
+                        Objective::ClearIce { target } => i18n.t_fmt(
+                            "match3.objective.clear_ice",
+                            &[("done", "0".into()), ("target", target.to_string())],
+                        ),
+                        Objective::CollectRune { rune, target } => i18n.t_fmt(
+                            "match3.objective.collect_rune",
+                            &[
+                                ("rune", i18n.t(rune.i18n_key()).to_string()),
+                                ("done", "0".into()),
+                                ("target", target.to_string()),
+                            ],
+                        ),
+                        Objective::ReachScore { target } => i18n.t_fmt(
+                            "match3.objective.reach_score",
+                            &[("done", "0".into()), ("target", target.to_string())],
+                        ),
+                        Objective::DropRelics { target } => i18n.t_fmt(
+                            "match3.objective.drop_relics",
+                            &[("done", "0".into()), ("target", target.to_string())],
+                        ),
+                    })
+                    .collect();
+
+                top.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(8.0)),
+                        row_gap: Val::Px(3.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(COLOR_PANEL_CARD),
+                    BorderColor(COLOR_PANEL_BORDER),
+                    BorderRadius::all(Val::Px(8.0)),
+                ))
+                .with_children(|prev| {
+                    prev.spawn((
+                        Text::new(format!(
+                            "{} ({})",
+                            i18n.t("city.panel.building.preview_title"),
+                            i18n.t_fmt("match3.hud.moves", &[("moves", level.max_moves.to_string())]),
+                        )),
+                        TextFont {
+                            font_size: 12.5,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    prev.spawn((
+                        Text::new(obj_summary.join("  |  ")),
+                        TextFont {
+                            font_size: 12.0,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_PRIMARY),
+                    ));
+                    let r = level.base_reward;
+                    prev.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.panel.building.reward_line",
+                            &[
+                                ("wood", r.wood.to_string()),
+                                ("stone", r.stone.to_string()),
+                                ("gold", r.gold.to_string()),
+                                ("mead", r.mead.to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: 12.0,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GREEN),
+                    ));
+                });
+            }
 
             // Color-coded upgrade cost breakdown
             if !unlocked {
@@ -951,15 +1118,36 @@ fn spawn_full_button(
 #[allow(clippy::too_many_arguments)]
 pub fn handle_city_buttons(
     mut commands: Commands,
+    time: Res<Time>,
     mut ctx: ResMut<GameContext>,
     fjord_art: Res<FjordTextures>,
     mut sound_bank: ResMut<SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
+    mut layout_mode: ResMut<CityLayoutMode>,
+    mut resize_events: EventReader<WindowResized>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<CityRoot>>,
     buttons: Query<(&Interaction, &CityAction), Changed<Interaction>>,
 ) {
     let mut rebuild = false;
+
+    // Auto-clear celebration banner after timeout.
+    if ctx.celebration_timer_secs > 0.0 {
+        ctx.celebration_timer_secs -= time.delta_secs();
+        if ctx.celebration_timer_secs <= 0.0 {
+            ctx.celebration_message = None;
+            rebuild = true;
+        }
+    }
+
+    // Respond to window orientation changes (Portrait <-> Landscape).
+    for ev in resize_events.read() {
+        let now_portrait = ev.width < ev.height;
+        if now_portrait != layout_mode.is_portrait {
+            layout_mode.is_portrait = now_portrait;
+            rebuild = true;
+        }
+    }
 
     for (interaction, action) in &buttons {
         if *interaction != Interaction::Pressed {
@@ -1001,8 +1189,14 @@ pub fn handle_city_buttons(
             CityAction::UpgradeBuilding(building_id) => {
                 if let Some(def) = ctx.data.building_by_id(building_id).cloned() {
                     match ctx.city.try_upgrade_building(&def) {
-                        Ok(_) => {
+                        Ok(new_tier) => {
                             ctx.status_notice_key = None;
+                            let bname = ctx.data.i18n.t(&def.name_key).to_string();
+                            ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                                "city.celebration.upgraded",
+                                &[("building", bname), ("tier", new_tier.to_string())],
+                            ));
+                            ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                             ctx.persist();
                             play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
                         }
@@ -1066,6 +1260,12 @@ pub fn handle_city_buttons(
         for entity in &roots {
             commands.entity(entity).despawn_recursive();
         }
-        spawn_city_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
+        spawn_city_tree(
+            &mut commands,
+            &ctx,
+            &fjord_art,
+            sound_bank.muted,
+            layout_mode.is_portrait,
+        );
     }
 }

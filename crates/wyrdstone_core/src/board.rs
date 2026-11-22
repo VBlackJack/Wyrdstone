@@ -1031,6 +1031,11 @@ impl Board {
 
     /// Checks whether at least one legal move exists on the current board.
     pub fn has_valid_moves(&self) -> bool {
+        self.find_hint_move().is_some()
+    }
+
+    /// Returns the first valid adjacent swap `(a, b)` for auto-hinting, if one exists.
+    pub fn find_hint_move(&self) -> Option<(CellPos, CellPos)> {
         let mut clone = self.clone();
         for row in 0..self.rows {
             for col in 0..self.cols {
@@ -1051,12 +1056,12 @@ impl Board {
                         || !clone.find_match_groups().is_empty();
                     clone.swap_contents(a, nb);
                     if valid {
-                        return true;
+                        return Some((a, nb));
                     }
                 }
             }
         }
-        false
+        None
     }
 
     /// Shuffles all unchained free runes without creating instant matches, ensuring a valid move.

@@ -127,70 +127,82 @@ fn build_rune_stone_image(rune: RuneType) -> Image {
     let mut px = new_canvas();
     let [br, bg, bb] = rune_base_rgb(rune);
     let s = RUNE_TEX_SIZE as i32;
+    let half = s as f32 * 0.5;
 
-    // Rounded carved stone tablet with subtle bevel lighting.
-    for y in 4..(s - 4) {
-        for x in 4..(s - 4) {
-            let dx = (x - 4).min(s - 5 - x);
-            let dy = (y - 4).min(s - 5 - y);
-            if dx + dy < 7 {
+    // Rich carved Nordic gemstone tablet with dark outer rim, radial inner glow, and top specular sheen.
+    for y in 3..(s - 3) {
+        for x in 3..(s - 3) {
+            let dx = (x - 3).min(s - 4 - x);
+            let dy = (y - 3).min(s - 4 - y);
+            if dx + dy < 9 {
                 continue;
             }
             let edge = dx.min(dy);
-            let shade = if edge <= 2 {
-                if x < s / 2 || y < s / 2 { 1.22 } else { 0.68 }
+            let dist = (((x as f32 - half).powi(2) + (y as f32 - half).powi(2)).sqrt() / half).min(1.0);
+            let radial_glow = 1.24 - dist * 0.42;
+            let spec = if y < s / 3 && edge > 3 {
+                (1.0 - (y as f32 / (s as f32 / 3.0))) * 0.28
             } else {
-                let grad = 1.08 - (y as f32 / s as f32) * 0.22;
-                grad
+                0.0
             };
-            let r = (br as f32 * shade).clamp(0.0, 255.0) as u8;
-            let g = (bg as f32 * shade).clamp(0.0, 255.0) as u8;
-            let b = (bb as f32 * shade).clamp(0.0, 255.0) as u8;
+            let shade = if edge <= 1 {
+                0.42 // Dark carved stone outline
+            } else if edge <= 3 {
+                if x < s / 2 || y < s / 2 { 1.32 } else { 0.62 }
+            } else {
+                radial_glow + spec
+            };
+            let r = (br as f32 * shade + spec * 90.0).clamp(0.0, 255.0) as u8;
+            let g = (bg as f32 * shade + spec * 90.0).clamp(0.0, 255.0) as u8;
+            let b = (bb as f32 * shade + spec * 90.0).clamp(0.0, 255.0) as u8;
             set_px(&mut px, x, y, [r, g, b, 255]);
         }
     }
 
-    // Carved Elder Futhark rune symbol in luminous ivory.
-    let glyph = [248, 245, 232, 255];
-    match rune {
-        // Fehu (Fire)
-        RuneType::Fire => {
-            draw_thick_line(&mut px, 24, 15, 24, 49, 2, glyph);
-            draw_thick_line(&mut px, 24, 24, 42, 14, 2, glyph);
-            draw_thick_line(&mut px, 24, 34, 40, 24, 2, glyph);
-        }
-        // Isa + crystal cross (Ice)
-        RuneType::Ice => {
-            draw_thick_line(&mut px, 32, 13, 32, 51, 2, glyph);
-            draw_thick_line(&mut px, 19, 23, 45, 41, 2, glyph);
-            draw_thick_line(&mut px, 45, 23, 19, 41, 2, glyph);
-        }
-        // Algiz (Wood / Yggdrasil)
-        RuneType::Wood => {
-            draw_thick_line(&mut px, 32, 14, 32, 50, 2, glyph);
-            draw_thick_line(&mut px, 32, 32, 18, 16, 2, glyph);
-            draw_thick_line(&mut px, 32, 32, 46, 16, 2, glyph);
-        }
-        // Othala (Stone / Heritage)
-        RuneType::Stone => {
-            draw_thick_line(&mut px, 32, 14, 44, 27, 2, glyph);
-            draw_thick_line(&mut px, 44, 27, 32, 40, 2, glyph);
-            draw_thick_line(&mut px, 32, 40, 20, 27, 2, glyph);
-            draw_thick_line(&mut px, 20, 27, 32, 14, 2, glyph);
-            draw_thick_line(&mut px, 27, 35, 19, 49, 2, glyph);
-            draw_thick_line(&mut px, 37, 35, 45, 49, 2, glyph);
-        }
-        // Sowilo (Gold / Sun)
-        RuneType::Gold => {
-            draw_thick_line(&mut px, 42, 14, 22, 30, 2, glyph);
-            draw_thick_line(&mut px, 22, 30, 42, 34, 2, glyph);
-            draw_thick_line(&mut px, 42, 34, 22, 50, 2, glyph);
-        }
-        // Laguz (Water / Fjord)
-        RuneType::Water => {
-            draw_thick_line(&mut px, 24, 14, 24, 50, 2, glyph);
-            draw_thick_line(&mut px, 24, 14, 43, 28, 2, glyph);
-            draw_thick_line(&mut px, 20, 46, 44, 46, 1, glyph);
+    // Draw carved shadow first, then luminous ivory Elder Futhark rune on top.
+    let shadow = [24, 18, 28, 220];
+    let glyph = [254, 250, 236, 255];
+    for &(ox, oy, col) in &[(2, 2, shadow), (0, 0, glyph)] {
+        match rune {
+            // Fehu (Fire)
+            RuneType::Fire => {
+                draw_thick_line(&mut px, 24 + ox, 15 + oy, 24 + ox, 49 + oy, 2, col);
+                draw_thick_line(&mut px, 24 + ox, 24 + oy, 42 + ox, 14 + oy, 2, col);
+                draw_thick_line(&mut px, 24 + ox, 34 + oy, 40 + ox, 24 + oy, 2, col);
+            }
+            // Isa + crystal cross (Ice)
+            RuneType::Ice => {
+                draw_thick_line(&mut px, 32 + ox, 13 + oy, 32 + ox, 51 + oy, 2, col);
+                draw_thick_line(&mut px, 19 + ox, 23 + oy, 45 + ox, 41 + oy, 2, col);
+                draw_thick_line(&mut px, 45 + ox, 23 + oy, 19 + ox, 41 + oy, 2, col);
+            }
+            // Algiz (Wood / Yggdrasil)
+            RuneType::Wood => {
+                draw_thick_line(&mut px, 32 + ox, 14 + oy, 32 + ox, 50 + oy, 2, col);
+                draw_thick_line(&mut px, 32 + ox, 32 + oy, 18 + ox, 16 + oy, 2, col);
+                draw_thick_line(&mut px, 32 + ox, 32 + oy, 46 + ox, 16 + oy, 2, col);
+            }
+            // Othala (Stone / Heritage)
+            RuneType::Stone => {
+                draw_thick_line(&mut px, 32 + ox, 14 + oy, 44 + ox, 27 + oy, 2, col);
+                draw_thick_line(&mut px, 44 + ox, 27 + oy, 32 + ox, 40 + oy, 2, col);
+                draw_thick_line(&mut px, 32 + ox, 40 + oy, 20 + ox, 27 + oy, 2, col);
+                draw_thick_line(&mut px, 20 + ox, 27 + oy, 32 + ox, 14 + oy, 2, col);
+                draw_thick_line(&mut px, 27 + ox, 35 + oy, 19 + ox, 49 + oy, 2, col);
+                draw_thick_line(&mut px, 37 + ox, 35 + oy, 45 + ox, 49 + oy, 2, col);
+            }
+            // Sowilo (Gold / Sun)
+            RuneType::Gold => {
+                draw_thick_line(&mut px, 42 + ox, 14 + oy, 22 + ox, 30 + oy, 2, col);
+                draw_thick_line(&mut px, 22 + ox, 30 + oy, 42 + ox, 34 + oy, 2, col);
+                draw_thick_line(&mut px, 42 + ox, 34 + oy, 22 + ox, 50 + oy, 2, col);
+            }
+            // Laguz (Water / Fjord)
+            RuneType::Water => {
+                draw_thick_line(&mut px, 24 + ox, 14 + oy, 24 + ox, 50 + oy, 2, col);
+                draw_thick_line(&mut px, 24 + ox, 14 + oy, 43 + ox, 28 + oy, 2, col);
+                draw_thick_line(&mut px, 20 + ox, 46 + oy, 44 + ox, 46 + oy, 1, col);
+            }
         }
     }
 

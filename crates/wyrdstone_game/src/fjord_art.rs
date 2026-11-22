@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Bundled painted Norse fjord map and building illustrations (Windows & Android).
+//! Bundled painted Norse fjord map, Match-3 sanctuary backdrop, buildings, and character portraits.
 
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
@@ -22,17 +22,23 @@ use bevy::render::render_asset::RenderAssetUsages;
 use std::collections::HashMap;
 
 const FJORD_MAP_PNG: &[u8] = include_bytes!("../../../assets/sprites/fjord_map.png");
+const MATCH3_BG_PNG: &[u8] = include_bytes!("../../../assets/sprites/match3_bg.png");
 const BLDG_GREAT_HALL_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_great_hall.png");
 const BLDG_FORGE_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_forge.png");
 const BLDG_DOCK_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_dock.png");
 const BLDG_SHRINE_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_shrine.png");
 const BLDG_MEADERY_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_meadery.png");
+const PORTRAIT_JARL_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_jarl.png");
+const PORTRAIT_BROKK_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_brokk.png");
+const PORTRAIT_VOLVA_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_volva.png");
 
-/// Handles to the painted Fjord village map and all five Viking building illustrations.
+/// Handles to all bundled painted artworks.
 #[derive(Resource)]
 pub struct FjordTextures {
     pub fjord_map: Handle<Image>,
+    pub match3_bg: Handle<Image>,
     pub buildings: HashMap<String, Handle<Image>>,
+    pub portraits: HashMap<String, Handle<Image>>,
 }
 
 impl FjordTextures {
@@ -40,11 +46,17 @@ impl FjordTextures {
     pub fn building_image(&self, building_id: &str) -> Option<Handle<Image>> {
         self.buildings.get(building_id).cloned()
     }
+
+    /// Returns the painted character portrait for a Saga speaker (`"jarl"`, `"brokk"`, `"volva"`).
+    pub fn portrait(&self, speaker: &str) -> Option<Handle<Image>> {
+        self.portraits.get(speaker).cloned()
+    }
 }
 
 /// PreStartup system decoding all bundled painted PNG textures into GPU assets.
 pub fn init_fjord_textures(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let fjord_map = images.add(decode_png(FJORD_MAP_PNG));
+    let match3_bg = images.add(decode_png(MATCH3_BG_PNG));
 
     let mut buildings = HashMap::new();
     buildings.insert("great_hall".to_string(), images.add(decode_png(BLDG_GREAT_HALL_PNG)));
@@ -53,9 +65,16 @@ pub fn init_fjord_textures(mut commands: Commands, mut images: ResMut<Assets<Ima
     buildings.insert("odin_shrine".to_string(), images.add(decode_png(BLDG_SHRINE_PNG)));
     buildings.insert("meadery".to_string(), images.add(decode_png(BLDG_MEADERY_PNG)));
 
+    let mut portraits = HashMap::new();
+    portraits.insert("jarl".to_string(), images.add(decode_png(PORTRAIT_JARL_PNG)));
+    portraits.insert("brokk".to_string(), images.add(decode_png(PORTRAIT_BROKK_PNG)));
+    portraits.insert("volva".to_string(), images.add(decode_png(PORTRAIT_VOLVA_PNG)));
+
     commands.insert_resource(FjordTextures {
         fjord_map,
+        match3_bg,
         buildings,
+        portraits,
     });
 }
 

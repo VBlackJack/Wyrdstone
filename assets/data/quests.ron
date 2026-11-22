@@ -2,6 +2,7 @@
 [
     QuestDef(
         id: "q1",
+        speaker: "jarl",
         title_key: "quest.q1.title",
         desc_key: "quest.q1.desc",
         condition: WinBuildingLevel(building_id: "great_hall", wins: 1),
@@ -9,6 +10,7 @@
     ),
     QuestDef(
         id: "q2",
+        speaker: "jarl",
         title_key: "quest.q2.title",
         desc_key: "quest.q2.desc",
         condition: ReachBuildingTier(building_id: "great_hall", tier: 1),
@@ -16,6 +18,7 @@
     ),
     QuestDef(
         id: "q3",
+        speaker: "brokk",
         title_key: "quest.q3.title",
         desc_key: "quest.q3.desc",
         condition: WinBuildingLevel(building_id: "forge", wins: 1),
@@ -23,6 +26,7 @@
     ),
     QuestDef(
         id: "q4",
+        speaker: "brokk",
         title_key: "quest.q4.title",
         desc_key: "quest.q4.desc",
         condition: ReachBuildingTier(building_id: "forge", tier: 1),
@@ -30,6 +34,7 @@
     ),
     QuestDef(
         id: "q5",
+        speaker: "volva",
         title_key: "quest.q5.title",
         desc_key: "quest.q5.desc",
         condition: WinBuildingLevel(building_id: "longship_dock", wins: 1),
@@ -37,6 +42,7 @@
     ),
     QuestDef(
         id: "q6",
+        speaker: "volva",
         title_key: "quest.q6.title",
         desc_key: "quest.q6.desc",
         condition: ReachBuildingTier(building_id: "odin_shrine", tier: 1),
@@ -44,6 +50,7 @@
     ),
     QuestDef(
         id: "q7",
+        speaker: "volva",
         title_key: "quest.q7.title",
         desc_key: "quest.q7.desc",
         condition: CraftAnyAmulet,
@@ -51,6 +58,7 @@
     ),
     QuestDef(
         id: "q8",
+        speaker: "jarl",
         title_key: "quest.q8.title",
         desc_key: "quest.q8.desc",
         condition: WinBuildingLevel(building_id: "great_hall", wins: 2),
