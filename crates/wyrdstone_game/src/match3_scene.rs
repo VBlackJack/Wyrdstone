@@ -16,6 +16,7 @@
 
 //! Match-3 2D board rendering, stepped animations, particles, HUD, and mouse + Android touch input.
 
+use crate::audio::{play_sfx, SfxKind, SoundBank};
 use crate::runes_art::RuneTextures;
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
@@ -791,12 +792,15 @@ pub fn handle_match3_hud_buttons(
 }
 
 /// Handles both desktop mouse (click + drag) and Android touch (tap + swipe) when the board is idle.
+#[allow(clippy::too_many_arguments)]
 pub fn handle_board_pointer_input(
+    mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mut ctx: ResMut<GameContext>,
+    sound_bank: Res<SoundBank>,
     mut input_state: ResMut<Match3InputState>,
 ) {
     if !input_state.is_idle() {
@@ -853,6 +857,7 @@ pub fn handle_board_pointer_input(
                         if ctx.city.tools.consume(tool) {
                             ctx.armed_tool = None;
                             ctx.persist();
+                            play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
                             let clear_dur = ctx.data.balance.clear_anim_seconds;
                             input_state.selected = None;
                             input_state.dirty_hud = true;
@@ -875,6 +880,7 @@ pub fn handle_board_pointer_input(
                         return;
                     }
                     if prev.is_adjacent(cell) {
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                         start_swap_animation(prev, cell, &ctx, &mut input_state);
                         return;
                     }
@@ -914,6 +920,7 @@ pub fn handle_board_pointer_input(
             input_state.drag_origin_cell = None;
             input_state.drag_origin_screen = None;
             if let Some(nb) = target {
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 start_swap_animation(origin_cell, nb, &ctx, &mut input_state);
             }
         }
@@ -958,6 +965,7 @@ pub fn tick_board_animation(
     time: Res<Time>,
     mut ctx: ResMut<GameContext>,
     textures: Res<RuneTextures>,
+    sound_bank: Res<SoundBank>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut input_state: ResMut<Match3InputState>,
     mut next_state: ResMut<NextState<AppState>>,
@@ -1040,6 +1048,7 @@ pub fn tick_board_animation(
                     };
                 } else {
                     // Invalid swap: smoothly bounce both tiles back.
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     input_state.phase = BoardAnimPhase::SwapRevert {
                         a,
                         b,
@@ -1098,6 +1107,7 @@ pub fn tick_board_animation(
             mut particles_spawned,
         } => {
             if !particles_spawned {
+                play_sfx(&mut commands, &sound_bank, SfxKind::MatchCombo(combo));
                 if let Some(session) = ctx.active_session.as_ref() {
                     spawn_clear_particles(&mut commands, &prepared.cells, session, &input_state);
                 }
@@ -1203,6 +1213,7 @@ pub fn tick_board_animation(
                     }
                 }
                 if !dropped_positions.is_empty() {
+                    play_sfx(&mut commands, &sound_bank, SfxKind::RelicDrop);
                     if let Some(session) = ctx.active_session.as_ref() {
                         spawn_clear_particles(&mut commands, &dropped_positions, session, &input_state);
                         rebuild_board_now(

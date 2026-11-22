@@ -4,6 +4,8 @@
   "app.title.button.play": "Entrer dans le Fjord",
   "app.title.button.continue": "Continuer la Saga",
   "app.title.button.language": "Langue : FR",
+  "app.audio.on": "Son : OUI",
+  "app.audio.off": "Son : NON",
   "app.title.footer": "Alignez les runes. Rebâtissez Midgard.",
 
   "resources.label.wood": "Bois",

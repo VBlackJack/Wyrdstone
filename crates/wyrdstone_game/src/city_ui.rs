@@ -16,6 +16,8 @@
 
 //! Fjord village hub UI: resource bar, Saga quests, and building cards.
 
+use crate::audio::{play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank};
+use crate::fjord_art::FjordTextures;
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
@@ -30,12 +32,18 @@ pub enum CityAction {
     ClaimQuest(String),
     CraftOrEquipAmulet(String),
     ToggleLanguage,
+    ToggleAudio,
     BackToTitle,
 }
 
 /// Spawns the Fjord City hub UI.
-pub fn setup_city_ui(mut commands: Commands, ctx: Res<GameContext>) {
-    spawn_city_tree(&mut commands, &ctx);
+pub fn setup_city_ui(
+    mut commands: Commands,
+    ctx: Res<GameContext>,
+    fjord_art: Res<FjordTextures>,
+    sound_bank: Res<SoundBank>,
+) {
+    spawn_city_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
 }
 
 /// Cleans up the Fjord City UI on state exit.
@@ -45,9 +53,19 @@ pub fn cleanup_city_ui(mut commands: Commands, roots: Query<Entity, With<CityRoo
     }
 }
 
-fn spawn_city_tree(commands: &mut Commands, ctx: &GameContext) {
+fn spawn_city_tree(
+    commands: &mut Commands,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    muted: bool,
+) {
     let i18n = &ctx.data.i18n;
     let res = ctx.city.resources;
+    let sound_label = if muted {
+        i18n.t("app.audio.off")
+    } else {
+        i18n.t("app.audio.on")
+    };
 
     commands
         .spawn((
@@ -141,6 +159,12 @@ fn spawn_city_tree(commands: &mut Commands, ctx: &GameContext) {
                 .with_children(|btns| {
                     spawn_small_button(
                         btns,
+                        sound_label,
+                        CityAction::ToggleAudio,
+                        COLOR_PANEL_CARD,
+                    );
+                    spawn_small_button(
+                        btns,
                         i18n.t("app.title.button.language"),
                         CityAction::ToggleLanguage,
                         COLOR_PANEL_CARD,
@@ -153,6 +177,19 @@ fn spawn_city_tree(commands: &mut Commands, ctx: &GameContext) {
                     );
                 });
             });
+
+            // Illustrated Aurora Fjord panorama strip
+            root.spawn((
+                ImageNode::new(fjord_art.fjord_panorama.clone()),
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(112.0),
+                    border: UiRect::all(Val::Px(1.5)),
+                    ..default()
+                },
+                BorderColor(COLOR_PANEL_BORDER),
+                BorderRadius::all(Val::Px(10.0)),
+            ));
 
             // Active Saga Quest banner
             root.spawn((
@@ -327,6 +364,25 @@ fn spawn_city_tree(commands: &mut Commands, ctx: &GameContext) {
                         BorderRadius::all(Val::Px(10.0)),
                     ))
                     .with_children(|card| {
+                        // Building illustration (ruined at Tier 0, rebuilt & glowing at Tier 1+)
+                        if let Some(img) = fjord_art.building_image(&b.id, tier) {
+                            card.spawn((
+                                ImageNode::new(img),
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(74.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BorderColor(if tier > 0 {
+                                    COLOR_ACCENT_GOLD
+                                } else {
+                                    COLOR_PANEL_BORDER
+                                }),
+                                BorderRadius::all(Val::Px(6.0)),
+                            ));
+                        }
+
                         // Name + Tier
                         card.spawn((
                             Text::new(i18n.t(&b.name_key)),
@@ -484,9 +540,13 @@ fn spawn_small_button(
 }
 
 /// Processes button presses in the Fjord City hub.
+#[allow(clippy::too_many_arguments)]
 pub fn handle_city_buttons(
     mut commands: Commands,
     mut ctx: ResMut<GameContext>,
+    fjord_art: Res<FjordTextures>,
+    mut sound_bank: ResMut<SoundBank>,
+    mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<CityRoot>>,
     buttons: Query<(&Interaction, &CityAction), Changed<Interaction>>,
@@ -499,7 +559,6 @@ pub fn handle_city_buttons(
         }
         match action {
             CityAction::PlayBuildingLevel(level_id) => {
-                // Verify building is unlocked before launching.
                 let is_unlocked = ctx
                     .data
                     .level_by_id(level_id)
@@ -508,6 +567,7 @@ pub fn handle_city_buttons(
                     .unwrap_or(false);
                 if !is_unlocked {
                     ctx.status_notice_key = Some("city.panel.building.locked".to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     rebuild = true;
                 } else {
                     match ctx.start_level(level_id) {
@@ -517,6 +577,7 @@ pub fn handle_city_buttons(
                         }
                         Err(err_key) => {
                             ctx.status_notice_key = Some(err_key.to_string());
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                             rebuild = true;
                         }
                     }
@@ -528,9 +589,11 @@ pub fn handle_city_buttons(
                         Ok(_) => {
                             ctx.status_notice_key = None;
                             ctx.persist();
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
                         }
                         Err(err_key) => {
                             ctx.status_notice_key = Some(err_key.to_string());
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                         }
                     }
                     rebuild = true;
@@ -541,6 +604,7 @@ pub fn handle_city_buttons(
                     if ctx.city.try_claim_quest(&quest) {
                         ctx.status_notice_key = None;
                         ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
                         rebuild = true;
                     }
                 }
@@ -551,9 +615,11 @@ pub fn handle_city_buttons(
                         Ok(()) => {
                             ctx.status_notice_key = None;
                             ctx.persist();
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
                         }
                         Err(err_key) => {
                             ctx.status_notice_key = Some(err_key.to_string());
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                         }
                     }
                     rebuild = true;
@@ -562,6 +628,10 @@ pub fn handle_city_buttons(
             CityAction::ToggleLanguage => {
                 ctx.data.i18n.toggle_language();
                 ctx.persist();
+                rebuild = true;
+            }
+            CityAction::ToggleAudio => {
+                toggle_mute(&mut sound_bank, &mut bgm_sinks);
                 rebuild = true;
             }
             CityAction::BackToTitle => {
@@ -575,6 +645,6 @@ pub fn handle_city_buttons(
         for entity in &roots {
             commands.entity(entity).despawn_recursive();
         }
-        spawn_city_tree(&mut commands, &ctx);
+        spawn_city_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
     }
 }

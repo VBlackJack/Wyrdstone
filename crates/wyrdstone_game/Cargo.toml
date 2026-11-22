@@ -33,6 +33,8 @@ bevy = { version = "0.15", default-features = false, features = [
     "bevy_ui",
     "bevy_asset",
     "bevy_state",
+    "bevy_audio",
+    "wav",
     "default_font",
     "png",
     "multi_threaded",

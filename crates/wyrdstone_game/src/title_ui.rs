@@ -16,6 +16,8 @@
 
 //! Title screen UI with language switch and play/continue entry.
 
+use crate::audio::{toggle_mute, BgmTrack, SoundBank};
+use crate::fjord_art::FjordTextures;
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
@@ -27,11 +29,17 @@ pub struct TitleRoot;
 pub enum TitleAction {
     EnterFjord,
     ToggleLanguage,
+    ToggleAudio,
 }
 
 /// Spawns the Title screen hierarchy.
-pub fn setup_title_ui(mut commands: Commands, ctx: Res<GameContext>) {
-    spawn_title_tree(&mut commands, &ctx);
+pub fn setup_title_ui(
+    mut commands: Commands,
+    ctx: Res<GameContext>,
+    fjord_art: Res<FjordTextures>,
+    sound_bank: Res<SoundBank>,
+) {
+    spawn_title_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
 }
 
 /// Cleans up Title screen entities on state exit.
@@ -41,12 +49,22 @@ pub fn cleanup_title_ui(mut commands: Commands, roots: Query<Entity, With<TitleR
     }
 }
 
-fn spawn_title_tree(commands: &mut Commands, ctx: &GameContext) {
+fn spawn_title_tree(
+    commands: &mut Commands,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    muted: bool,
+) {
     let i18n = &ctx.data.i18n;
     let play_label = if ctx.has_existing_save {
         i18n.t("app.title.button.continue")
     } else {
         i18n.t("app.title.button.play")
+    };
+    let sound_label = if muted {
+        i18n.t("app.audio.off")
+    } else {
+        i18n.t("app.audio.on")
     };
 
     commands
@@ -58,21 +76,34 @@ fn spawn_title_tree(commands: &mut Commands, ctx: &GameContext) {
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(22.0),
+                row_gap: Val::Px(18.0),
                 padding: UiRect::all(Val::Px(24.0)),
                 ..default()
             },
             BackgroundColor(COLOR_BG_DEEP),
         ))
         .with_children(|parent| {
+            // Illustrated Nordic Fjord panorama banner
+            parent.spawn((
+                ImageNode::new(fjord_art.fjord_panorama.clone()),
+                Node {
+                    width: Val::Px(560.0),
+                    height: Val::Px(190.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BorderColor(COLOR_ACCENT_GOLD),
+                BorderRadius::all(Val::Px(12.0)),
+            ));
+
             // Emblem card
             parent
                 .spawn((
                     Node {
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
-                        row_gap: Val::Px(12.0),
-                        padding: UiRect::axes(Val::Px(48.0), Val::Px(36.0)),
+                        row_gap: Val::Px(8.0),
+                        padding: UiRect::axes(Val::Px(44.0), Val::Px(22.0)),
                         border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
@@ -116,7 +147,7 @@ fn spawn_title_tree(commands: &mut Commands, ctx: &GameContext) {
                     TitleAction::EnterFjord,
                     Node {
                         width: Val::Px(280.0),
-                        height: Val::Px(58.0),
+                        height: Val::Px(56.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(2.0)),
@@ -137,40 +168,55 @@ fn spawn_title_tree(commands: &mut Commands, ctx: &GameContext) {
                     ));
                 });
 
-            // Language toggle button
+            // Utility buttons row (Language + Audio)
             parent
-                .spawn((
-                    Button,
-                    TitleAction::ToggleLanguage,
-                    Node {
-                        width: Val::Px(200.0),
-                        height: Val::Px(44.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(1.5)),
-                        ..default()
-                    },
-                    BackgroundColor(COLOR_PANEL_CARD),
-                    BorderColor(COLOR_PANEL_BORDER),
-                    BorderRadius::all(Val::Px(8.0)),
-                ))
-                .with_children(|btn| {
-                    btn.spawn((
-                        Text::new(i18n.t("app.title.button.language")),
-                        TextFont {
-                            font_size: FONT_BODY,
-                            ..default()
-                        },
-                        TextColor(COLOR_TEXT_PRIMARY),
-                    ));
+                .spawn(Node {
+                    column_gap: Val::Px(12.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    for (label, act) in [
+                        (i18n.t("app.title.button.language"), TitleAction::ToggleLanguage),
+                        (sound_label, TitleAction::ToggleAudio),
+                    ] {
+                        row.spawn((
+                            Button,
+                            act,
+                            Node {
+                                width: Val::Px(170.0),
+                                height: Val::Px(42.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderColor(COLOR_PANEL_BORDER),
+                            BorderRadius::all(Val::Px(8.0)),
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new(label),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                        });
+                    }
                 });
         });
 }
 
 /// Handles clicks on the Title screen buttons.
+#[allow(clippy::too_many_arguments)]
 pub fn handle_title_buttons(
     mut commands: Commands,
     mut ctx: ResMut<GameContext>,
+    fjord_art: Res<FjordTextures>,
+    mut sound_bank: ResMut<SoundBank>,
+    mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<TitleRoot>>,
     mut buttons: Query<(&Interaction, &TitleAction, &mut BackgroundColor), Changed<Interaction>>,
@@ -187,17 +233,29 @@ pub fn handle_title_buttons(
                     for entity in &roots {
                         commands.entity(entity).despawn_recursive();
                     }
-                    spawn_title_tree(&mut commands, &ctx);
+                    spawn_title_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
+                    return;
+                }
+                TitleAction::ToggleAudio => {
+                    toggle_mute(&mut sound_bank, &mut bgm_sinks);
+                    for entity in &roots {
+                        commands.entity(entity).despawn_recursive();
+                    }
+                    spawn_title_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
                     return;
                 }
             },
             Interaction::Hovered => match action {
                 TitleAction::EnterFjord => *bg = BackgroundColor(COLOR_ACCENT_GOLD_HOVER),
-                TitleAction::ToggleLanguage => *bg = BackgroundColor(COLOR_ACCENT_TEAL),
+                TitleAction::ToggleLanguage | TitleAction::ToggleAudio => {
+                    *bg = BackgroundColor(COLOR_ACCENT_TEAL)
+                }
             },
             Interaction::None => match action {
                 TitleAction::EnterFjord => *bg = BackgroundColor(COLOR_ACCENT_GOLD),
-                TitleAction::ToggleLanguage => *bg = BackgroundColor(COLOR_PANEL_CARD),
+                TitleAction::ToggleLanguage | TitleAction::ToggleAudio => {
+                    *bg = BackgroundColor(COLOR_PANEL_CARD)
+                }
             },
         }
     }

@@ -16,6 +16,7 @@
 
 //! Victory and defeat modal screen after completing a Match-3 level.
 
+use crate::audio::{play_sfx, SfxKind, SoundBank};
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
@@ -31,9 +32,22 @@ pub enum ResultAction {
 }
 
 /// Spawns the Victory / Defeat summary card.
-pub fn setup_result_ui(mut commands: Commands, ctx: Res<GameContext>) {
+pub fn setup_result_ui(
+    mut commands: Commands,
+    ctx: Res<GameContext>,
+    sound_bank: Res<SoundBank>,
+) {
     let i18n = &ctx.data.i18n;
     let is_victory = ctx.last_outcome == Some(LevelOutcome::Victory);
+    play_sfx(
+        &mut commands,
+        &sound_bank,
+        if is_victory {
+            SfxKind::Victory
+        } else {
+            SfxKind::Defeat
+        },
+    );
 
     let title = if is_victory {
         i18n.t("result.victory.title")

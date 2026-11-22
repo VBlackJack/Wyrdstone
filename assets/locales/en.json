@@ -4,6 +4,8 @@
   "app.title.button.play": "Enter the Fjord",
   "app.title.button.continue": "Continue Saga",
   "app.title.button.language": "Language: EN",
+  "app.audio.on": "Sound: ON",
+  "app.audio.off": "Sound: OFF",
   "app.title.footer": "Match runes. Rebuild Midgard.",
 
   "resources.label.wood": "Timber",

@@ -16,7 +16,9 @@
 
 //! Wyrdstone Bevy application crate supporting both Windows desktop and Android.
 
+mod audio;
 mod city_ui;
+mod fjord_art;
 mod match3_scene;
 mod result_ui;
 mod runes_art;
@@ -56,7 +58,15 @@ pub fn run_app() {
         .insert_resource(ClearColor(COLOR_BG_DEEP))
         .insert_resource(ctx)
         .init_state::<AppState>()
-        .add_systems(Startup, (setup_camera, runes_art::init_rune_textures))
+        .add_systems(
+            Startup,
+            (
+                setup_camera,
+                runes_art::init_rune_textures,
+                fjord_art::init_fjord_textures,
+                audio::init_sound_bank,
+            ),
+        )
         .add_systems(Update, tick_energy_regen)
         // Title screen
         .add_systems(OnEnter(AppState::Title), title_ui::setup_title_ui)
