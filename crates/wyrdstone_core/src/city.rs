@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Fjord city-builder progression: resources, buildings, mastery stars, quests, and tools.
+//! Fjord city-builder progression: resources, buildings, mastery stars, amulets, quests, and tools.
 
 use crate::balance::BalanceConfig;
 use crate::board::ActiveTool;
@@ -56,6 +56,24 @@ impl ResourceBundle {
     }
 }
 
+/// Passive buff granted by an equipped Nordic Amulet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AmuletEffect {
+    ResourceBonusPct(u32),
+    ExtraMoves(u32),
+    ScoreBonusPct(u32),
+}
+
+/// Static Nordic Amulet definition loaded from `assets/data/amulets.ron`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmuletDef {
+    pub id: String,
+    pub name_key: String,
+    pub desc_key: String,
+    pub cost: ResourceBundle,
+    pub effect: AmuletEffect,
+}
+
 /// Static building definition loaded from `assets/data/buildings.ron`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildingDef {
@@ -65,6 +83,8 @@ pub struct BuildingDef {
     pub max_tier: u32,
     pub requires_great_hall_tier: u32,
     pub level_id: String,
+    #[serde(default)]
+    pub mastery_level_id: Option<String>,
     pub upgrade_costs: Vec<ResourceBundle>,
     pub glory_per_tier: u32,
 }
@@ -74,6 +94,7 @@ pub struct BuildingDef {
 pub enum QuestCondition {
     WinBuildingLevel { building_id: String, wins: u32 },
     ReachBuildingTier { building_id: String, tier: u32 },
+    CraftAnyAmulet,
 }
 
 /// Static Saga quest loaded from `assets/data/quests.ron`.
@@ -86,12 +107,18 @@ pub struct QuestDef {
     pub reward: ResourceBundle,
 }
 
-/// Player inventory of active Match-3 tools.
+/// Player inventory of the six active Match-3 tools.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInventory {
     pub mjolnir: u32,
     pub surtr_ember: u32,
     pub loki_shuffle: u32,
+    #[serde(default)]
+    pub thor_bolt: u32,
+    #[serde(default)]
+    pub bifrost_prism: u32,
+    #[serde(default)]
+    pub drakkar_charge: u32,
 }
 
 impl ToolInventory {
@@ -100,6 +127,9 @@ impl ToolInventory {
             ActiveTool::Mjolnir => self.mjolnir,
             ActiveTool::SurtrEmber => self.surtr_ember,
             ActiveTool::LokiShuffle => self.loki_shuffle,
+            ActiveTool::ThorBolt => self.thor_bolt,
+            ActiveTool::BifrostPrism => self.bifrost_prism,
+            ActiveTool::DrakkarCharge => self.drakkar_charge,
         }
     }
 
@@ -108,6 +138,9 @@ impl ToolInventory {
             ActiveTool::Mjolnir => &mut self.mjolnir,
             ActiveTool::SurtrEmber => &mut self.surtr_ember,
             ActiveTool::LokiShuffle => &mut self.loki_shuffle,
+            ActiveTool::ThorBolt => &mut self.thor_bolt,
+            ActiveTool::BifrostPrism => &mut self.bifrost_prism,
+            ActiveTool::DrakkarCharge => &mut self.drakkar_charge,
         };
         if *slot > 0 {
             *slot -= 1;
@@ -128,6 +161,10 @@ pub struct CityState {
     pub building_tiers: HashMap<String, u32>,
     pub building_wins: HashMap<String, u32>,
     pub claimed_quests: HashSet<String>,
+    #[serde(default)]
+    pub crafted_amulets: HashSet<String>,
+    #[serde(default)]
+    pub equipped_amulet: Option<String>,
 }
 
 impl CityState {
@@ -146,10 +183,15 @@ impl CityState {
                 mjolnir: balance.starting_mjolnir,
                 surtr_ember: balance.starting_surtr_ember,
                 loki_shuffle: balance.starting_loki_shuffle,
+                thor_bolt: balance.starting_thor_bolt,
+                bifrost_prism: balance.starting_bifrost_prism,
+                drakkar_charge: balance.starting_drakkar_charge,
             },
             building_tiers: HashMap::new(),
             building_wins: HashMap::new(),
             claimed_quests: HashSet::new(),
+            crafted_amulets: HashSet::new(),
+            equipped_amulet: None,
         }
     }
 
@@ -195,11 +237,43 @@ impl CityState {
         let new_tier = self.building_tier(&def.id) + 1;
         self.building_tiers.insert(def.id.clone(), new_tier);
         self.glory += def.glory_per_tier;
-        // Upgrading the Forge grants an extra Mjolnir charge.
         if def.id == "forge" {
             self.tools.mjolnir += 1;
+            self.tools.thor_bolt += 1;
         }
         Ok(new_tier)
+    }
+
+    /// Crafts a Nordic Amulet and equips it immediately.
+    pub fn try_craft_amulet(&mut self, amulet: &AmuletDef) -> Result<(), &'static str> {
+        if self.crafted_amulets.contains(&amulet.id) {
+            self.equipped_amulet = Some(amulet.id.clone());
+            return Ok(());
+        }
+        if !self.resources.can_afford(&amulet.cost) {
+            return Err("city.error.not_enough_resources");
+        }
+        self.resources.subtract(&amulet.cost);
+        self.crafted_amulets.insert(amulet.id.clone());
+        self.equipped_amulet = Some(amulet.id.clone());
+        self.glory += 20;
+        Ok(())
+    }
+
+    /// Equips an already crafted amulet.
+    pub fn equip_amulet(&mut self, amulet_id: &str) -> bool {
+        if self.crafted_amulets.contains(amulet_id) {
+            self.equipped_amulet = Some(amulet_id.to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns the passive effect of the currently equipped amulet, if any.
+    pub fn active_amulet_effect(&self, amulets: &[AmuletDef]) -> Option<AmuletEffect> {
+        let id = self.equipped_amulet.as_deref()?;
+        amulets.iter().find(|a| a.id == id).map(|a| a.effect)
     }
 
     /// Consumes endurance to launch a Match-3 level.
@@ -236,6 +310,7 @@ impl CityState {
             QuestCondition::ReachBuildingTier { building_id, tier } => {
                 self.building_tier(building_id) >= *tier
             }
+            QuestCondition::CraftAnyAmulet => !self.crafted_amulets.is_empty(),
         }
     }
 

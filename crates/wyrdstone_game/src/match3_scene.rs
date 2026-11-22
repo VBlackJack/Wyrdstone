@@ -285,8 +285,35 @@ fn spawn_board_sprites(
                 ));
             }
 
-            // Rune sprite (or Bifrost orb)
-            if cell.booster == Booster::BifrostShard {
+            // Frost crate obstacle OR Buried Relic OR Rune sprite (or Bifrost orb)
+            if cell.crate_layers > 0 {
+                let crate_tex = if cell.crate_layers >= 2 {
+                    textures.crate_layer2.clone()
+                } else {
+                    textures.crate_layer1.clone()
+                };
+                commands.spawn((
+                    Match3Entity,
+                    BoardTileVisual { pos },
+                    Sprite {
+                        image: crate_tex,
+                        custom_size: Some(tile_size),
+                        ..default()
+                    },
+                    Transform::from_xyz(world.x, world.y, Z_RUNE_SPRITE),
+                ));
+            } else if cell.relic {
+                commands.spawn((
+                    Match3Entity,
+                    BoardTileVisual { pos },
+                    Sprite {
+                        image: textures.relic_icon.clone(),
+                        custom_size: Some(tile_size),
+                        ..default()
+                    },
+                    Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
+                ));
+            } else if cell.booster == Booster::BifrostShard {
                 commands.spawn((
                     Match3Entity,
                     BoardTileVisual { pos },
@@ -474,6 +501,24 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                         },
                         TextColor(COLOR_ACCENT_GOLD),
                     ));
+                    if let Some(secs) = session.time_left_secs {
+                        let whole = secs.ceil() as u32;
+                        stats.spawn((
+                            Text::new(i18n.t_fmt(
+                                "match3.hud.timer",
+                                &[("secs", whole.to_string())],
+                            )),
+                            TextFont {
+                                font_size: FONT_HEADING,
+                                ..default()
+                            },
+                            TextColor(if whole <= 15 {
+                                COLOR_ACCENT_CRIMSON
+                            } else {
+                                COLOR_ACCENT_TEAL
+                            }),
+                        ));
+                    }
                     stats.spawn((
                         Text::new(i18n.t_fmt(
                             "match3.hud.score",
@@ -512,6 +557,13 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                             ),
                             Objective::ReachScore { .. } => i18n.t_fmt(
                                 "match3.objective.reach_score",
+                                &[
+                                    ("done", prog.done.to_string()),
+                                    ("target", prog.target.to_string()),
+                                ],
+                            ),
+                            Objective::DropRelics { .. } => i18n.t_fmt(
+                                "match3.objective.drop_relics",
                                 &[
                                     ("done", prog.done.to_string()),
                                     ("target", prog.target.to_string()),
@@ -607,6 +659,9 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                         ActiveTool::Mjolnir => "match3.tool.hint.mjolnir",
                         ActiveTool::SurtrEmber => "match3.tool.hint.surtr_ember",
                         ActiveTool::LokiShuffle => "match3.tool.hint.loki_shuffle",
+                        ActiveTool::ThorBolt => "match3.tool.hint.thor_bolt",
+                        ActiveTool::BifrostPrism => "match3.tool.hint.bifrost_prism",
+                        ActiveTool::DrakkarCharge => "match3.tool.hint.drakkar_charge",
                     };
                     bottom.spawn((
                         Text::new(i18n.t(hint_key)),
@@ -620,7 +675,8 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
 
                 bottom
                     .spawn(Node {
-                        column_gap: Val::Px(12.0),
+                        column_gap: Val::Px(8.0),
+                        row_gap: Val::Px(6.0),
                         flex_wrap: FlexWrap::Wrap,
                         justify_content: JustifyContent::Center,
                         ..default()
@@ -629,6 +685,9 @@ fn spawn_match3_hud(commands: &mut Commands, ctx: &GameContext) {
                         let tools = [
                             (ActiveTool::Mjolnir, "match3.tool.mjolnir"),
                             (ActiveTool::SurtrEmber, "match3.tool.surtr_ember"),
+                            (ActiveTool::ThorBolt, "match3.tool.thor_bolt"),
+                            (ActiveTool::BifrostPrism, "match3.tool.bifrost_prism"),
+                            (ActiveTool::DrakkarCharge, "match3.tool.drakkar_charge"),
                             (ActiveTool::LokiShuffle, "match3.tool.loki_shuffle"),
                         ];
                         for (tool, key) in tools {
@@ -910,6 +969,17 @@ pub fn tick_board_animation(
     };
     let dt = time.delta_secs();
 
+    // Tick optional level countdown timer.
+    let timer_changed = ctx
+        .active_session
+        .as_mut()
+        .map(|s| s.tick_timer(dt))
+        .unwrap_or(false);
+    if timer_changed {
+        input_state.dirty_hud = true;
+        check_level_finished(&mut ctx, &mut next_state);
+    }
+
     // Take ownership of phase to transition cleanly without borrow conflicts.
     let phase = std::mem::take(&mut input_state.phase);
     match phase {
@@ -1113,6 +1183,48 @@ pub fn tick_board_animation(
             }
 
             if elapsed >= duration {
+                // First check if any Buried Relics reached the bottom row of their column!
+                let balance = ctx.data.balance.clone();
+                let mut relic_fall_map = HashMap::new();
+                let mut dropped_positions = Vec::new();
+                {
+                    let ctx_ref = ctx.as_mut();
+                    if let Some(session) = ctx_ref.active_session.as_mut() {
+                        let relic_step = session.board.collect_bottom_relics(&balance);
+                        if relic_step.relics_dropped > 0 {
+                            dropped_positions = relic_step.cleared_positions.clone();
+                            session.apply_step_progress(&relic_step);
+                            let fms =
+                                session.board.apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
+                            for fm in fms {
+                                relic_fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
+                            }
+                        }
+                    }
+                }
+                if !dropped_positions.is_empty() {
+                    if let Some(session) = ctx.active_session.as_ref() {
+                        spawn_clear_particles(&mut commands, &dropped_positions, session, &input_state);
+                        rebuild_board_now(
+                            &mut commands,
+                            session,
+                            &textures,
+                            window,
+                            &mut input_state,
+                            &all_sprites,
+                            Some(&relic_fall_map),
+                        );
+                    }
+                    input_state.dirty_hud = true;
+                    input_state.phase = BoardAnimPhase::Falling {
+                        moves: relic_fall_map,
+                        combo,
+                        elapsed: 0.0,
+                        duration: ctx.data.balance.fall_anim_seconds,
+                    };
+                    return;
+                }
+
                 // Check for follow-up cascade!
                 let next_cascade = ctx
                     .active_session

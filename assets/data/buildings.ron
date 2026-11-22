@@ -7,6 +7,7 @@
         max_tier: 3,
         requires_great_hall_tier: 0,
         level_id: "great_hall_1",
+        mastery_level_id: Some("great_hall_2"),
         upgrade_costs: [
             ResourceBundle(wood: 60, stone: 40, gold: 40, mead: 0),
             ResourceBundle(wood: 140, stone: 100, gold: 100, mead: 15),
@@ -21,6 +22,7 @@
         max_tier: 3,
         requires_great_hall_tier: 1,
         level_id: "forge_1",
+        mastery_level_id: Some("forge_2"),
         upgrade_costs: [
             ResourceBundle(wood: 50, stone: 80, gold: 60, mead: 0),
             ResourceBundle(wood: 120, stone: 180, gold: 130, mead: 10),
@@ -35,6 +37,7 @@
         max_tier: 3,
         requires_great_hall_tier: 1,
         level_id: "dock_1",
+        mastery_level_id: Some("dock_2"),
         upgrade_costs: [
             ResourceBundle(wood: 100, stone: 50, gold: 80, mead: 10),
             ResourceBundle(wood: 200, stone: 110, gold: 170, mead: 25),
@@ -49,6 +52,7 @@
         max_tier: 3,
         requires_great_hall_tier: 1,
         level_id: "shrine_1",
+        mastery_level_id: Some("shrine_2"),
         upgrade_costs: [
             ResourceBundle(wood: 70, stone: 110, gold: 120, mead: 15),
             ResourceBundle(wood: 160, stone: 240, gold: 250, mead: 35),
@@ -63,6 +67,7 @@
         max_tier: 3,
         requires_great_hall_tier: 0,
         level_id: "meadery_1",
+        mastery_level_id: Some("meadery_2"),
         upgrade_costs: [
             ResourceBundle(wood: 75, stone: 45, gold: 50, mead: 0),
             ResourceBundle(wood: 160, stone: 100, gold: 120, mead: 15),

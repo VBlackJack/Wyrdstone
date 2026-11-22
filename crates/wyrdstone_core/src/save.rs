@@ -17,14 +17,14 @@
 //! Bundled game data loader and persistent JSON save schema.
 
 use crate::balance::BalanceConfig;
-use crate::city::{BuildingDef, CityState, QuestDef};
+use crate::city::{AmuletDef, BuildingDef, CityState, QuestDef};
 use crate::i18n::{I18nCatalog, Language};
 use crate::level::LevelDef;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Current save format version for forward-safe migrations.
-pub const SAVE_SCHEMA_VERSION: u32 = 1;
+pub const SAVE_SCHEMA_VERSION: u32 = 2;
 
 const BUNDLED_EN_JSON: &str = include_str!("../../../assets/locales/en.json");
 const BUNDLED_FR_JSON: &str = include_str!("../../../assets/locales/fr.json");
@@ -32,6 +32,7 @@ const BUNDLED_BALANCE_RON: &str = include_str!("../../../assets/data/balance.ron
 const BUNDLED_BUILDINGS_RON: &str = include_str!("../../../assets/data/buildings.ron");
 const BUNDLED_LEVELS_RON: &str = include_str!("../../../assets/data/levels.ron");
 const BUNDLED_QUESTS_RON: &str = include_str!("../../../assets/data/quests.ron");
+const BUNDLED_AMULETS_RON: &str = include_str!("../../../assets/data/amulets.ron");
 
 /// All static game definitions loaded once at startup.
 #[derive(Debug, Clone)]
@@ -40,6 +41,7 @@ pub struct GameDataBundle {
     pub buildings: Vec<BuildingDef>,
     pub levels: Vec<LevelDef>,
     pub quests: Vec<QuestDef>,
+    pub amulets: Vec<AmuletDef>,
     pub i18n: I18nCatalog,
 }
 
@@ -54,6 +56,8 @@ impl GameDataBundle {
             .map_err(|e| format!("Failed to parse levels.ron: {e}"))?;
         let quests: Vec<QuestDef> = ron::from_str(BUNDLED_QUESTS_RON)
             .map_err(|e| format!("Failed to parse quests.ron: {e}"))?;
+        let amulets: Vec<AmuletDef> = ron::from_str(BUNDLED_AMULETS_RON)
+            .map_err(|e| format!("Failed to parse amulets.ron: {e}"))?;
         let i18n = I18nCatalog::from_json_strs(BUNDLED_EN_JSON, BUNDLED_FR_JSON, initial_language)
             .map_err(|e| format!("Failed to parse locales: {e}"))?;
 
@@ -62,6 +66,7 @@ impl GameDataBundle {
             buildings,
             levels,
             quests,
+            amulets,
             i18n,
         })
     }
@@ -74,6 +79,11 @@ impl GameDataBundle {
     /// Finds a building definition by its unique identifier.
     pub fn building_by_id(&self, id: &str) -> Option<&BuildingDef> {
         self.buildings.iter().find(|b| b.id == id)
+    }
+
+    /// Finds an amulet definition by its unique identifier.
+    pub fn amulet_by_id(&self, id: &str) -> Option<&AmuletDef> {
+        self.amulets.iter().find(|a| a.id == id)
     }
 }
 
@@ -105,7 +115,7 @@ impl SaveData {
         serde_json::from_str(raw)
     }
 
-    /// Writes save data atomically to disk when filesystem storage is available.
+    /// Writes save data to disk when filesystem storage is available.
     pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)

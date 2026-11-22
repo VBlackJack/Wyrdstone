@@ -27,7 +27,10 @@ pub use balance::BalanceConfig;
 pub use board::{
     ActiveTool, Board, Booster, Cell, CellPos, FallMove, MatchStepOutcome, PreparedClear, RuneType,
 };
-pub use city::{BuildingDef, CityState, QuestCondition, QuestDef, ResourceBundle, ToolInventory};
+pub use city::{
+    AmuletDef, AmuletEffect, BuildingDef, CityState, QuestCondition, QuestDef, ResourceBundle,
+    ToolInventory,
+};
 pub use i18n::{I18nCatalog, Language};
 pub use level::{LevelDef, LevelOutcome, LevelSession, Objective, ObjectiveProgress};
 pub use save::{GameDataBundle, SaveData};

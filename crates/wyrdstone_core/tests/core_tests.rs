@@ -54,7 +54,14 @@ fn bundled_data_loads_and_i18n_has_full_parity() {
             | QuestCondition::ReachBuildingTier { building_id, .. } => {
                 assert!(data.building_by_id(building_id).is_some());
             }
+            QuestCondition::CraftAnyAmulet => {}
         }
+    }
+
+    // Verify all amulet i18n keys resolve.
+    for a in &data.amulets {
+        assert_ne!(data.i18n.t(&a.name_key), a.name_key);
+        assert_ne!(data.i18n.t(&a.desc_key), a.desc_key);
     }
 }
 
@@ -155,7 +162,7 @@ fn match4_spawns_line_booster_and_bifrost_clears_color() {
 fn active_tools_mjolnir_and_loki_shuffle_work() {
     let data = GameDataBundle::load_bundled(Language::En).unwrap();
     let mut rng = StdRng::seed_from_u64(123);
-    let mut session = LevelSession::start(data.levels[2].clone(), &mut rng);
+    let mut session = LevelSession::start(data.level_by_id("forge_1").unwrap().clone(), &mut rng);
     let moves_before = session.moves_left;
 
     // Use Mjolnir on a chained cell (3,3) in forge_1.
@@ -208,4 +215,70 @@ fn city_upgrades_quests_and_save_roundtrip() {
     let loaded = SaveData::from_json(&json).expect("deserialize save");
     assert_eq!(loaded.city.building_tier("great_hall"), 1);
     assert!(loaded.city.claimed_quests.contains("q1"));
+}
+
+#[test]
+fn p2_tools_crates_relics_timer_and_amulets_work() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(2026);
+
+    // 1. Amulet crafting, equipping, and ExtraMoves + ResourceBonusPct effects.
+    let mut city = CityState::new(&data.balance);
+    city.resources.wood = 200;
+    city.resources.stone = 200;
+    city.resources.gold = 300;
+    city.resources.mead = 100;
+    let heimdall = data.amulet_by_id("amulet_heimdall").unwrap();
+    assert!(city.try_craft_amulet(heimdall).is_ok());
+    assert!(city.is_quest_ready(data.quests.iter().find(|q| q.id == "q7").unwrap()));
+
+    let timed_level = data.level_by_id("meadery_2").unwrap().clone();
+    let base_moves = timed_level.max_moves;
+    let mut session = LevelSession::start_with_amulet(
+        timed_level,
+        city.active_amulet_effect(&data.amulets),
+        &mut rng,
+    );
+    assert_eq!(session.moves_left, base_moves + 3);
+    assert!(session.time_left_secs.is_some());
+
+    // 2. Timed mode defeat when timer expires.
+    session.tick_timer(999.0);
+    assert_eq!(session.outcome, LevelOutcome::Defeat);
+
+    // 3. Frost crates damaged by ThorBolt and Buried Relics dropped to bottom row.
+    let mut cells = vec![Cell::playable(RuneType::Water); 16];
+    // 4x4 board: put a Relic at (1, 2) and a crate at (1, 3).
+    cells[2 * 4 + 1].relic = true;
+    cells[2 * 4 + 1].rune = None;
+    cells[3 * 4 + 1].crate_layers = 1;
+    cells[3 * 4 + 1].rune = None;
+    let mut board = Board::from_cells(4, 4, 6, cells);
+
+    // ThorBolt on row 3 breaks the crate at (1, 3), letting the relic fall to (1, 3) and be collected!
+    let outcome = board.use_active_tool(
+        ActiveTool::ThorBolt,
+        Some(CellPos::new(0, 3)),
+        &data.balance,
+        &mut rng,
+    );
+    assert!(outcome.valid);
+    assert_eq!(outcome.crates_broken, 1);
+    assert_eq!(outcome.relics_dropped, 1);
+
+    // 4. DrakkarCharge and BifrostPrism work cleanly.
+    let drakkar = board.use_active_tool(
+        ActiveTool::DrakkarCharge,
+        Some(CellPos::new(1, 1)),
+        &data.balance,
+        &mut rng,
+    );
+    assert!(drakkar.valid);
+    let prism = board.use_active_tool(
+        ActiveTool::BifrostPrism,
+        Some(CellPos::new(0, 0)),
+        &data.balance,
+        &mut rng,
+    );
+    assert!(prism.valid);
 }

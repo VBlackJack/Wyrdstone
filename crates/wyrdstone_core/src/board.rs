@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Match-3 board simulation: runes, obstacles, spawned boosters, cascades, and active tools.
+//! Match-3 board simulation: runes, obstacles, relics, boosters, cascades, and all six active tools.
 
 use crate::balance::BalanceConfig;
 use crate::level::LevelDef;
@@ -97,15 +97,21 @@ pub enum Booster {
     BifrostShard,
 }
 
-/// Player-triggered tools from the bottom action bar.
+/// All six player-triggered tools from the bottom action bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ActiveTool {
-    /// Smashes a single tile, breaking chains/ice or triggering its booster.
+    /// Smashes a single tile, breaking chains/ice/crates or triggering its booster.
     Mjolnir,
     /// Blasts a 3x3 area centered on the target cell.
     SurtrEmber,
     /// Shuffles all unchained runes on the board.
     LokiShuffle,
+    /// Strikes an entire horizontal row.
+    ThorBolt,
+    /// Clears all runes of the targeted cell's color across the board.
+    BifrostPrism,
+    /// Clears both the full row and full column of the target cell.
+    DrakkarCharge,
 }
 
 /// Single grid cell state.
@@ -116,6 +122,8 @@ pub struct Cell {
     pub booster: Booster,
     pub ice_layers: u8,
     pub chained: bool,
+    pub crate_layers: u8,
+    pub relic: bool,
 }
 
 impl Cell {
@@ -126,6 +134,8 @@ impl Cell {
             booster: Booster::None,
             ice_layers: 0,
             chained: false,
+            crate_layers: 0,
+            relic: false,
         }
     }
 
@@ -136,12 +146,22 @@ impl Cell {
             booster: Booster::None,
             ice_layers: 0,
             chained: false,
+            crate_layers: 0,
+            relic: false,
         }
     }
 
-    /// Returns true when the rune in this cell can be swapped by the player.
+    /// Returns true when the content of this cell can be swapped by the player.
     pub fn can_be_swapped(&self) -> bool {
-        !self.blocked && !self.chained && (self.rune.is_some() || self.booster == Booster::BifrostShard)
+        !self.blocked
+            && !self.chained
+            && self.crate_layers == 0
+            && (self.rune.is_some() || self.booster == Booster::BifrostShard || self.relic)
+    }
+
+    /// Returns true when the cell currently holds a movable piece (rune, booster, or relic).
+    pub fn has_movable_piece(&self) -> bool {
+        self.rune.is_some() || self.booster != Booster::None || self.relic
     }
 }
 
@@ -153,12 +173,14 @@ pub struct MatchStepOutcome {
     pub max_combo: u32,
     pub ice_broken: u32,
     pub chains_broken: u32,
+    pub crates_broken: u32,
+    pub relics_dropped: u32,
     pub cleared_runes: HashMap<RuneType, u32>,
     pub cleared_positions: Vec<CellPos>,
     pub shuffled: bool,
 }
 
-/// Describes one rune's vertical drop during a gravity step (`from_row < 0` means spawned above).
+/// Describes one tile's vertical drop during a gravity step (`from_row < 0` means spawned above).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FallMove {
     pub col: usize,
@@ -226,6 +248,30 @@ impl Board {
             }
         }
 
+        for &(col, row, layers) in &level.crate_cells {
+            let pos = CellPos::new(col, row);
+            if let Some(cell) = board.get_mut(pos) {
+                if !cell.blocked && layers > 0 {
+                    cell.crate_layers = layers;
+                    cell.rune = None;
+                    cell.booster = Booster::None;
+                    cell.chained = false;
+                }
+            }
+        }
+
+        for &(col, row) in &level.relic_cells {
+            let pos = CellPos::new(col, row);
+            if let Some(cell) = board.get_mut(pos) {
+                if !cell.blocked && cell.crate_layers == 0 {
+                    cell.relic = true;
+                    cell.rune = None;
+                    cell.booster = Booster::None;
+                    cell.chained = false;
+                }
+            }
+        }
+
         if !board.has_valid_moves() {
             board.shuffle_free_runes(rng);
         }
@@ -280,14 +326,6 @@ impl Board {
     fn set(&mut self, pos: CellPos, cell: Cell) {
         let i = self.idx(pos);
         self.cells[i] = cell;
-    }
-
-    /// Counts remaining ice layers across the entire board.
-    pub fn remaining_ice_cells(&self) -> u32 {
-        self.cells
-            .iter()
-            .filter(|c| !c.blocked && c.ice_layers > 0)
-            .count() as u32
     }
 
     fn random_rune<R: Rng>(&self, rng: &mut R) -> RuneType {
@@ -349,7 +387,7 @@ impl Board {
         Some(self.groups_to_prepared_clear(&groups, None))
     }
 
-    /// Prepares a direct-blast clear for Mjolnir or SurtrEmber.
+    /// Prepares a direct-blast clear for targeted active tools.
     pub fn prepare_tool_step(&self, tool: ActiveTool, target: CellPos) -> Option<PreparedClear> {
         if !self.in_bounds(target) || self.cells[self.idx(target)].blocked {
             return None;
@@ -365,6 +403,30 @@ impl Board {
                 spawned_boosters: Vec::new(),
                 is_direct_blast: true,
             }),
+            ActiveTool::ThorBolt => Some(PreparedClear {
+                cells: self.row_positions(target.row),
+                spawned_boosters: Vec::new(),
+                is_direct_blast: true,
+            }),
+            ActiveTool::BifrostPrism => {
+                let target_rune = self.cells[self.idx(target)].rune?;
+                let mut set = HashSet::new();
+                self.collect_all_of_rune(target_rune, &mut set);
+                Some(PreparedClear {
+                    cells: set.into_iter().collect(),
+                    spawned_boosters: Vec::new(),
+                    is_direct_blast: true,
+                })
+            }
+            ActiveTool::DrakkarCharge => {
+                let mut set: HashSet<CellPos> = self.row_positions(target.row).into_iter().collect();
+                set.extend(self.col_positions(target.col));
+                Some(PreparedClear {
+                    cells: set.into_iter().collect(),
+                    spawned_boosters: Vec::new(),
+                    is_direct_blast: true,
+                })
+            }
             ActiveTool::LokiShuffle => None,
         }
     }
@@ -418,13 +480,36 @@ impl Board {
 
         for &(pos, rune, booster) in &prepared.spawned_boosters {
             if let Some(cell) = self.get_mut(pos) {
-                if !cell.blocked {
+                if !cell.blocked && cell.crate_layers == 0 && !cell.relic {
                     cell.booster = booster;
                     cell.rune = if booster == Booster::BifrostShard {
                         None
                     } else {
                         Some(rune)
                     };
+                }
+            }
+        }
+        outcome
+    }
+
+    /// Collects any Buried Relics resting on the lowest playable cell of their column.
+    pub fn collect_bottom_relics(&mut self, balance: &BalanceConfig) -> MatchStepOutcome {
+        let mut outcome = MatchStepOutcome::default();
+        for col in 0..self.cols {
+            // Find the lowest non-blocked cell in this column.
+            let bottom_row = (0..self.rows)
+                .rev()
+                .find(|&r| !self.cells[self.idx(CellPos::new(col, r))].blocked);
+            if let Some(row) = bottom_row {
+                let pos = CellPos::new(col, row);
+                let idx = self.idx(pos);
+                if self.cells[idx].relic {
+                    self.cells[idx].relic = false;
+                    outcome.valid = true;
+                    outcome.relics_dropped += 1;
+                    outcome.score_gained += balance.relic_drop_bonus;
+                    outcome.cleared_positions.push(pos);
                 }
             }
         }
@@ -442,8 +527,8 @@ impl Board {
                 let wcell = self.cells[self.idx(wpos)];
                 if wcell.blocked
                     || wcell.chained
-                    || wcell.rune.is_some()
-                    || wcell.booster != Booster::None
+                    || wcell.crate_layers > 0
+                    || wcell.has_movable_piece()
                 {
                     write_row -= 1;
                     continue;
@@ -454,16 +539,18 @@ impl Board {
                 while read_row >= 0 {
                     let rpos = CellPos::new(col, read_row as usize);
                     let rcell = self.cells[self.idx(rpos)];
-                    if rcell.blocked || rcell.chained {
+                    if rcell.blocked || rcell.chained || rcell.crate_layers > 0 {
                         read_row -= 1;
                         continue;
                     }
-                    if rcell.rune.is_some() || rcell.booster != Booster::None {
+                    if rcell.has_movable_piece() {
                         let wi = self.idx(wpos);
                         let ri = self.idx(rpos);
                         self.cells[wi].rune = self.cells[ri].rune.take();
                         self.cells[wi].booster = self.cells[ri].booster;
                         self.cells[ri].booster = Booster::None;
+                        self.cells[wi].relic = self.cells[ri].relic;
+                        self.cells[ri].relic = false;
                         moves.push(FallMove {
                             col,
                             from_row: read_row,
@@ -479,6 +566,7 @@ impl Board {
                     let wi = self.idx(wpos);
                     self.cells[wi].rune = Some(self.random_rune(rng));
                     self.cells[wi].booster = Booster::None;
+                    self.cells[wi].relic = false;
                     moves.push(FallMove {
                         col,
                         from_row: -spawn_offset,
@@ -492,7 +580,7 @@ impl Board {
         moves
     }
 
-    /// Attempts to swap two adjacent cells and resolve all resulting matches and cascades.
+    /// Attempts to swap two adjacent cells and resolve all resulting matches, relics, and cascades.
     pub fn try_swap<R: Rng>(
         &mut self,
         a: CellPos,
@@ -500,55 +588,30 @@ impl Board {
         balance: &BalanceConfig,
         rng: &mut R,
     ) -> MatchStepOutcome {
-        let mut outcome = MatchStepOutcome::default();
-        if !a.is_adjacent(b) || !self.in_bounds(a) || !self.in_bounds(b) {
-            return outcome;
-        }
-        let cell_a = self.cells[self.idx(a)];
-        let cell_b = self.cells[self.idx(b)];
-        if !cell_a.can_be_swapped() || !cell_b.can_be_swapped() {
-            return outcome;
-        }
+        let Some(first_clear) = self.begin_swap_step(a, b) else {
+            return MatchStepOutcome::default();
+        };
+        let mut total = self.commit_clear_step(&first_clear, 1, balance);
+        self.apply_gravity_and_refill_tracked(rng);
+        self.collect_relics_loop(balance, rng, &mut total);
 
-        // Perform raw rune + booster swap (ice and chains stay on the cell).
-        self.swap_contents(a, b);
-
-        // Special case 1: Bifrost Shard + anything, or Booster + Booster combo.
-        if let Some(combo_cells) = self.check_special_swap_combo(a, b) {
-            outcome.valid = true;
-            outcome.max_combo = 1;
-            self.clear_cell_set(&combo_cells, 1, balance, &mut outcome, true);
-            self.apply_gravity_and_refill(rng);
-            self.resolve_cascades(2, balance, rng, &mut outcome);
-            if !self.has_valid_moves() {
-                self.shuffle_free_runes(rng);
-                outcome.shuffled = true;
-            }
-            return outcome;
+        let mut depth = 2;
+        while let Some(next_clear) = self.prepare_cascade_step() {
+            let step = self.commit_clear_step(&next_clear, depth, balance);
+            merge_outcomes(&mut total, &step);
+            self.apply_gravity_and_refill_tracked(rng);
+            self.collect_relics_loop(balance, rng, &mut total);
+            depth += 1;
         }
-
-        // Standard match resolution.
-        let groups = self.find_match_groups();
-        if groups.is_empty() {
-            // Revert invalid swap.
-            self.swap_contents(a, b);
-            return outcome;
-        }
-
-        outcome.valid = true;
-        self.resolve_match_groups(groups, Some((a, b)), 1, balance, &mut outcome);
-        self.apply_gravity_and_refill(rng);
-        self.resolve_cascades(2, balance, rng, &mut outcome);
 
         if !self.has_valid_moves() {
             self.shuffle_free_runes(rng);
-            outcome.shuffled = true;
+            total.shuffled = true;
         }
-
-        outcome
+        total
     }
 
-    /// Executes an active player tool from the action bar.
+    /// Executes an active player tool from the action bar (instant resolution for tests/Loki).
     pub fn use_active_tool<R: Rng>(
         &mut self,
         tool: ActiveTool,
@@ -556,56 +619,53 @@ impl Board {
         balance: &BalanceConfig,
         rng: &mut R,
     ) -> MatchStepOutcome {
-        let mut outcome = MatchStepOutcome::default();
-        match tool {
-            ActiveTool::LokiShuffle => {
-                self.shuffle_free_runes(rng);
-                outcome.valid = true;
-                outcome.shuffled = true;
-                outcome
+        if tool == ActiveTool::LokiShuffle {
+            self.shuffle_free_runes(rng);
+            return MatchStepOutcome {
+                valid: true,
+                shuffled: true,
+                ..Default::default()
+            };
+        }
+        let Some(pos) = target else {
+            return MatchStepOutcome::default();
+        };
+        let Some(prepared) = self.prepare_tool_step(tool, pos) else {
+            return MatchStepOutcome::default();
+        };
+        let mut total = self.commit_clear_step(&prepared, 1, balance);
+        self.apply_gravity_and_refill_tracked(rng);
+        self.collect_relics_loop(balance, rng, &mut total);
+
+        let mut depth = 2;
+        while let Some(next_clear) = self.prepare_cascade_step() {
+            let step = self.commit_clear_step(&next_clear, depth, balance);
+            merge_outcomes(&mut total, &step);
+            self.apply_gravity_and_refill_tracked(rng);
+            self.collect_relics_loop(balance, rng, &mut total);
+            depth += 1;
+        }
+
+        if !self.has_valid_moves() {
+            self.shuffle_free_runes(rng);
+            total.shuffled = true;
+        }
+        total
+    }
+
+    fn collect_relics_loop<R: Rng>(
+        &mut self,
+        balance: &BalanceConfig,
+        rng: &mut R,
+        total: &mut MatchStepOutcome,
+    ) {
+        loop {
+            let dropped = self.collect_bottom_relics(balance);
+            if dropped.relics_dropped == 0 {
+                break;
             }
-            ActiveTool::Mjolnir => {
-                let Some(pos) = target else {
-                    return outcome;
-                };
-                let Some(cell) = self.get(pos) else {
-                    return outcome;
-                };
-                if cell.blocked {
-                    return outcome;
-                }
-                outcome.valid = true;
-                outcome.max_combo = 1;
-                let mut set = HashSet::new();
-                set.insert(pos);
-                self.clear_cell_set(&set, 1, balance, &mut outcome, true);
-                self.apply_gravity_and_refill(rng);
-                self.resolve_cascades(2, balance, rng, &mut outcome);
-                if !self.has_valid_moves() {
-                    self.shuffle_free_runes(rng);
-                    outcome.shuffled = true;
-                }
-                outcome
-            }
-            ActiveTool::SurtrEmber => {
-                let Some(center) = target else {
-                    return outcome;
-                };
-                if !self.in_bounds(center) || self.cells[self.idx(center)].blocked {
-                    return outcome;
-                }
-                outcome.valid = true;
-                outcome.max_combo = 1;
-                let blast = self.area_positions(center, 1);
-                self.clear_cell_set(&blast, 1, balance, &mut outcome, true);
-                self.apply_gravity_and_refill(rng);
-                self.resolve_cascades(2, balance, rng, &mut outcome);
-                if !self.has_valid_moves() {
-                    self.shuffle_free_runes(rng);
-                    outcome.shuffled = true;
-                }
-                outcome
-            }
+            merge_outcomes(total, &dropped);
+            self.apply_gravity_and_refill_tracked(rng);
         }
     }
 
@@ -614,10 +674,13 @@ impl Board {
         let ib = self.idx(b);
         let rune_a = self.cells[ia].rune;
         let booster_a = self.cells[ia].booster;
+        let relic_a = self.cells[ia].relic;
         self.cells[ia].rune = self.cells[ib].rune;
         self.cells[ia].booster = self.cells[ib].booster;
+        self.cells[ia].relic = self.cells[ib].relic;
         self.cells[ib].rune = rune_a;
         self.cells[ib].booster = booster_a;
+        self.cells[ib].relic = relic_a;
     }
 
     fn check_special_swap_combo(&self, a: CellPos, b: CellPos) -> Option<HashSet<CellPos>> {
@@ -657,7 +720,10 @@ impl Board {
                 affected.extend(self.area_positions(b, 2));
                 Some(affected)
             }
-            (Booster::LineHorizontal | Booster::LineVertical, Booster::LineHorizontal | Booster::LineVertical) => {
+            (
+                Booster::LineHorizontal | Booster::LineVertical,
+                Booster::LineHorizontal | Booster::LineVertical,
+            ) => {
                 affected.extend(self.row_positions(b.row));
                 affected.extend(self.col_positions(b.col));
                 Some(affected)
@@ -725,48 +791,45 @@ impl Board {
         set
     }
 
-    fn resolve_cascades<R: Rng>(
-        &mut self,
-        mut depth: u32,
-        balance: &BalanceConfig,
-        rng: &mut R,
-        outcome: &mut MatchStepOutcome,
-    ) {
-        loop {
-            let groups = self.find_match_groups();
-            if groups.is_empty() {
-                break;
-            }
-            outcome.max_combo = outcome.max_combo.max(depth);
-            self.resolve_match_groups(groups, None, depth, balance, outcome);
-            self.apply_gravity_and_refill(rng);
-            depth += 1;
+    fn orthogonal_neighbors(&self, pos: CellPos) -> Vec<CellPos> {
+        let mut nbs = Vec::with_capacity(4);
+        if pos.col > 0 {
+            nbs.push(CellPos::new(pos.col - 1, pos.row));
         }
+        if pos.col + 1 < self.cols {
+            nbs.push(CellPos::new(pos.col + 1, pos.row));
+        }
+        if pos.row > 0 {
+            nbs.push(CellPos::new(pos.col, pos.row - 1));
+        }
+        if pos.row + 1 < self.rows {
+            nbs.push(CellPos::new(pos.col, pos.row + 1));
+        }
+        nbs
     }
 
-    /// Finds connected match groups of identical runes (horizontal and vertical runs merged).
     fn find_match_groups(&self) -> Vec<MatchGroup> {
         let mut h_runs: Vec<Vec<CellPos>> = Vec::new();
         let mut v_runs: Vec<Vec<CellPos>> = Vec::new();
 
-        // Horizontal runs.
         for row in 0..self.rows {
             let mut col = 0;
             while col < self.cols {
                 let p = CellPos::new(col, row);
-                let Some(rune) = self.cells[self.idx(p)].rune else {
+                let cell = self.cells[self.idx(p)];
+                let Some(rune) = cell.rune else {
                     col += 1;
                     continue;
                 };
-                if self.cells[self.idx(p)].blocked {
+                if cell.blocked || cell.crate_layers > 0 {
                     col += 1;
                     continue;
                 }
                 let start = col;
                 while col < self.cols {
                     let cp = CellPos::new(col, row);
-                    let cell = self.cells[self.idx(cp)];
-                    if !cell.blocked && cell.rune == Some(rune) {
+                    let c = self.cells[self.idx(cp)];
+                    if !c.blocked && c.crate_layers == 0 && c.rune == Some(rune) {
                         col += 1;
                     } else {
                         break;
@@ -778,24 +841,24 @@ impl Board {
             }
         }
 
-        // Vertical runs.
         for col in 0..self.cols {
             let mut row = 0;
             while row < self.rows {
                 let p = CellPos::new(col, row);
-                let Some(rune) = self.cells[self.idx(p)].rune else {
+                let cell = self.cells[self.idx(p)];
+                let Some(rune) = cell.rune else {
                     row += 1;
                     continue;
                 };
-                if self.cells[self.idx(p)].blocked {
+                if cell.blocked || cell.crate_layers > 0 {
                     row += 1;
                     continue;
                 }
                 let start = row;
                 while row < self.rows {
                     let cp = CellPos::new(col, row);
-                    let cell = self.cells[self.idx(cp)];
-                    if !cell.blocked && cell.rune == Some(rune) {
+                    let c = self.cells[self.idx(cp)];
+                    if !c.blocked && c.crate_layers == 0 && c.rune == Some(rune) {
                         row += 1;
                     } else {
                         break;
@@ -807,7 +870,6 @@ impl Board {
             }
         }
 
-        // Merge overlapping runs of the same rune into connected groups.
         let mut groups: Vec<MatchGroup> = Vec::new();
         for run in h_runs {
             let rune = self.cells[self.idx(run[0])].rune.unwrap();
@@ -844,54 +906,6 @@ impl Board {
         groups
     }
 
-    fn resolve_match_groups(
-        &mut self,
-        groups: Vec<MatchGroup>,
-        swap_pair: Option<(CellPos, CellPos)>,
-        combo_depth: u32,
-        balance: &BalanceConfig,
-        outcome: &mut MatchStepOutcome,
-    ) {
-        outcome.max_combo = outcome.max_combo.max(combo_depth);
-        let mut to_clear: HashSet<CellPos> = HashSet::new();
-        let mut spawned_boosters: Vec<(CellPos, RuneType, Booster)> = Vec::new();
-
-        for group in &groups {
-            to_clear.extend(&group.cells);
-            let booster = group.spawned_booster();
-            if booster != Booster::None {
-                let spawn_pos = swap_pair
-                    .and_then(|(a, b)| {
-                        if group.cells.contains(&b) {
-                            Some(b)
-                        } else if group.cells.contains(&a) {
-                            Some(a)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_else(|| *group.cells.iter().next().unwrap());
-                spawned_boosters.push((spawn_pos, group.rune, booster));
-            }
-        }
-
-        self.clear_cell_set(&to_clear, combo_depth, balance, outcome, false);
-
-        // Place newly formed boosters onto their spawn cells.
-        for (pos, rune, booster) in spawned_boosters {
-            if let Some(cell) = self.get_mut(pos) {
-                if !cell.blocked {
-                    cell.booster = booster;
-                    cell.rune = if booster == Booster::BifrostShard {
-                        None
-                    } else {
-                        Some(rune)
-                    };
-                }
-            }
-        }
-    }
-
     fn clear_cell_set(
         &mut self,
         initial: &HashSet<CellPos>,
@@ -902,6 +916,7 @@ impl Board {
     ) {
         let mut queue: VecDeque<CellPos> = initial.iter().copied().collect();
         let mut visited: HashSet<CellPos> = HashSet::new();
+        let mut adjacent_crates_hit: HashSet<CellPos> = HashSet::new();
         let mult = balance.combo_multiplier(combo_depth);
 
         while let Some(pos) = queue.pop_front() {
@@ -911,6 +926,30 @@ impl Board {
             let idx = self.idx(pos);
             if self.cells[idx].blocked {
                 continue;
+            }
+
+            // Frost crates take 1 hit from direct blasts or boosters.
+            if self.cells[idx].crate_layers > 0 {
+                self.cells[idx].crate_layers -= 1;
+                if self.cells[idx].crate_layers == 0 {
+                    outcome.crates_broken += 1;
+                }
+                outcome.score_gained += (balance.crate_break_bonus as f32 * mult).round() as u32;
+                outcome.cleared_positions.push(pos);
+                continue;
+            }
+
+            // Buried Relics are indestructible by matches or blasts.
+            if self.cells[idx].relic {
+                continue;
+            }
+
+            // Collect orthogonally adjacent frost crates damaged by this cleared cell.
+            for nb in self.orthogonal_neighbors(pos) {
+                let nb_idx = self.idx(nb);
+                if !self.cells[nb_idx].blocked && self.cells[nb_idx].crate_layers > 0 {
+                    adjacent_crates_hit.insert(nb);
+                }
             }
 
             // Trigger any existing booster on this cell.
@@ -948,7 +987,6 @@ impl Board {
                 }
             }
 
-            // Break Fenrir chain first (rune survives the hit if chained, unless direct blast).
             if self.cells[idx].chained {
                 self.cells[idx].chained = false;
                 outcome.chains_broken += 1;
@@ -959,7 +997,6 @@ impl Board {
                 }
             }
 
-            // Damage ice plate under the rune.
             if self.cells[idx].ice_layers > 0 {
                 self.cells[idx].ice_layers -= 1;
                 if self.cells[idx].ice_layers == 0 {
@@ -968,55 +1005,26 @@ impl Board {
                 outcome.score_gained += (balance.ice_break_bonus as f32 * mult).round() as u32;
             }
 
-            // Clear rune.
             if let Some(rune) = self.cells[idx].rune.take() {
                 *outcome.cleared_runes.entry(rune).or_insert(0) += 1;
                 outcome.score_gained += (balance.points_per_tile as f32 * mult).round() as u32;
                 outcome.cleared_positions.push(pos);
             }
         }
-    }
 
-    fn apply_gravity_and_refill<R: Rng>(&mut self, rng: &mut R) {
-        for col in 0..self.cols {
-            // Pull runes downward past empty cells, stopping around blocked/chained cells.
-            let mut write_row = self.rows as i32 - 1;
-            while write_row >= 0 {
-                let wpos = CellPos::new(col, write_row as usize);
-                let wcell = self.cells[self.idx(wpos)];
-                if wcell.blocked || wcell.chained || wcell.rune.is_some() || wcell.booster != Booster::None {
-                    write_row -= 1;
-                    continue;
+        // Apply 1 damage to each orthogonally adjacent frost crate not already directly hit.
+        for crate_pos in adjacent_crates_hit {
+            if visited.contains(&crate_pos) {
+                continue;
+            }
+            let idx = self.idx(crate_pos);
+            if self.cells[idx].crate_layers > 0 {
+                self.cells[idx].crate_layers -= 1;
+                if self.cells[idx].crate_layers == 0 {
+                    outcome.crates_broken += 1;
                 }
-
-                // Search upward for a movable rune.
-                let mut read_row = write_row - 1;
-                let mut found = false;
-                while read_row >= 0 {
-                    let rpos = CellPos::new(col, read_row as usize);
-                    let rcell = self.cells[self.idx(rpos)];
-                    if rcell.blocked || rcell.chained {
-                        read_row -= 1;
-                        continue;
-                    }
-                    if rcell.rune.is_some() || rcell.booster != Booster::None {
-                        let wi = self.idx(wpos);
-                        let ri = self.idx(rpos);
-                        self.cells[wi].rune = self.cells[ri].rune.take();
-                        self.cells[wi].booster = self.cells[ri].booster;
-                        self.cells[ri].booster = Booster::None;
-                        found = true;
-                        break;
-                    }
-                    read_row -= 1;
-                }
-
-                if !found {
-                    let wi = self.idx(wpos);
-                    self.cells[wi].rune = Some(self.random_rune(rng));
-                    self.cells[wi].booster = Booster::None;
-                }
-                write_row -= 1;
+                outcome.score_gained += (balance.crate_break_bonus as f32 * mult).round() as u32;
+                outcome.cleared_positions.push(crate_pos);
             }
         }
     }
@@ -1051,13 +1059,18 @@ impl Board {
         false
     }
 
-    /// Shuffles all unchained runes without creating instant matches, ensuring a valid move.
+    /// Shuffles all unchained free runes without creating instant matches, ensuring a valid move.
     pub fn shuffle_free_runes<R: Rng>(&mut self, rng: &mut R) {
         let free_positions: Vec<CellPos> = (0..self.rows)
             .flat_map(|row| (0..self.cols).map(move |col| CellPos::new(col, row)))
             .filter(|&p| {
                 let c = self.cells[self.idx(p)];
-                !c.blocked && !c.chained && c.rune.is_some() && c.booster == Booster::None
+                !c.blocked
+                    && !c.chained
+                    && c.crate_layers == 0
+                    && !c.relic
+                    && c.rune.is_some()
+                    && c.booster == Booster::None
             })
             .collect();
 
@@ -1081,6 +1094,20 @@ impl Board {
             }
         }
     }
+}
+
+fn merge_outcomes(total: &mut MatchStepOutcome, step: &MatchStepOutcome) {
+    total.valid |= step.valid;
+    total.score_gained += step.score_gained;
+    total.max_combo = total.max_combo.max(step.max_combo);
+    total.ice_broken += step.ice_broken;
+    total.chains_broken += step.chains_broken;
+    total.crates_broken += step.crates_broken;
+    total.relics_dropped += step.relics_dropped;
+    for (&rune, &count) in &step.cleared_runes {
+        *total.cleared_runes.entry(rune).or_insert(0) += count;
+    }
+    total.cleared_positions.extend(&step.cleared_positions);
 }
 
 struct MatchGroup {

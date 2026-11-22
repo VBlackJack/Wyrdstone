@@ -42,4 +42,18 @@
         condition: ReachBuildingTier(building_id: "odin_shrine", tier: 1),
         reward: ResourceBundle(wood: 100, stone: 100, gold: 120, mead: 30),
     ),
+    QuestDef(
+        id: "q7",
+        title_key: "quest.q7.title",
+        desc_key: "quest.q7.desc",
+        condition: CraftAnyAmulet,
+        reward: ResourceBundle(wood: 80, stone: 80, gold: 110, mead: 25),
+    ),
+    QuestDef(
+        id: "q8",
+        title_key: "quest.q8.title",
+        desc_key: "quest.q8.desc",
+        condition: WinBuildingLevel(building_id: "great_hall", wins: 2),
+        reward: ResourceBundle(wood: 120, stone: 90, gold: 120, mead: 30),
+    ),
 ]

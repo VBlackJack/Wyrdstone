@@ -110,7 +110,8 @@ impl GameContext {
         let Some(level_def) = self.data.level_by_id(level_id).cloned() else {
             return Err("city.error.not_enough_energy");
         };
-        let session = LevelSession::start(level_def, &mut self.rng);
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let session = LevelSession::start_with_amulet(level_def, amulet, &mut self.rng);
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
         self.armed_tool = None;

@@ -1,0 +1,24 @@
+// Copyright 2026 Julien Bombled - Apache 2.0
+[
+    AmuletDef(
+        id: "amulet_freya",
+        name_key: "amulet.freya.name",
+        desc_key: "amulet.freya.desc",
+        cost: ResourceBundle(wood: 40, stone: 40, gold: 90, mead: 20),
+        effect: ResourceBonusPct(25),
+    ),
+    AmuletDef(
+        id: "amulet_heimdall",
+        name_key: "amulet.heimdall.name",
+        desc_key: "amulet.heimdall.desc",
+        cost: ResourceBundle(wood: 60, stone: 70, gold: 110, mead: 25),
+        effect: ExtraMoves(3),
+    ),
+    AmuletDef(
+        id: "amulet_thor",
+        name_key: "amulet.thor.name",
+        desc_key: "amulet.thor.desc",
+        cost: ResourceBundle(wood: 50, stone: 90, gold: 120, mead: 30),
+        effect: ScoreBonusPct(20),
+    ),
+]

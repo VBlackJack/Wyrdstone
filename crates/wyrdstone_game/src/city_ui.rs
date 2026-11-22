@@ -28,6 +28,7 @@ pub enum CityAction {
     PlayBuildingLevel(String),
     UpgradeBuilding(String),
     ClaimQuest(String),
+    CraftOrEquipAmulet(String),
     ToggleLanguage,
     BackToTitle,
 }
@@ -219,6 +220,62 @@ fn spawn_city_tree(commands: &mut Commands, ctx: &GameContext) {
                 }
             });
 
+            // Nordic Amulets strip
+            root.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_wrap: FlexWrap::Wrap,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                    column_gap: Val::Px(12.0),
+                    row_gap: Val::Px(6.0),
+                    border: UiRect::all(Val::Px(1.5)),
+                    ..default()
+                },
+                BackgroundColor(COLOR_PANEL_DARK),
+                BorderColor(COLOR_PANEL_BORDER),
+                BorderRadius::all(Val::Px(10.0)),
+            ))
+            .with_children(|abar| {
+                abar.spawn((
+                    Text::new(i18n.t("city.panel.amulets.title")),
+                    TextFont {
+                        font_size: FONT_BODY,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_GOLD),
+                ));
+
+                for amulet in &ctx.data.amulets {
+                    let crafted = ctx.city.crafted_amulets.contains(&amulet.id);
+                    let equipped = ctx.city.equipped_amulet.as_deref() == Some(amulet.id.as_str());
+                    let can_afford = ctx.city.resources.can_afford(&amulet.cost);
+                    let state_label = if equipped {
+                        i18n.t("city.panel.amulets.equipped")
+                    } else if crafted {
+                        i18n.t("city.panel.amulets.equip")
+                    } else {
+                        i18n.t("city.panel.amulets.craft")
+                    };
+                    let btn_bg = if equipped {
+                        COLOR_ACCENT_GOLD
+                    } else if crafted {
+                        COLOR_ACCENT_TEAL
+                    } else if can_afford {
+                        COLOR_ACCENT_GREEN
+                    } else {
+                        COLOR_BUTTON_DISABLED
+                    };
+                    let label = format!("{} [{}]", i18n.t(&amulet.name_key), state_label);
+                    spawn_small_button(
+                        abar,
+                        &label,
+                        CityAction::CraftOrEquipAmulet(amulet.id.clone()),
+                        btn_bg,
+                    );
+                }
+            });
+
             // Optional status notice (e.g. not enough resources / endurance)
             if let Some(notice_key) = &ctx.status_notice_key {
                 root.spawn((
@@ -342,7 +399,9 @@ fn spawn_city_tree(commands: &mut Commands, ctx: &GameContext) {
 
                         // Action buttons row
                         card.spawn(Node {
+                            flex_wrap: FlexWrap::Wrap,
                             column_gap: Val::Px(8.0),
+                            row_gap: Val::Px(6.0),
                             margin: UiRect::top(Val::Px(4.0)),
                             ..default()
                         })
@@ -357,6 +416,17 @@ fn spawn_city_tree(commands: &mut Commands, ctx: &GameContext) {
                                     COLOR_BUTTON_DISABLED
                                 },
                             );
+
+                            if unlocked && stars >= 1 {
+                                if let Some(mastery_id) = &b.mastery_level_id {
+                                    spawn_small_button(
+                                        row,
+                                        i18n.t("city.button.play_mastery"),
+                                        CityAction::PlayBuildingLevel(mastery_id.clone()),
+                                        COLOR_ACCENT_GOLD,
+                                    );
+                                }
+                            }
 
                             let upgrade_color = if unlocked && next_cost.is_some() && can_afford {
                                 COLOR_ACCENT_GREEN
@@ -473,6 +543,20 @@ pub fn handle_city_buttons(
                         ctx.persist();
                         rebuild = true;
                     }
+                }
+            }
+            CityAction::CraftOrEquipAmulet(amulet_id) => {
+                if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {
+                    match ctx.city.try_craft_amulet(&amulet) {
+                        Ok(()) => {
+                            ctx.status_notice_key = None;
+                            ctx.persist();
+                        }
+                        Err(err_key) => {
+                            ctx.status_notice_key = Some(err_key.to_string());
+                        }
+                    }
+                    rebuild = true;
                 }
             }
             CityAction::ToggleLanguage => {

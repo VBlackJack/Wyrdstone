@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-//! Level definitions, objective tracking, and active Match-3 session state.
+//! Level definitions, objective tracking, timed mode, amulet modifiers, and Match-3 session state.
 
 use crate::balance::BalanceConfig;
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, RuneType};
-use crate::city::ResourceBundle;
+use crate::city::{AmuletEffect, ResourceBundle};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,7 @@ pub enum Objective {
     ClearIce { target: u32 },
     CollectRune { rune: RuneType, target: u32 },
     ReachScore { target: u32 },
+    DropRelics { target: u32 },
 }
 
 /// Live progress snapshot for a single objective.
@@ -52,10 +53,16 @@ pub struct LevelDef {
     pub cols: usize,
     pub rows: usize,
     pub max_moves: u32,
+    #[serde(default)]
+    pub time_limit_seconds: Option<u32>,
     pub rune_types_count: usize,
     pub objectives: Vec<Objective>,
     pub ice_cells: Vec<(usize, usize, u8)>,
     pub chained_cells: Vec<(usize, usize)>,
+    #[serde(default)]
+    pub crate_cells: Vec<(usize, usize, u8)>,
+    #[serde(default)]
+    pub relic_cells: Vec<(usize, usize)>,
     pub blocked_cells: Vec<(usize, usize)>,
     pub base_reward: ResourceBundle,
 }
@@ -68,13 +75,16 @@ pub enum LevelOutcome {
     Defeat,
 }
 
-/// Playable Match-3 level session wrapping a board, moves counter, score, and objectives.
+/// Playable Match-3 level session wrapping a board, moves/timer, score, amulet buffs, and objectives.
 #[derive(Debug, Clone)]
 pub struct LevelSession {
     pub level: LevelDef,
     pub board: Board,
     pub moves_left: u32,
+    pub time_left_secs: Option<f32>,
     pub score: u32,
+    pub score_bonus_pct: u32,
+    pub resource_bonus_pct: u32,
     pub objectives: Vec<ObjectiveProgress>,
     pub outcome: LevelOutcome,
     pub last_combo: u32,
@@ -82,8 +92,17 @@ pub struct LevelSession {
 }
 
 impl LevelSession {
-    /// Starts a new playable session for the given level definition.
+    /// Starts a new playable session without an amulet.
     pub fn start<R: Rng>(level: LevelDef, rng: &mut R) -> Self {
+        Self::start_with_amulet(level, None, rng)
+    }
+
+    /// Starts a new playable session applying an optional equipped Nordic Amulet.
+    pub fn start_with_amulet<R: Rng>(
+        level: LevelDef,
+        amulet: Option<AmuletEffect>,
+        rng: &mut R,
+    ) -> Self {
         let board = Board::new_for_level(&level, rng);
         let objectives = level
             .objectives
@@ -92,7 +111,8 @@ impl LevelSession {
                 let target = match obj {
                     Objective::ClearIce { target }
                     | Objective::CollectRune { target, .. }
-                    | Objective::ReachScore { target } => *target,
+                    | Objective::ReachScore { target }
+                    | Objective::DropRelics { target } => *target,
                 };
                 ObjectiveProgress {
                     objective: obj.clone(),
@@ -102,16 +122,51 @@ impl LevelSession {
             })
             .collect();
 
+        let extra_moves = match amulet {
+            Some(AmuletEffect::ExtraMoves(m)) => m,
+            _ => 0,
+        };
+        let score_bonus_pct = match amulet {
+            Some(AmuletEffect::ScoreBonusPct(p)) => p,
+            _ => 0,
+        };
+        let resource_bonus_pct = match amulet {
+            Some(AmuletEffect::ResourceBonusPct(p)) => p,
+            _ => 0,
+        };
+        let time_left_secs = level.time_limit_seconds.map(|s| s as f32);
+
         Self {
-            moves_left: level.max_moves,
+            moves_left: level.max_moves + extra_moves,
+            time_left_secs,
             level,
             board,
             score: 0,
+            score_bonus_pct,
+            resource_bonus_pct,
             objectives,
             outcome: LevelOutcome::InProgress,
             last_combo: 0,
             last_shuffled: false,
         }
+    }
+
+    /// Advances the optional countdown timer and triggers Defeat when time expires.
+    pub fn tick_timer(&mut self, dt_secs: f32) -> bool {
+        if self.outcome != LevelOutcome::InProgress {
+            return false;
+        }
+        if let Some(ref mut remaining) = self.time_left_secs {
+            let prev_whole = remaining.ceil() as u32;
+            *remaining = (*remaining - dt_secs).max(0.0);
+            let new_whole = remaining.ceil() as u32;
+            if *remaining <= 0.0 {
+                self.outcome = LevelOutcome::Defeat;
+                return true;
+            }
+            return new_whole != prev_whole;
+        }
+        false
     }
 
     /// Attempts a player swap, updating moves, score, objectives, and victory/defeat state.
@@ -127,7 +182,7 @@ impl LevelSession {
         }
         let step = self.board.try_swap(a, b, balance, rng);
         if step.valid {
-            self.moves_left = self.moves_left.saturating_sub(1);
+            self.consume_move();
             self.apply_step_outcome(&step, balance);
         }
         step
@@ -158,7 +213,9 @@ impl LevelSession {
 
     /// Applies score and objective progress from a single animated clear step without ending the turn yet.
     pub fn apply_step_progress(&mut self, step: &MatchStepOutcome) {
-        self.score += step.score_gained;
+        let boosted_score =
+            step.score_gained + (step.score_gained * self.score_bonus_pct) / 100;
+        self.score += boosted_score;
         self.last_combo = step.max_combo;
         self.last_shuffled = step.shuffled;
 
@@ -174,6 +231,9 @@ impl LevelSession {
                 }
                 Objective::ReachScore { .. } => {
                     prog.done = self.score.min(prog.target);
+                }
+                Objective::DropRelics { .. } => {
+                    prog.done = (prog.done + step.relics_dropped).min(prog.target);
                 }
             }
         }
@@ -197,12 +257,12 @@ impl LevelSession {
         self.finalize_turn(balance);
     }
 
-    /// Computes final resource rewards when the level is won (scaled slightly by remaining moves).
+    /// Computes final resource rewards when the level is won (scaled by remaining moves + Freya amulet).
     pub fn earned_rewards(&self) -> ResourceBundle {
         if self.outcome != LevelOutcome::Victory {
             return ResourceBundle::default();
         }
-        let bonus_pct = (self.moves_left * 3).min(30);
+        let bonus_pct = (self.moves_left * 3).min(30) + self.resource_bonus_pct;
         let scale = |base: u32| base + (base * bonus_pct) / 100;
         ResourceBundle {
             wood: scale(self.level.base_reward.wood),
