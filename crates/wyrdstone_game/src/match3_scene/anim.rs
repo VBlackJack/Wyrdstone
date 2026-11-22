@@ -666,14 +666,51 @@ pub fn tick_board_animation(
                     let ctx_ref = ctx.as_mut();
                     let mut did_shuffle = false;
                     let mut frost_pos = None;
+                    let mut boss_riposte_hits = Vec::new();
+                    let mut boss_riposte_name: Option<String> = None;
                     if let Some(session) = ctx_ref.active_session.as_mut() {
                         frost_pos = session.apply_frost_spread_if_needed(&mut ctx_ref.rng);
+                        boss_riposte_hits = session.tick_boss_riposte_if_needed(&mut ctx_ref.rng);
+                        if !boss_riposte_hits.is_empty() {
+                            boss_riposte_name = session
+                                .boss
+                                .as_ref()
+                                .map(|b| ctx_ref.data.i18n.t(&b.def.name_key).to_string());
+                        }
                         if !session.board.has_valid_moves() {
                             session.board.shuffle_free_runes(&mut ctx_ref.rng);
                             session.last_shuffled = true;
                             did_shuffle = true;
                         }
                         session.finalize_turn(&balance);
+                    }
+                    if !boss_riposte_hits.is_empty() {
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        for &rp in &boss_riposte_hits {
+                            let w = cell_to_world(rp, &input_state);
+                            spawn_blast_beam(
+                                &mut commands,
+                                w,
+                                Vec2::splat(input_state.cell_step * 1.3),
+                                Color::srgba(0.95, 0.22, 0.28, 0.88),
+                            );
+                        }
+                        if let Some(bname) = boss_riposte_name {
+                            let msg = ctx
+                                .data
+                                .i18n
+                                .t_fmt("match3.boss.riposte", &[("boss", bname)]);
+                            spawn_floating_score(
+                                &mut commands,
+                                &boss_riposte_hits,
+                                msg,
+                                COLOR_ACCENT_CRIMSON,
+                                &input_state,
+                            );
+                        }
+                        input_state.shake_secs = SHAKE_DURATION_SECS;
+                        input_state.dirty_board = true;
+                        input_state.dirty_hud = true;
                     }
                     if let Some(fp) = frost_pos {
                         let w = cell_to_world(fp, &input_state);
@@ -817,10 +854,11 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
             s.earned_rewards(&balance),
             s.score,
             s.earned_stars(),
+            s.boss.as_ref().map(|b| b.def.clone()),
         )),
     });
 
-    if let Some((outcome, level_id, building_id, rewards, score, stars)) = finished {
+    if let Some((outcome, level_id, building_id, rewards, score, stars, boss_def)) = finished {
         ctx.last_outcome = Some(outcome);
         ctx.last_rewards = rewards;
         ctx.last_score = score;
@@ -828,7 +866,21 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
         ctx.last_daily_streak = None;
         ctx.city.stats.best_score = ctx.city.stats.best_score.max(score);
         if outcome == LevelOutcome::Victory {
-            if building_id == "daily_trial" {
+            if let Some(boss) = boss_def {
+                ctx.city.record_boss_victory(&boss);
+                ctx.last_rewards = boss.reward_resources;
+            } else if building_id == "expedition" {
+                let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
+                ctx.city.record_expedition_wave(wave, &rewards, &balance);
+                let ctx_ref = ctx;
+                if let Some(run) = ctx_ref.active_expedition.as_mut() {
+                    run.roll_boon_choices(&mut ctx_ref.rng);
+                }
+                ctx_ref.active_modal = ActiveModal::ExpeditionBoons;
+                ctx_ref.persist();
+                next_state.set(AppState::FjordCity);
+                return;
+            } else if building_id == "daily_trial" {
                 let streak = ctx.city.record_daily_victory(
                     crate::state::today_day_index(),
                     &rewards,
@@ -844,6 +896,7 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                 .city
                 .discover_next_relic_for_building(&building_id, &collections);
         } else {
+            ctx.active_expedition = None;
             ctx.last_discovered_relic_key = None;
         }
         ctx.active_modal = ActiveModal::None;

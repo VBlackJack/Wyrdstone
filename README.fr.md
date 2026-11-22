@@ -6,16 +6,16 @@
 
 ## Fonctionnalités
 
-- **Match-3 & Super-Combos** : 6 runes élémentaires nordiques, Éclairs de ligne, Bombes de Surtr, Éclats du Bifrost (incluant les super-combos `Bifrost + Éclair/Bombe`), Dalles de glace, Chaînes de Fenrir, Caisses de givre, Reliques enfouies, Portails du Bifrost et Givre rampant de Niflheim sur les plateaux Légendaires.
-- **Reconstruction du Fjord** : 5 bâtiments améliorables offrant des bonus permanents, des tributs passifs à récolter sur la carte, et un sélecteur Standard / Maîtrise / Légendaire avec notes 1 à 3 étoiles.
-- **Progression & Rejouabilité** : 15 quêtes de la Saga (Chapitres 1 et 2), 5 Amulettes Nordiques, 5 collections de Reliques des Neuf Mondes liées aux lieux du fjord, Forge d'Outils Runiques, Défis du Jour procéduraux avec séries de 7 jours, et sauvegarde JSON atomique avec réglages audio persistés.
+- **Match-3, Fureur Divine & Super-Combos** : 6 runes élémentaires nordiques, Éclairs de ligne, Bombes de Surtr, Éclats du Bifrost (super-combos `Bifrost + Éclair/Bombe`), Dalles de glace, Chaînes de Fenrir, Caisses de givre, Reliques enfouies, Portails du Bifrost, Givre rampant de Niflheim, aperçu AoE au survol et jauge de **Fureur Divine** liée à votre **Dieu Patron** (Thor, Freya, Loki ou Odin).
+- **Raids de Boss Mythologiques & Expédition Infinie** : Affrontez **Fenrir**, **Jormungandr** et **Surtr** avec barre de PV, faiblesses élémentaires et ripostes, ou lancez-vous dans l'**Expédition Infinie** roguelite avec 3 bénédictions au choix entre chaque vague.
+- **Fjord Vivant & Progression** : 5 bâtiments améliorables sous des aurores boréales animées, tributs passifs (+ Tout récolter), Rangs de Clan, 12 Exploits du Scalde, 15 quêtes de la Saga, 5 Amulettes Nordiques, 5 collections de Reliques, Forge d'Outils Runiques, Défis du Jour procéduraux (streak 7 jours) et sauvegarde JSON atomique.
 
 ## Architecture
 
-- `crates/wyrdstone_core` : logique pure en Rust (plateau Match-3, gravité, portails, givre rampant, cascades, boosters, outils actifs, bâtiments du fjord, tributs passifs, quêtes de la Saga, i18n EN/FR, sauvegarde JSON atomique).
+- `crates/wyrdstone_core` : logique pure en Rust (plateau Match-3, gravité, portails, givre rampant, cascades, boosters, Dieux Patrons, Raids Boss, Expédition Infinie, Rangs & Exploits, i18n EN/FR, sauvegarde JSON atomique).
 - `crates/wyrdstone_game` : couche graphique Bevy 2D avec illustrations nordiques peintes, modules `city_ui/` et `match3_scene/`, audio WAV procédural, contrôles souris et tactile Android, et point d'entrée Android `GameActivity`.
 - `assets/locales/` : fichiers de traduction anglais (`en.json`) et français (`fr.json`).
-- `assets/data/` : données de jeu externalisées au format RON (`balance.ron`, `buildings.ron`, `levels.ron`, `quests.ron`, `amulets.ron`, `collections.ron`, `tool_shop.ron`).
+- `assets/data/` : données de jeu externalisées au format RON (`balance.ron`, `buildings.ron`, `levels.ron`, `quests.ron`, `amulets.ron`, `collections.ron`, `tool_shop.ron`, `bosses.ron`).
 
 ## Compilation et lancement (PowerShell)
 

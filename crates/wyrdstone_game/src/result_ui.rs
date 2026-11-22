@@ -277,6 +277,10 @@ pub fn handle_result_buttons(
                         } else {
                             Err("city.panel.daily.done")
                         }
+                    } else if level_id.starts_with("boss_") {
+                        ctx.start_boss_raid(&level_id)
+                    } else if level_id.starts_with("expedition_") {
+                        ctx.start_expedition()
                     } else {
                         ctx.start_level(&level_id)
                     };

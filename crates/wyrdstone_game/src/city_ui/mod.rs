@@ -27,7 +27,7 @@ use crate::state::{now_unix_secs, today_day_index, ActiveModal, AppState, GameCo
 use crate::theme::*;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
-use wyrdstone_core::{ActiveTool, BuildingDef, QuestCondition};
+use wyrdstone_core::{ActiveTool, BuildingDef, PatronGod, QuestCondition};
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
 const SNOWFLAKE_COUNT: usize = 22;
@@ -39,6 +39,14 @@ pub struct CityRoot;
 /// Marker on the building pin targeted by the active Saga quest so its border pulses gold.
 #[derive(Component)]
 pub struct QuestBeaconPin;
+
+/// Animated Aurora Borealis ribbon drifting softly across the Fjord sky.
+#[derive(Component)]
+pub struct FjordAurora {
+    pub base_left_pct: f32,
+    pub phase: f32,
+    pub base_alpha: f32,
+}
 
 /// Gentle falling snowflake drifting across the Fjord map.
 #[derive(Component)]
@@ -63,8 +71,15 @@ pub enum CityAction {
     SelectBuilding(String),
     SelectDifficulty(u8),
     CollectHarvest(String),
+    CollectAllHarvests,
     PlayBuildingLevel(String),
     PlayDailyTrial,
+    StartExpedition,
+    PickExpeditionBoon(usize),
+    EndExpedition,
+    FightBoss(String),
+    SelectPatron(PatronGod),
+    ClaimAchievement(String),
     UpgradeBuilding(String),
     DrinkMead,
     ClaimQuest(String),
@@ -180,10 +195,15 @@ fn spawn_city_tree(
                         },
                         TextColor(COLOR_ACCENT_GOLD),
                     ));
+                    let rank_label = i18n.t(ctx.city.clan_rank().i18n_key());
                     col.spawn((
-                        Text::new(i18n.t_fmt(
-                            "city.header.mastery",
-                            &[("glory", ctx.city.glory.to_string())],
+                        Text::new(format!(
+                            "{}  -  {}",
+                            rank_label,
+                            i18n.t_fmt(
+                                "city.header.mastery",
+                                &[("glory", ctx.city.glory.to_string())],
+                            )
                         )),
                         TextFont {
                             font_size: FONT_SMALL,
@@ -260,6 +280,19 @@ fn spawn_city_tree(
                     ..default()
                 })
                 .with_children(|btns| {
+                    let ready_harvests = count_ready_harvests(ctx, now);
+                    if ready_harvests >= 2 {
+                        spawn_small_button_colored(
+                            btns,
+                            &i18n.t_fmt(
+                                "city.harvest.collect_all",
+                                &[("count", ready_harvests.to_string())],
+                            ),
+                            CityAction::CollectAllHarvests,
+                            COLOR_ACCENT_GOLD,
+                            COLOR_TEXT_DARK,
+                        );
+                    }
                     let daily_ready = ctx.city.is_daily_available(today_day_index());
                     let daily_label = if daily_ready {
                         if ctx.city.stats.daily_streak > 0 {
@@ -290,6 +323,37 @@ fn spawn_city_tree(
                             COLOR_TEXT_DARK
                         } else {
                             COLOR_TEXT_PRIMARY
+                        },
+                    );
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.raids.button"),
+                        CityAction::ToggleModal(ActiveModal::Raids),
+                        COLOR_ACCENT_CRIMSON,
+                    );
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.expedition.button"),
+                        CityAction::StartExpedition,
+                        COLOR_ACCENT_TEAL,
+                    );
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.patrons.button"),
+                        CityAction::ToggleModal(ActiveModal::Patrons),
+                        COLOR_PANEL_CARD,
+                    );
+                    spawn_small_button(
+                        btns,
+                        i18n.t("city.panel.feats.button"),
+                        CityAction::ToggleModal(ActiveModal::Achievements),
+                        if ctx.city.has_any_claimable_achievement(
+                            &ctx.data.buildings,
+                            ctx.data.bosses.len(),
+                        ) {
+                            COLOR_ACCENT_GREEN
+                        } else {
+                            COLOR_PANEL_CARD
                         },
                     );
                     spawn_small_button(
@@ -510,6 +574,54 @@ fn spawn_city_tree(
                     BorderRadius::all(Val::Px(12.0)),
                 ))
                 .with_children(|map| {
+                    // Animated Aurora Borealis ribbons glowing brighter with Clan Glory.
+                    let aurora_intensity = (0.14 + (ctx.city.glory as f32 / 1200.0)).min(0.38);
+                    let aurora_defs = [
+                        (
+                            8.0,
+                            2.0,
+                            48.0,
+                            14.0,
+                            Color::srgba(0.18, 0.92, 0.68, aurora_intensity),
+                            0.0,
+                        ),
+                        (
+                            38.0,
+                            5.0,
+                            52.0,
+                            12.0,
+                            Color::srgba(0.24, 0.72, 0.98, aurora_intensity * 0.85),
+                            2.1,
+                        ),
+                        (
+                            18.0,
+                            8.0,
+                            44.0,
+                            10.0,
+                            Color::srgba(0.62, 0.36, 0.94, aurora_intensity * 0.75),
+                            4.2,
+                        ),
+                    ];
+                    for (left_p, top_p, w_p, h_p, col, phase) in aurora_defs {
+                        map.spawn((
+                            FjordAurora {
+                                base_left_pct: left_p,
+                                phase,
+                                base_alpha: col.alpha(),
+                            },
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(left_p),
+                                top: Val::Percent(top_p),
+                                width: Val::Percent(w_p),
+                                height: Val::Percent(h_p),
+                                ..default()
+                            },
+                            BackgroundColor(col),
+                            BorderRadius::all(Val::Px(36.0)),
+                        ));
+                    }
+
                     for i in 0..SNOWFLAKE_COUNT {
                         let x_pct = ((i * 37 + 11) % 96) as f32 + 2.0;
                         let y_pct = ((i * 53 + 7) % 94) as f32 + 2.0;
@@ -606,6 +718,10 @@ fn spawn_city_tree(
                 ActiveModal::Shop => modals::spawn_tool_shop_modal(root, ctx, fjord_art),
                 ActiveModal::Stats => modals::spawn_stats_modal(root, ctx, sound_bank),
                 ActiveModal::Help => modals::spawn_help_modal(root, ctx),
+                ActiveModal::Raids => modals::spawn_raids_modal(root, ctx),
+                ActiveModal::Patrons => modals::spawn_patrons_modal(root, ctx),
+                ActiveModal::Achievements => modals::spawn_achievements_modal(root, ctx),
+                ActiveModal::ExpeditionBoons => modals::spawn_expedition_boons_modal(root, ctx),
             }
         });
 }
@@ -969,6 +1085,76 @@ pub fn handle_city_buttons(
                     rebuild = true;
                 }
             }
+            CityAction::CollectAllHarvests => {
+                let buildings = ctx.data.buildings.clone();
+                let balance = ctx.data.balance.clone();
+                let now = now_unix_secs();
+                let (count, _) = ctx.city.collect_all_harvests(&buildings, now, &balance);
+                if count > 0 {
+                    ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                        "city.harvest.collected_all",
+                        &[("count", count.to_string())],
+                    ));
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    layout_mode.last_ready_harvests = 0;
+                    ctx.persist();
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    rebuild = true;
+                }
+            }
+            CityAction::StartExpedition => match ctx.start_expedition() {
+                Ok(()) => {
+                    next_state.set(AppState::Match3);
+                    return;
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                }
+            },
+            CityAction::PickExpeditionBoon(idx) => {
+                if ctx.continue_expedition_with_boon(*idx).is_ok() {
+                    next_state.set(AppState::Match3);
+                    return;
+                }
+                ctx.active_modal = ActiveModal::None;
+                rebuild = true;
+            }
+            CityAction::EndExpedition => {
+                ctx.active_expedition = None;
+                ctx.active_modal = ActiveModal::None;
+                rebuild = true;
+            }
+            CityAction::FightBoss(boss_id) => match ctx.start_boss_raid(boss_id) {
+                Ok(()) => {
+                    next_state.set(AppState::Match3);
+                    return;
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                }
+            },
+            CityAction::SelectPatron(god) => {
+                ctx.city.selected_patron = *god;
+                ctx.persist();
+                play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                rebuild = true;
+            }
+            CityAction::ClaimAchievement(ach_id) => {
+                let buildings = ctx.data.buildings.clone();
+                let boss_count = ctx.data.bosses.len();
+                if ctx
+                    .city
+                    .try_claim_achievement(ach_id, &buildings, boss_count)
+                {
+                    ctx.persist();
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    rebuild = true;
+                }
+            }
             CityAction::PlayBuildingLevel(level_id) => {
                 let is_unlocked = ctx
                     .data
@@ -1147,10 +1333,11 @@ pub fn handle_city_buttons(
     }
 }
 
-/// Animates gentle falling snow and pulses the active Saga quest / harvest building beacons.
+/// Animates gentle falling snow, aurora borealis ribbons, and pulsing building beacons.
 pub fn animate_city_ambience(
     time: Res<Time>,
-    mut snow_q: Query<(&mut FjordSnowflake, &mut Node)>,
+    mut snow_q: Query<(&mut FjordSnowflake, &mut Node), Without<FjordAurora>>,
+    mut aurora_q: Query<(&FjordAurora, &mut Node, &mut BackgroundColor), Without<FjordSnowflake>>,
     mut beacon_q: Query<&mut BorderColor, With<QuestBeaconPin>>,
 ) {
     let dt = time.delta_secs();
@@ -1164,6 +1351,14 @@ pub fn animate_city_ambience(
         let sway = (t * 1.1 + flake.phase).sin() * 1.6;
         node.top = Val::Percent(flake.y_pct);
         node.left = Val::Percent((flake.x_pct + sway).clamp(1.0, 98.0));
+    }
+
+    for (aurora, mut node, mut bg) in &mut aurora_q {
+        let drift = (t * 0.35 + aurora.phase).sin() * 5.0;
+        let pulse = 0.72 + 0.28 * (t * 0.8 + aurora.phase).sin();
+        node.left = Val::Percent((aurora.base_left_pct + drift).clamp(0.0, 60.0));
+        bg.0 =
+            bg.0.with_alpha((aurora.base_alpha * pulse).clamp(0.05, 0.45));
     }
 
     let glow = 0.5 + 0.5 * (t * 4.5).sin();

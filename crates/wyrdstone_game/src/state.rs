@@ -23,8 +23,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME};
 use wyrdstone_core::{
-    ActiveTool, CityState, GameDataBundle, Language, LevelOutcome, LevelSession, ResourceBundle,
-    SaveData,
+    ActiveTool, CityState, ExpeditionRun, GameDataBundle, Language, LevelOutcome, LevelSession,
+    ResourceBundle, SaveData,
 };
 
 /// Top-level scene states.
@@ -48,6 +48,10 @@ pub enum ActiveModal {
     Shop,
     Stats,
     Help,
+    Raids,
+    Patrons,
+    Achievements,
+    ExpeditionBoons,
 }
 
 /// Shared mutable state across all Wyrdstone scenes.
@@ -65,6 +69,7 @@ pub struct GameContext {
     pub sfx_volume: f32,
     pub active_session: Option<LevelSession>,
     pub active_level_id: Option<String>,
+    pub active_expedition: Option<ExpeditionRun>,
     pub armed_tool: Option<ActiveTool>,
     pub last_outcome: Option<LevelOutcome>,
     pub last_rewards: ResourceBundle,
@@ -144,6 +149,7 @@ impl GameContext {
             sfx_volume,
             active_session: None,
             active_level_id: None,
+            active_expedition: None,
             armed_tool: None,
             last_outcome: None,
             last_rewards: ResourceBundle::default(),
@@ -202,6 +208,7 @@ impl GameContext {
         self.confirm_reset = false;
         self.active_session = None;
         self.active_level_id = None;
+        self.active_expedition = None;
         self.last_outcome = None;
         self.last_stars = 0;
         self.last_daily_streak = None;
@@ -218,8 +225,15 @@ impl GameContext {
         let level_def = wyrdstone_core::LevelDef::daily_challenge(day_idx);
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let session =
-            LevelSession::start_with_bonuses(level_def, amulet, city_bonuses, &mut self.rng);
+        let session = LevelSession::start_full(
+            level_def,
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            None,
+            &mut self.rng,
+        );
+        self.active_expedition = None;
         self.active_level_id = Some(format!("daily_{day_idx}"));
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -238,9 +252,100 @@ impl GameContext {
         }
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let session =
-            LevelSession::start_with_bonuses(level_def, amulet, city_bonuses, &mut self.rng);
+        let session = LevelSession::start_full(
+            level_def,
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            None,
+            &mut self.rng,
+        );
+        self.active_expedition = None;
         self.active_level_id = Some(level_id.to_string());
+        self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
+        self.armed_tool = None;
+        self.status_notice_key = None;
+        self.persist();
+        Ok(())
+    }
+
+    /// Launches a Mythological Boss Raid encounter by boss ID.
+    pub fn start_boss_raid(&mut self, boss_id: &str) -> Result<(), &'static str> {
+        let Some(boss_def) = self.data.boss_by_id(boss_id).cloned() else {
+            return Err("city.error.level_not_found");
+        };
+        if self.city.glory < boss_def.required_glory {
+            return Err("city.panel.building.locked");
+        }
+        if !self.city.try_spend_energy(&self.data.balance) {
+            return Err("city.error.not_enough_energy");
+        }
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
+        let session = LevelSession::start_boss(
+            boss_def,
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            &mut self.rng,
+        );
+        self.active_expedition = None;
+        self.active_level_id = Some(boss_id.to_string());
+        self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
+        self.armed_tool = None;
+        self.status_notice_key = None;
+        self.persist();
+        Ok(())
+    }
+
+    /// Starts a fresh Endless Drakkar Expedition from Wave 1.
+    pub fn start_expedition(&mut self) -> Result<(), &'static str> {
+        if !self.city.try_spend_energy(&self.data.balance) {
+            return Err("city.error.not_enough_energy");
+        }
+        let run = ExpeditionRun::new();
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
+        let session = LevelSession::start_expedition_wave(
+            &run,
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            &mut self.rng,
+        );
+        self.active_level_id = Some(session.level.id.clone());
+        self.active_expedition = Some(run);
+        self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
+        self.armed_tool = None;
+        self.status_notice_key = None;
+        self.persist();
+        Ok(())
+    }
+
+    /// Applies the chosen roguelite boon and launches the next Expedition wave (no extra endurance).
+    pub fn continue_expedition_with_boon(&mut self, boon_idx: usize) -> Result<(), &'static str> {
+        let Some(mut run) = self.active_expedition.take() else {
+            return Err("city.error.level_not_found");
+        };
+        let Some(&boon) = run.pending_boons.get(boon_idx) else {
+            self.active_expedition = Some(run);
+            return Err("city.error.level_not_found");
+        };
+        run.apply_boon(boon, &mut self.city);
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
+        let session = LevelSession::start_expedition_wave(
+            &run,
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            &mut self.rng,
+        );
+        self.active_level_id = Some(session.level.id.clone());
+        self.active_expedition = Some(run);
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
         self.armed_tool = None;

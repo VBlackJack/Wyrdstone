@@ -115,53 +115,106 @@ pub(super) fn spawn_match3_hud(
                 top.spawn(Node {
                     column_gap: Val::Px(14.0),
                     flex_wrap: FlexWrap::Wrap,
+                    align_items: AlignItems::Center,
                     ..default()
                 })
                 .with_children(|objs| {
-                    for prog in &session.objectives {
-                        let label = match &prog.objective {
-                            Objective::ClearIce { .. } => i18n.t_fmt(
-                                "match3.objective.clear_ice",
-                                &[
-                                    ("done", prog.done.to_string()),
-                                    ("target", prog.target.to_string()),
-                                ],
-                            ),
-                            Objective::CollectRune { rune, .. } => i18n.t_fmt(
-                                "match3.objective.collect_rune",
-                                &[
-                                    ("rune", i18n.t(rune.i18n_key()).to_string()),
-                                    ("done", prog.done.to_string()),
-                                    ("target", prog.target.to_string()),
-                                ],
-                            ),
-                            Objective::ReachScore { .. } => i18n.t_fmt(
-                                "match3.objective.reach_score",
-                                &[
-                                    ("done", prog.done.to_string()),
-                                    ("target", prog.target.to_string()),
-                                ],
-                            ),
-                            Objective::DropRelics { .. } => i18n.t_fmt(
-                                "match3.objective.drop_relics",
-                                &[
-                                    ("done", prog.done.to_string()),
-                                    ("target", prog.target.to_string()),
-                                ],
-                            ),
-                        };
-                        objs.spawn((
-                            Text::new(label),
-                            TextFont {
-                                font_size: FONT_BODY,
-                                ..default()
-                            },
-                            TextColor(if prog.is_complete() {
-                                COLOR_ACCENT_GREEN
-                            } else {
-                                COLOR_TEXT_PRIMARY
-                            }),
-                        ));
+                    if let Some(boss) = &session.boss {
+                        let hp_pct = (boss.hp as f32 / boss.def.max_hp.max(1) as f32 * 100.0)
+                            .clamp(0.0, 100.0);
+                        objs.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(4.0),
+                            align_items: AlignItems::Center,
+                            ..default()
+                        })
+                        .with_children(|bcol| {
+                            bcol.spawn((
+                                Text::new(i18n.t_fmt(
+                                    "match3.boss.hp",
+                                    &[
+                                        ("boss", i18n.t(&boss.def.name_key).to_string()),
+                                        ("hp", boss.hp.to_string()),
+                                        ("max", boss.def.max_hp.to_string()),
+                                        ("rune", i18n.t(boss.def.weakness.i18n_key()).to_string()),
+                                        ("turns", boss.turns_until_riposte.to_string()),
+                                    ],
+                                )),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_CRIMSON),
+                            ));
+                            bcol.spawn((
+                                Node {
+                                    width: Val::Px(280.0),
+                                    height: Val::Px(10.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.16, 0.08, 0.10, 0.95)),
+                                BorderColor(COLOR_ACCENT_GOLD),
+                                BorderRadius::all(Val::Px(5.0)),
+                            ))
+                            .with_children(|track| {
+                                track.spawn((
+                                    Node {
+                                        width: Val::Percent(hp_pct),
+                                        height: Val::Percent(100.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(COLOR_ACCENT_CRIMSON),
+                                    BorderRadius::all(Val::Px(4.0)),
+                                ));
+                            });
+                        });
+                    } else {
+                        for prog in &session.objectives {
+                            let label = match &prog.objective {
+                                Objective::ClearIce { .. } => i18n.t_fmt(
+                                    "match3.objective.clear_ice",
+                                    &[
+                                        ("done", prog.done.to_string()),
+                                        ("target", prog.target.to_string()),
+                                    ],
+                                ),
+                                Objective::CollectRune { rune, .. } => i18n.t_fmt(
+                                    "match3.objective.collect_rune",
+                                    &[
+                                        ("rune", i18n.t(rune.i18n_key()).to_string()),
+                                        ("done", prog.done.to_string()),
+                                        ("target", prog.target.to_string()),
+                                    ],
+                                ),
+                                Objective::ReachScore { .. } => i18n.t_fmt(
+                                    "match3.objective.reach_score",
+                                    &[
+                                        ("done", prog.done.to_string()),
+                                        ("target", prog.target.to_string()),
+                                    ],
+                                ),
+                                Objective::DropRelics { .. } => i18n.t_fmt(
+                                    "match3.objective.drop_relics",
+                                    &[
+                                        ("done", prog.done.to_string()),
+                                        ("target", prog.target.to_string()),
+                                    ],
+                                ),
+                            };
+                            objs.spawn((
+                                Text::new(label),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(if prog.is_complete() {
+                                    COLOR_ACCENT_GREEN
+                                } else {
+                                    COLOR_TEXT_PRIMARY
+                                }),
+                            ));
+                        }
                     }
                 });
 
@@ -290,9 +343,60 @@ pub(super) fn spawn_match3_hud(
                         row_gap: Val::Px(6.0),
                         flex_wrap: FlexWrap::Wrap,
                         justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
                         ..default()
                     })
                     .with_children(|row| {
+                        // Divine Fury Patron button
+                        let fury_ready = session.can_trigger_fury();
+                        let fury_pct = ((session.fury as f32 / session.fury_max.max(1) as f32)
+                            * 100.0)
+                            .round() as u32;
+                        let patron_name = i18n.t(session.patron.name_key()).to_string();
+                        let fury_lbl = if fury_ready {
+                            i18n.t_fmt("match3.fury.ready", &[("patron", patron_name)])
+                        } else {
+                            i18n.t_fmt(
+                                "match3.fury.charge",
+                                &[("patron", patron_name), ("pct", fury_pct.to_string())],
+                            )
+                        };
+                        row.spawn((
+                            Button,
+                            Match3UiAction::TriggerFury,
+                            Node {
+                                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BackgroundColor(if fury_ready {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                Color::srgba(0.16, 0.14, 0.24, 0.95)
+                            }),
+                            BorderColor(if fury_ready {
+                                COLOR_ACCENT_GOLD_HOVER
+                            } else {
+                                COLOR_PANEL_BORDER
+                            }),
+                            BorderRadius::all(Val::Px(8.0)),
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new(fury_lbl),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(if fury_ready {
+                                    COLOR_TEXT_DARK
+                                } else {
+                                    COLOR_ACCENT_GOLD
+                                }),
+                            ));
+                        });
+
                         let tools = [
                             (ActiveTool::Mjolnir, "match3.tool.mjolnir"),
                             (ActiveTool::SurtrEmber, "match3.tool.surtr_ember"),

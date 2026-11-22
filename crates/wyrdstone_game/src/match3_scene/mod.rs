@@ -93,11 +93,16 @@ pub struct BlastBeam {
 #[derive(Component)]
 pub struct BoosterPulse;
 
+/// Translucent AoE preview tile shown when hovering a cell with an armed active tool.
+#[derive(Component)]
+pub struct ToolHoverOverlay;
+
 #[derive(Component)]
 pub enum Match3UiAction {
     Retreat,
     ToggleHelp,
     SelectTool(ActiveTool),
+    TriggerFury,
 }
 
 /// Stepped animation phase machine so every swap, match, clear, fall, and cascade is readable.
@@ -153,6 +158,7 @@ pub struct Match3InputState {
     pub dirty_hud: bool,
     pub idle_secs: f32,
     pub hint_pair: Option<(CellPos, CellPos)>,
+    pub hover_cell: Option<CellPos>,
     pub shake_secs: f32,
     pub phase: BoardAnimPhase,
 }
@@ -515,7 +521,48 @@ fn execute_loki_shuffle(
     }
 }
 
-/// Handles HUD button interactions and keyboard shortcuts (`1-6` tools, `Escape` cancel/close).
+fn execute_patron_fury(
+    commands: &mut Commands,
+    ctx: &mut GameContext,
+    sound_bank: &SoundBank,
+    input_state: &mut Match3InputState,
+) {
+    let can_fire = ctx
+        .active_session
+        .as_ref()
+        .map(|s| s.can_trigger_fury())
+        .unwrap_or(false);
+    if !can_fire || !input_state.is_idle() {
+        return;
+    }
+    let ctx_ref = ctx;
+    let prepared = if let Some(session) = ctx_ref.active_session.as_mut() {
+        session.trigger_patron_fury(&mut ctx_ref.rng)
+    } else {
+        None
+    };
+    play_sfx(commands, sound_bank, SfxKind::ToolBlast);
+    input_state.shake_secs = SHAKE_DURATION_SECS;
+    input_state.dirty_hud = true;
+    if let Some(prep) = prepared {
+        let cleared_set: HashSet<CellPos> = prep.cells.iter().copied().collect();
+        let clear_dur = ctx_ref.data.balance.clear_anim_seconds;
+        input_state.selected = None;
+        input_state.phase = BoardAnimPhase::Clearing {
+            prepared: prep,
+            cleared_set,
+            combo: 1,
+            elapsed: 0.0,
+            duration: clear_dur,
+            particles_spawned: false,
+        };
+    } else {
+        // Loki (2 boosters) or Odin (+2 moves & bomb): refresh board immediately.
+        input_state.dirty_board = true;
+    }
+}
+
+/// Handles HUD button interactions and keyboard shortcuts (`1-6` tools, `Space` Fury, `H` Hint, `Escape`).
 pub fn handle_match3_hud_buttons(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -536,6 +583,26 @@ pub fn handle_match3_hud_buttons(
             input_state.dirty_hud = true;
             return;
         }
+    }
+
+    if keys.just_pressed(KeyCode::KeyH)
+        && input_state.is_idle()
+        && ctx.active_modal != ActiveModal::Help
+    {
+        input_state.idle_secs = HINT_IDLE_SECS;
+        input_state.hint_pair = ctx
+            .active_session
+            .as_ref()
+            .and_then(|s| s.board.find_hint_move());
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::Space)
+        && input_state.is_idle()
+        && ctx.active_modal != ActiveModal::Help
+    {
+        execute_patron_fury(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+        return;
     }
 
     let key_tools = [
@@ -582,6 +649,9 @@ pub fn handle_match3_hud_buttons(
                 ctx.toggle_modal(ActiveModal::Help);
                 input_state.dirty_hud = true;
             }
+            Match3UiAction::TriggerFury => {
+                execute_patron_fury(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+            }
             Match3UiAction::SelectTool(tool) => {
                 if !input_state.is_idle() || ctx.city.tools.count(tool) == 0 {
                     continue;
@@ -613,8 +683,13 @@ pub fn handle_board_pointer_input(
     mut ctx: ResMut<GameContext>,
     sound_bank: Res<SoundBank>,
     mut input_state: ResMut<Match3InputState>,
+    hover_overlays: Query<Entity, With<ToolHoverOverlay>>,
 ) {
     if !input_state.is_idle() || ctx.active_modal == ActiveModal::Help {
+        for e in &hover_overlays {
+            commands.entity(e).despawn();
+        }
+        input_state.hover_cell = None;
         return;
     }
     let Ok(window) = windows.get_single() else {
@@ -627,6 +702,39 @@ pub fn handle_board_pointer_input(
         Some(s) => (s.board.cols(), s.board.rows()),
         None => return,
     };
+
+    // Live AoE hover highlight when an active tool is armed.
+    let hovered = if ctx.armed_tool.is_some() {
+        window
+            .cursor_position()
+            .and_then(|sp| camera.viewport_to_world_2d(cam_transform, sp).ok())
+            .and_then(|wp| world_to_cell(wp, cols, rows, &input_state))
+    } else {
+        None
+    };
+    if hovered != input_state.hover_cell {
+        input_state.hover_cell = hovered;
+        for e in &hover_overlays {
+            commands.entity(e).despawn();
+        }
+        if let (Some(tool), Some(cell), Some(session)) =
+            (ctx.armed_tool, hovered, &ctx.active_session)
+        {
+            for p in session.board.tool_preview_cells(tool, cell) {
+                let w = cell_to_world(p, &input_state);
+                commands.spawn((
+                    Match3Cleanup,
+                    ToolHoverOverlay,
+                    Sprite {
+                        color: Color::srgba(0.98, 0.82, 0.28, 0.36),
+                        custom_size: Some(Vec2::splat(input_state.cell_step * 0.94)),
+                        ..default()
+                    },
+                    Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.2),
+                ));
+            }
+        }
+    }
 
     let swipe_threshold = ctx.data.balance.swipe_threshold_px;
     let mut pressed_screen: Option<Vec2> = None;
