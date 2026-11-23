@@ -6,9 +6,9 @@
 
 ## Features
 
-- **Match-3, Divine Fury & Super-Combos**: 6 Norse elemental runes, Line Bolts, Surtr Bombs, Bifrost Shards (`Bifrost + Line/Bomb` super-combos), Ice Plates, Fenrir Chains, Frost Crates, Buried Relics, Bifrost Portals, spreading Niflheim Frost, live AoE tool previews, and the **Divine Fury** gauge powered by your chosen **Patron God** (Thor, Freya, Loki, or Odin).
-- **Mythological Boss Raids & Endless Expedition**: Challenge **Fenrir**, **Jormungandr**, and **Surtr** in HP-bar boss encounters with elemental weaknesses and counter-attacks, or push your limits in the roguelite **Endless Drakkar Expedition** with 3-choice blessings between waves.
-- **Living Fjord Reconstruction**: 5 upgradeable structures with animated Aurora Borealis, permanent clan bonuses, periodic passive tributes (+ Collect All), Clan Ranks, 12 Skalds' Feats, 15 Saga quests, 5 Nordic Amulets, 5 Relic Collections, Runic Tool Forge, procedural Daily Trials with 7-day streaks, and atomic JSON saves.
+- **Match-3, Divine Fury & Super-Combos**: 6 Norse elemental runes, Line Bolts, Surtr Bombs, Bifrost Shards (`Bifrost + Line/Bomb` super-combos), Ice Plates, Fenrir Chains, Frost Crates, Buried Relics, Bifrost Portals, spreading Niflheim Frost, **Niflheim Fog of War**, live AoE tool previews, **Valhalla Bonus** victory lightning cascade, optional **Colorblind geometric badges**, and the **Divine Fury** gauge powered by your chosen **Patron God** (Thor, Freya, Loki, or Odin) with painted portraits.
+- **Mythological Boss Raids & Endless Expedition**: Challenge **Fenrir**, **Jormungandr**, and **Surtr** (with painted boss portraits and damage hit-flash) in HP-bar boss encounters with elemental weaknesses and counter-attacks, or push your limits in the roguelite **Endless Drakkar Expedition** with 3-choice blessings between waves.
+- **Living Fjord Reconstruction**: 5 upgradeable structures under animated Aurora Borealis, 3-step guided tutorial by Jarl Halvar, permanent clan bonuses, periodic passive tributes (+ Collect All), Clan Ranks, 12 Skalds' Feats, 15 Saga quests, **5 upgradeable Nordic Amulets (Tier 1-3)**, 5 Relic Collections, Runic Tool Forge, procedural Daily Trials with 7-day streaks, and atomic JSON saves.
 
 ## Architecture
 

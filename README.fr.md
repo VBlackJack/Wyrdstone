@@ -6,9 +6,9 @@
 
 ## Fonctionnalités
 
-- **Match-3, Fureur Divine & Super-Combos** : 6 runes élémentaires nordiques, Éclairs de ligne, Bombes de Surtr, Éclats du Bifrost (super-combos `Bifrost + Éclair/Bombe`), Dalles de glace, Chaînes de Fenrir, Caisses de givre, Reliques enfouies, Portails du Bifrost, Givre rampant de Niflheim, aperçu AoE au survol et jauge de **Fureur Divine** liée à votre **Dieu Patron** (Thor, Freya, Loki ou Odin).
-- **Raids de Boss Mythologiques & Expédition Infinie** : Affrontez **Fenrir**, **Jormungandr** et **Surtr** avec barre de PV, faiblesses élémentaires et ripostes, ou lancez-vous dans l'**Expédition Infinie** roguelite avec 3 bénédictions au choix entre chaque vague.
-- **Fjord Vivant & Progression** : 5 bâtiments améliorables sous des aurores boréales animées, tributs passifs (+ Tout récolter), Rangs de Clan, 12 Exploits du Scalde, 15 quêtes de la Saga, 5 Amulettes Nordiques, 5 collections de Reliques, Forge d'Outils Runiques, Défis du Jour procéduraux (streak 7 jours) et sauvegarde JSON atomique.
+- **Match-3, Fureur Divine & Super-Combos** : 6 runes élémentaires nordiques, Éclairs de ligne, Bombes de Surtr, Éclats du Bifrost (super-combos `Bifrost + Éclair/Bombe`), Dalles de glace, Chaînes de Fenrir, Caisses de givre, Reliques enfouies, Portails du Bifrost, Givre rampant et **Brouillard de Niflheim**, aperçu AoE au survol, éclairs **Bonus Valhalla** en fin de victoire, **badges daltonisme** optionnels et jauge de **Fureur Divine** liée à votre **Dieu Patron** (Thor, Freya, Loki ou Odin) avec portraits peints.
+- **Raids de Boss Mythologiques & Expédition Infinie** : Affrontez **Fenrir**, **Jormungandr** et **Surtr** (portraits peints et flash de dégâts en combat) avec barre de PV, faiblesses élémentaires et ripostes, ou lancez-vous dans l'**Expédition Infinie** roguelite avec 3 bénédictions au choix entre chaque vague.
+- **Fjord Vivant & Progression** : 5 bâtiments améliorables sous des aurores boréales animées, tutoriel guidé en 3 étapes par Jarl Halvar, tributs passifs (+ Tout récolter), Rangs de Clan, 12 Exploits du Scalde, 15 quêtes de la Saga, **5 Amulettes Nordiques améliorables (Niv. 1-3)**, 5 collections de Reliques, Forge d'Outils Runiques, Défis du Jour procéduraux (streak 7 jours) et sauvegarde JSON atomique.
 
 ## Architecture
 
