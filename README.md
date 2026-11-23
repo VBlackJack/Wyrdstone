@@ -8,14 +8,14 @@
 
 - **Match-3, Divine Fury & Super-Combos**: 6 Norse elemental runes, Line Bolts, Surtr Bombs, Bifrost Shards (`Bifrost + Line/Bomb` super-combos), Ice Plates, Fenrir Chains, Frost Crates, Buried Relics, Bifrost Portals, spreading Niflheim Frost, **Niflheim Fog of War**, live AoE tool previews, **Valhalla Bonus** victory lightning cascade, optional **Colorblind geometric badges**, and the **Divine Fury** gauge powered by your chosen **Patron God** (Thor, Freya, Loki, or Odin) with painted portraits.
 - **Mythological Boss Raids & Endless Expedition**: Challenge **Fenrir**, **Jormungandr**, and **Surtr** (with painted boss portraits and damage hit-flash) in HP-bar boss encounters with elemental weaknesses and counter-attacks, or push your limits in the roguelite **Endless Drakkar Expedition** with 3-choice blessings between waves.
-- **Living Fjord Reconstruction**: 5 upgradeable structures under animated Aurora Borealis, 3-step guided tutorial by Jarl Halvar, permanent clan bonuses, periodic passive tributes (+ Collect All), Clan Ranks, 12 Skalds' Feats, 15 Saga quests, **5 upgradeable Nordic Amulets (Tier 1-3)**, 5 Relic Collections, Runic Tool Forge, procedural Daily Trials with 7-day streaks, and atomic JSON saves.
+- **Living Fjord Reconstruction**: 6 upgradeable structures (including **Heimdall's Watchtower**) under animated Aurora Borealis, 3-step guided tutorial by Jarl Halvar, permanent clan bonuses, periodic passive tributes (+ Collect All), **Clan Ranks with passive perks**, 12 Skalds' Feats with live progress, 18 Saga quests, **5 upgradeable Nordic Amulets (Tier 1-3)**, 5 Relic Collections, Runic Tool Forge, procedural Daily Trials with 7-day streaks, persisted Endless Expeditions, and atomic JSON saves.
 
 ## Architecture
 
 - `crates/wyrdstone_core`: Pure Rust game logic (Match-3 board, gravity, portals, frost spread, cascades, boosters, Patron Gods, Boss Raids, Endless Expedition, Clan Ranks & Feats, i18n EN/FR, atomic JSON save).
-- `crates/wyrdstone_game`: Bevy 2D presentation layer with painted Norse artwork, modular `city_ui/` and `match3_scene/` scenes, procedural WAV audio, responsive mouse + touch input, and Android `GameActivity` integration.
+- `crates/wyrdstone_game`: Bevy 2D presentation layer with painted Norse artwork, modular `city_ui/` and `match3_scene/` scenes, mouse-wheel + touch scrolling, procedural WAV audio (with dedicated Boss Raid BGM), responsive mouse + touch input, and Android `GameActivity` integration.
 - `assets/locales/`: English (`en.json`) and French (`fr.json`) localization tables.
-- `assets/data/`: Externalized RON data (`balance.ron`, `buildings.ron`, `levels.ron`, `quests.ron`, `amulets.ron`, `collections.ron`, `tool_shop.ron`, `bosses.ron`).
+- `assets/data/`: Externalized RON data (`balance.ron`, `buildings.ron`, `levels.ron`, `quests.ron`, `amulets.ron`, `collections.ron`, `tool_shop.ron`, `bosses.ron`, `achievements.ron`).
 
 ## Build and Run (PowerShell)
 
