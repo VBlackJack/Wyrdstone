@@ -23,8 +23,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME};
 use wyrdstone_core::{
-    ActiveTool, CityState, ExpeditionRun, GameDataBundle, Language, LevelOutcome, LevelSession,
-    ResourceBundle, SaveData,
+    ActiveTool, CityState, DailyBlessing, ExpeditionRun, GameDataBundle, Language, LevelOutcome,
+    LevelSession, ResourceBundle, SaveData,
 };
 
 /// Top-level scene states.
@@ -68,6 +68,7 @@ pub struct GameContext {
     pub bgm_volume: f32,
     pub sfx_volume: f32,
     pub colorblind_mode: bool,
+    pub fast_animations: bool,
     pub tutorial_step: u8,
     pub active_session: Option<LevelSession>,
     pub active_level_id: Option<String>,
@@ -98,6 +99,7 @@ impl GameContext {
         let mut bgm_volume = DEFAULT_BGM_VOLUME;
         let mut sfx_volume = DEFAULT_SFX_VOLUME;
         let mut colorblind_mode = false;
+        let mut fast_animations = false;
         let mut tutorial_step = 0u8;
         let mut active_expedition = None;
 
@@ -118,6 +120,7 @@ impl GameContext {
                 bgm_volume = saved.bgm_volume.clamp(0.0, 1.0);
                 sfx_volume = saved.sfx_volume.clamp(0.0, 1.0);
                 colorblind_mode = saved.colorblind_mode;
+                fast_animations = saved.fast_animations;
                 active_expedition = saved.active_expedition;
                 tutorial_step = if saved.city.stats.total_victories > 0 && saved.tutorial_step == 0
                 {
@@ -161,6 +164,7 @@ impl GameContext {
             bgm_volume,
             sfx_volume,
             colorblind_mode,
+            fast_animations,
             tutorial_step,
             active_session: None,
             active_level_id: None,
@@ -210,6 +214,7 @@ impl GameContext {
             bgm_volume: self.bgm_volume,
             sfx_volume: self.sfx_volume,
             colorblind_mode: self.colorblind_mode,
+            fast_animations: self.fast_animations,
             tutorial_step: self.tutorial_step,
             active_expedition: self.active_expedition.clone(),
             city: self.city.clone(),
@@ -261,11 +266,26 @@ impl GameContext {
             DEFAULT_SFX_VOLUME
         };
         self.colorblind_mode = saved.colorblind_mode;
+        self.fast_animations = saved.fast_animations;
         self.tutorial_step = saved.tutorial_step;
         self.active_expedition = saved.active_expedition;
         self.city = saved.city;
         self.persist();
         Ok(())
+    }
+
+    /// Scales animation durations by 1.5x when Fast Animation Mode is enabled.
+    pub fn anim_duration(&self, base_secs: f32) -> f32 {
+        if self.fast_animations {
+            base_secs / 1.5
+        } else {
+            base_secs
+        }
+    }
+
+    /// Returns today's deterministic UTC Daily Fjord Blessing.
+    pub fn today_blessing(&self) -> DailyBlessing {
+        DailyBlessing::for_day(today_day_index())
     }
 
     /// Resets player progression to a brand-new Saga and persists immediately.
@@ -300,7 +320,7 @@ impl GameContext {
         let level_def = wyrdstone_core::LevelDef::daily_challenge(day_idx);
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let session = LevelSession::start_full(
+        let mut session = LevelSession::start_full(
             level_def,
             amulet,
             city_bonuses,
@@ -308,6 +328,7 @@ impl GameContext {
             None,
             &mut self.rng,
         );
+        session.apply_daily_blessing(DailyBlessing::for_day(day_idx));
         self.active_expedition = None;
         self.active_level_id = Some(format!("daily_{day_idx}"));
         self.active_session = Some(session);
@@ -327,7 +348,7 @@ impl GameContext {
         }
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let session = LevelSession::start_full(
+        let mut session = LevelSession::start_full(
             level_def,
             amulet,
             city_bonuses,
@@ -335,6 +356,7 @@ impl GameContext {
             None,
             &mut self.rng,
         );
+        session.apply_daily_blessing(self.today_blessing());
         self.active_expedition = None;
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
@@ -358,13 +380,14 @@ impl GameContext {
         }
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let session = LevelSession::start_boss(
+        let mut session = LevelSession::start_boss(
             boss_def,
             amulet,
             city_bonuses,
             self.city.selected_patron,
             &mut self.rng,
         );
+        session.apply_daily_blessing(self.today_blessing());
         self.active_expedition = None;
         self.active_level_id = Some(boss_id.to_string());
         self.active_session = Some(session);
@@ -384,13 +407,14 @@ impl GameContext {
             }
             let amulet = self.city.active_amulet_effect(&self.data.amulets);
             let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-            let session = LevelSession::start_expedition_wave(
+            let mut session = LevelSession::start_expedition_wave(
                 &run,
                 amulet,
                 city_bonuses,
                 self.city.selected_patron,
                 &mut self.rng,
             );
+            session.apply_daily_blessing(self.today_blessing());
             self.active_level_id = Some(session.level.id.clone());
             self.active_session = Some(session);
             self.active_modal = ActiveModal::None;
@@ -409,13 +433,14 @@ impl GameContext {
         let run = ExpeditionRun::new();
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let session = LevelSession::start_expedition_wave(
+        let mut session = LevelSession::start_expedition_wave(
             &run,
             amulet,
             city_bonuses,
             self.city.selected_patron,
             &mut self.rng,
         );
+        session.apply_daily_blessing(self.today_blessing());
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
         self.active_session = Some(session);
@@ -438,13 +463,14 @@ impl GameContext {
         run.apply_boon(boon, &mut self.city);
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let session = LevelSession::start_expedition_wave(
+        let mut session = LevelSession::start_expedition_wave(
             &run,
             amulet,
             city_bonuses,
             self.city.selected_patron,
             &mut self.rng,
         );
+        session.apply_daily_blessing(self.today_blessing());
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
         self.active_session = Some(session);

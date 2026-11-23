@@ -44,6 +44,7 @@ const TOOL_LOKI_PNG: &[u8] = include_bytes!("../../../assets/sprites/tool_loki.p
 const BOSS_FENRIR_PNG: &[u8] = include_bytes!("../../../assets/sprites/boss_fenrir.png");
 const BOSS_JORMUNGANDR_PNG: &[u8] = include_bytes!("../../../assets/sprites/boss_jormungandr.png");
 const BOSS_SURTR_PNG: &[u8] = include_bytes!("../../../assets/sprites/boss_surtr.png");
+const BOSS_HEL_PNG: &[u8] = include_bytes!("../../../assets/sprites/boss_hel.png");
 const PATRON_THOR_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_thor.png");
 const PATRON_FREYA_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_freya.png");
 const PATRON_LOKI_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_loki.png");
@@ -53,6 +54,11 @@ const AMULET_HEIMDALL_PNG: &[u8] = include_bytes!("../../../assets/sprites/amule
 const AMULET_THOR_PNG: &[u8] = include_bytes!("../../../assets/sprites/amulet_thor.png");
 const AMULET_ODIN_PNG: &[u8] = include_bytes!("../../../assets/sprites/amulet_odin.png");
 const AMULET_VIDAR_PNG: &[u8] = include_bytes!("../../../assets/sprites/amulet_vidar.png");
+const COL_MIDGARD_PNG: &[u8] = include_bytes!("../../../assets/sprites/col_midgard.png");
+const COL_NIDAVELLIR_PNG: &[u8] = include_bytes!("../../../assets/sprites/col_nidavellir.png");
+const COL_ASGARD_PNG: &[u8] = include_bytes!("../../../assets/sprites/col_asgard.png");
+const COL_JOTUNHEIM_PNG: &[u8] = include_bytes!("../../../assets/sprites/col_jotunheim.png");
+const COL_VANAHEIM_PNG: &[u8] = include_bytes!("../../../assets/sprites/col_vanaheim.png");
 const INTER_REGULAR_TTF: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
 
 /// Handles to all bundled painted artworks.
@@ -67,6 +73,7 @@ pub struct FjordTextures {
     pub patron_portraits: HashMap<PatronGod, Handle<Image>>,
     pub tool_icons: HashMap<ActiveTool, Handle<Image>>,
     pub amulet_icons: HashMap<String, Handle<Image>>,
+    pub collection_icons: HashMap<String, Handle<Image>>,
 }
 
 /// Decodes the bundled app icon PNG into raw RGBA8 bytes and dimensions for native window icons.
@@ -106,6 +113,11 @@ impl FjordTextures {
     /// Returns the painted medallion icon for a Nordic Amulet by ID.
     pub fn amulet_icon(&self, amulet_id: &str) -> Option<Handle<Image>> {
         self.amulet_icons.get(amulet_id).cloned()
+    }
+
+    /// Returns the painted realm crest for a Relic Collection by ID.
+    pub fn collection_icon(&self, col_id: &str) -> Option<Handle<Image>> {
+        self.collection_icons.get(col_id).cloned()
     }
 }
 
@@ -200,6 +212,7 @@ pub fn init_fjord_textures(
         "boss_surtr".to_string(),
         images.add(decode_png(BOSS_SURTR_PNG)),
     );
+    boss_portraits.insert("boss_hel".to_string(), images.add(decode_png(BOSS_HEL_PNG)));
 
     let mut patron_portraits = HashMap::new();
     patron_portraits.insert(PatronGod::Thor, images.add(decode_png(PATRON_THOR_PNG)));
@@ -229,6 +242,28 @@ pub fn init_fjord_textures(
         images.add(decode_png(AMULET_VIDAR_PNG)),
     );
 
+    let mut collection_icons = HashMap::new();
+    collection_icons.insert(
+        "col_midgard".to_string(),
+        images.add(decode_png(COL_MIDGARD_PNG)),
+    );
+    collection_icons.insert(
+        "col_nidavellir".to_string(),
+        images.add(decode_png(COL_NIDAVELLIR_PNG)),
+    );
+    collection_icons.insert(
+        "col_asgard".to_string(),
+        images.add(decode_png(COL_ASGARD_PNG)),
+    );
+    collection_icons.insert(
+        "col_jotunheim".to_string(),
+        images.add(decode_png(COL_JOTUNHEIM_PNG)),
+    );
+    collection_icons.insert(
+        "col_vanaheim".to_string(),
+        images.add(decode_png(COL_VANAHEIM_PNG)),
+    );
+
     commands.insert_resource(FjordTextures {
         fjord_map,
         match3_bg,
@@ -239,6 +274,7 @@ pub fn init_fjord_textures(
         patron_portraits,
         tool_icons,
         amulet_icons,
+        collection_icons,
     });
 }
 

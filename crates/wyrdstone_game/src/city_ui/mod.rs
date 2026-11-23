@@ -104,6 +104,7 @@ pub enum CityAction {
     UpgradeAmulet(String),
     AdvanceTutorial,
     ToggleColorblind,
+    ToggleFastAnim,
     CycleBgmVolume,
     CycleSfxVolume,
     ExportBackup,
@@ -310,6 +311,16 @@ fn spawn_city_tree(
                             COLOR_ACCENT_GOLD,
                         );
                     }
+                    let blessing = ctx.today_blessing();
+                    spawn_resource_pill(
+                        pills,
+                        &format!(
+                            "{}: {}",
+                            i18n.t(blessing.name_key()),
+                            i18n.t(blessing.desc_key())
+                        ),
+                        COLOR_ACCENT_TEAL,
+                    );
                     if ctx.city.energy < max_energy {
                         let can_drink = res.mead >= ctx.data.balance.mead_refill_cost;
                         let lbl = i18n.t_fmt(
@@ -840,7 +851,9 @@ fn spawn_city_tree(
             match ctx.active_modal {
                 ActiveModal::None => {}
                 ActiveModal::Amulets => modals::spawn_amulets_modal(root, ctx, fjord_art, m_scroll),
-                ActiveModal::Collections => modals::spawn_collections_modal(root, ctx, m_scroll),
+                ActiveModal::Collections => {
+                    modals::spawn_collections_modal(root, ctx, fjord_art, m_scroll)
+                }
                 ActiveModal::Shop => modals::spawn_tool_shop_modal(root, ctx, fjord_art, m_scroll),
                 ActiveModal::Stats => modals::spawn_stats_modal(root, ctx, sound_bank, m_scroll),
                 ActiveModal::Help => modals::spawn_help_modal(root, ctx, m_scroll),
@@ -1510,6 +1523,12 @@ pub fn handle_city_buttons(
             }
             CityAction::ToggleColorblind => {
                 ctx.colorblind_mode = !ctx.colorblind_mode;
+                ctx.persist();
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
+            }
+            CityAction::ToggleFastAnim => {
+                ctx.fast_animations = !ctx.fast_animations;
                 ctx.persist();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;

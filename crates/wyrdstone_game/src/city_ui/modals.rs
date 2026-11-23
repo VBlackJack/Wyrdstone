@@ -299,12 +299,13 @@ pub(super) fn spawn_amulets_modal(
 pub(super) fn spawn_collections_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
+    fjord_art: &FjordTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
-        580.0,
+        610.0,
         i18n.t("city.panel.collections.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Collections),
@@ -342,24 +343,50 @@ pub(super) fn spawn_collections_modal(
                             ..default()
                         })
                         .with_children(|row| {
-                            row.spawn((
-                                Text::new(format!(
-                                    "{}  ({})",
-                                    i18n.t(&col.name_key),
-                                    i18n.t_fmt(
-                                        "city.panel.collections.progress",
-                                        &[
-                                            ("found", found.to_string()),
-                                            ("total", total.to_string()),
-                                        ],
-                                    )
-                                )),
-                                TextFont {
-                                    font_size: FONT_BODY,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_GOLD),
-                            ));
+                            row.spawn(Node {
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(10.0),
+                                flex_shrink: 1.0,
+                                ..default()
+                            })
+                            .with_children(|hdr_left| {
+                                if let Some(icon) = fjord_art.collection_icon(&col.id) {
+                                    hdr_left.spawn((
+                                        ImageNode::new(icon),
+                                        Node {
+                                            width: Val::Px(42.0),
+                                            height: Val::Px(42.0),
+                                            flex_shrink: 0.0,
+                                            border: UiRect::all(Val::Px(1.5)),
+                                            ..default()
+                                        },
+                                        BorderColor(if claimed {
+                                            COLOR_ACCENT_GOLD
+                                        } else {
+                                            COLOR_PANEL_BORDER
+                                        }),
+                                        BorderRadius::all(Val::Px(8.0)),
+                                    ));
+                                }
+                                hdr_left.spawn((
+                                    Text::new(format!(
+                                        "{}  ({})",
+                                        i18n.t(&col.name_key),
+                                        i18n.t_fmt(
+                                            "city.panel.collections.progress",
+                                            &[
+                                                ("found", found.to_string()),
+                                                ("total", total.to_string()),
+                                            ],
+                                        )
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_BODY,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            });
 
                             if ready {
                                 spawn_small_button(
@@ -627,6 +654,20 @@ pub(super) fn spawn_stats_modal(
                     },
                     CityAction::ToggleColorblind,
                     if ctx.colorblind_mode {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        COLOR_PANEL_CARD
+                    },
+                );
+                spawn_small_button(
+                    audio_row,
+                    if ctx.fast_animations {
+                        i18n.t("city.panel.fast_anim.on")
+                    } else {
+                        i18n.t("city.panel.fast_anim.off")
+                    },
+                    CityAction::ToggleFastAnim,
+                    if ctx.fast_animations {
                         COLOR_ACCENT_TEAL
                     } else {
                         COLOR_PANEL_CARD

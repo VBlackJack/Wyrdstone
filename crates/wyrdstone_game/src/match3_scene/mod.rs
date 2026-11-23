@@ -32,7 +32,7 @@ use crate::theme::*;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
-use wyrdstone_core::{ActiveTool, Booster, CellPos, PreparedClear};
+use wyrdstone_core::{ActiveTool, Booster, CellPos, LevelOutcome, LevelSession, PreparedClear};
 
 pub(super) const PARTICLES_PER_CLEARED_TILE: usize = 6;
 pub(super) const PARTICLE_LIFETIME_SECS: f32 = 0.34;
@@ -50,6 +50,10 @@ pub struct Match3Cleanup;
 
 #[derive(Component)]
 pub struct Match3Entity;
+
+/// Static board backdrop, cell grid backgrounds, and portal rings (rebuilt only on setup/resize).
+#[derive(Component)]
+pub struct BoardStaticEntity;
 
 #[derive(Component)]
 pub struct Match3Backdrop;
@@ -69,6 +73,14 @@ pub struct BoardTileVisual {
 
 #[derive(Component)]
 pub struct SelectionMarker;
+
+/// Visible focus ring for keyboard grid navigation (Arrow keys + Enter).
+#[derive(Component)]
+pub struct KeyboardCursorMarker;
+
+/// Translucent highlight on the adjacent target cell while dragging a rune before release.
+#[derive(Component)]
+pub struct DragTargetHighlight;
 
 /// Lightweight burst particle spawned when runes clear.
 #[derive(Component)]
@@ -104,6 +116,7 @@ pub struct ToolHoverOverlay;
 #[derive(Component)]
 pub enum Match3UiAction {
     Retreat,
+    Undo,
     ToggleHelp,
     SelectTool(ActiveTool),
     TriggerFury,
@@ -111,6 +124,7 @@ pub enum Match3UiAction {
     CycleBgmVolume,
     CycleSfxVolume,
     ToggleColorblind,
+    ToggleFastAnim,
 }
 
 /// Stepped animation phase machine so every swap, match, clear, fall, and cascade is readable.
@@ -165,16 +179,21 @@ pub enum BoardAnimPhase {
 #[derive(Resource, Default)]
 pub struct Match3InputState {
     pub selected: Option<CellPos>,
+    pub kbd_cursor: Option<CellPos>,
     pub drag_origin_cell: Option<CellPos>,
     pub drag_origin_screen: Option<Vec2>,
+    pub drag_highlight_cell: Option<CellPos>,
     pub active_touch_id: Option<u64>,
     pub tile_size: f32,
     pub cell_step: f32,
     pub board_origin: Vec2,
     pub board_center_y: f32,
     pub is_compact_hud: bool,
+    pub dirty_static_board: bool,
     pub dirty_board: bool,
     pub dirty_hud: bool,
+    pub undo_snapshot: Option<LevelSession>,
+    pub undo_used: bool,
     pub idle_secs: f32,
     pub hint_pair: Option<(CellPos, CellPos)>,
     pub hover_cell: Option<CellPos>,
@@ -186,6 +205,13 @@ pub struct Match3InputState {
 impl Match3InputState {
     pub fn is_idle(&self) -> bool {
         matches!(self.phase, BoardAnimPhase::Idle)
+    }
+
+    pub fn can_undo(&self, ctx: &GameContext) -> bool {
+        self.is_idle()
+            && !self.undo_used
+            && self.undo_snapshot.is_some()
+            && ctx.active_session.as_ref().map(|s| s.outcome) == Some(LevelOutcome::InProgress)
     }
 }
 
@@ -223,6 +249,7 @@ pub fn setup_match3_scene(
                 session.board.rows(),
                 &mut input_state,
             );
+            spawn_board_static_sprites(&mut commands, session, &textures, &input_state);
             spawn_board_sprites(
                 &mut commands,
                 session,
@@ -241,6 +268,7 @@ pub fn setup_match3_scene(
         &sound_bank,
         scroll_mem.modal_offset_y,
         input_state.is_compact_hud,
+        input_state.can_undo(&ctx),
     );
     commands.insert_resource(input_state);
 }
@@ -330,6 +358,68 @@ fn world_to_cell(
     }
 }
 
+/// Spawns the static board backdrop, playable cell grid, and portal rings (rebuilt only on setup/resize).
+pub(super) fn spawn_board_static_sprites(
+    commands: &mut Commands,
+    session: &wyrdstone_core::LevelSession,
+    textures: &RuneTextures,
+    layout: &Match3InputState,
+) {
+    let cols = session.board.cols();
+    let rows = session.board.rows();
+    let board_w = cols as f32 * layout.cell_step + 16.0;
+    let board_h = rows as f32 * layout.cell_step + 16.0;
+    let center_y = layout.board_center_y;
+
+    commands.spawn((
+        Match3Cleanup,
+        BoardStaticEntity,
+        Sprite {
+            color: Color::srgba(0.06, 0.09, 0.14, 0.84),
+            custom_size: Some(Vec2::new(board_w, board_h)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, center_y, Z_BOARD_BG),
+    ));
+
+    let cell_size = Vec2::splat(layout.cell_step * 0.96);
+    for row in 0..rows {
+        for col in 0..cols {
+            let pos = CellPos::new(col, row);
+            if session.board.get(pos).map(|c| c.blocked).unwrap_or(true) {
+                continue;
+            }
+            let world = cell_to_world(pos, layout);
+            commands.spawn((
+                Match3Cleanup,
+                BoardStaticEntity,
+                Sprite {
+                    image: textures.cell_bg.clone(),
+                    custom_size: Some(cell_size),
+                    ..default()
+                },
+                Transform::from_xyz(world.x, world.y, Z_CELL_BG),
+            ));
+        }
+    }
+
+    for &(src, dst) in session.board.portals() {
+        for p in [src, dst] {
+            let w = cell_to_world(p, layout);
+            commands.spawn((
+                Match3Cleanup,
+                BoardStaticEntity,
+                Sprite {
+                    image: textures.portal_ring.clone(),
+                    custom_size: Some(Vec2::splat(layout.cell_step * 0.98)),
+                    ..default()
+                },
+                Transform::from_xyz(w.x, w.y, Z_CELL_BG + 0.5),
+            ));
+        }
+    }
+}
+
 pub(super) fn spawn_board_sprites(
     commands: &mut Commands,
     session: &wyrdstone_core::LevelSession,
@@ -340,20 +430,6 @@ pub(super) fn spawn_board_sprites(
 ) {
     let cols = session.board.cols();
     let rows = session.board.rows();
-    let board_w = cols as f32 * layout.cell_step + 16.0;
-    let board_h = rows as f32 * layout.cell_step + 16.0;
-    let center_y = layout.board_center_y;
-
-    commands.spawn((
-        Match3Cleanup,
-        Match3Entity,
-        Sprite {
-            color: Color::srgba(0.06, 0.09, 0.14, 0.84),
-            custom_size: Some(Vec2::new(board_w, board_h)),
-            ..default()
-        },
-        Transform::from_xyz(0.0, center_y, Z_BOARD_BG),
-    ));
 
     for row in 0..rows {
         for col in 0..cols {
@@ -369,19 +445,7 @@ pub(super) fn spawn_board_sprites(
                 Some(&from_row) => grid_to_world_f(col as f32, from_row as f32, layout),
                 None => world,
             };
-            let cell_size = Vec2::splat(layout.cell_step * 0.96);
             let tile_size = Vec2::splat(layout.tile_size);
-
-            commands.spawn((
-                Match3Cleanup,
-                Match3Entity,
-                Sprite {
-                    image: textures.cell_bg.clone(),
-                    custom_size: Some(cell_size),
-                    ..default()
-                },
-                Transform::from_xyz(world.x, world.y, Z_CELL_BG),
-            ));
 
             if cell.ice_layers > 0 {
                 let ice_over = if cell.ice_layers >= 2 {
@@ -539,22 +603,6 @@ pub(super) fn spawn_board_sprites(
         }
     }
 
-    for &(src, dst) in session.board.portals() {
-        for p in [src, dst] {
-            let w = cell_to_world(p, layout);
-            commands.spawn((
-                Match3Cleanup,
-                Match3Entity,
-                Sprite {
-                    image: textures.portal_ring.clone(),
-                    custom_size: Some(Vec2::splat(layout.cell_step * 0.98)),
-                    ..default()
-                },
-                Transform::from_xyz(w.x, w.y, Z_CELL_BG + 0.5),
-            ));
-        }
-    }
-
     // Highlight adjacent booster pairs so super-combo opportunities stand out clearly.
     let mut combo_cells = HashSet::new();
     for (a, b) in session.board.find_booster_combo_pairs() {
@@ -588,6 +636,21 @@ pub(super) fn spawn_board_sprites(
                 ..default()
             },
             Transform::from_xyz(w.x, w.y, Z_SELECTION_RING),
+        ));
+    }
+
+    if let Some(cur) = layout.kbd_cursor {
+        let w = cell_to_world(cur, layout);
+        commands.spawn((
+            Match3Cleanup,
+            Match3Entity,
+            KeyboardCursorMarker,
+            Sprite {
+                color: Color::srgba(0.42, 0.92, 1.0, 0.28),
+                custom_size: Some(Vec2::splat(layout.cell_step * 0.96)),
+                ..default()
+            },
+            Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.1),
         ));
     }
 }
@@ -648,6 +711,54 @@ fn update_selection_marker(
     }
 }
 
+fn update_kbd_cursor_marker(
+    commands: &mut Commands,
+    layout: &Match3InputState,
+    markers: &Query<Entity, With<KeyboardCursorMarker>>,
+) {
+    for e in markers {
+        commands.entity(e).despawn();
+    }
+    if let Some(cur) = layout.kbd_cursor {
+        let w = cell_to_world(cur, layout);
+        commands.spawn((
+            Match3Cleanup,
+            Match3Entity,
+            KeyboardCursorMarker,
+            Sprite {
+                color: Color::srgba(0.42, 0.92, 1.0, 0.28),
+                custom_size: Some(Vec2::splat(layout.cell_step * 0.96)),
+                ..default()
+            },
+            Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.1),
+        ));
+    }
+}
+
+fn execute_undo(
+    commands: &mut Commands,
+    ctx: &mut GameContext,
+    sound_bank: &SoundBank,
+    input_state: &mut Match3InputState,
+) {
+    if !input_state.can_undo(ctx) {
+        return;
+    }
+    if let Some(mut snap) = input_state.undo_snapshot.take() {
+        snap.time_left_secs = ctx.active_session.as_ref().and_then(|s| s.time_left_secs);
+        ctx.active_session = Some(snap);
+        ctx.armed_tool = None;
+        input_state.undo_used = true;
+        input_state.selected = None;
+        input_state.hint_pair = None;
+        input_state.idle_secs = 0.0;
+        input_state.boss_hit_flash_secs = 0.0;
+        input_state.dirty_board = true;
+        input_state.dirty_hud = true;
+        play_sfx(commands, sound_bank, SfxKind::Swap);
+    }
+}
+
 fn execute_loki_shuffle(
     commands: &mut Commands,
     ctx: &mut GameContext,
@@ -666,6 +777,7 @@ fn execute_loki_shuffle(
         }
         ctx.armed_tool = None;
         ctx.persist();
+        input_state.undo_snapshot = None;
         play_sfx(commands, sound_bank, SfxKind::ToolBlast);
         anim::spawn_loki_vfx(commands, cols, rows, input_state);
         input_state.shake_secs = SHAKE_DURATION_SECS * 0.7;
@@ -699,6 +811,7 @@ fn execute_patron_fury(
     } else {
         (None, Vec::new())
     };
+    input_state.undo_snapshot = None;
     play_sfx(commands, sound_bank, SfxKind::FuryUnleash);
     let vfx_targets: Vec<CellPos> = prepared
         .as_ref()
@@ -709,7 +822,7 @@ fn execute_patron_fury(
     input_state.dirty_hud = true;
     if let Some(prep) = prepared {
         let cleared_set: HashSet<CellPos> = prep.cells.iter().copied().collect();
-        let clear_dur = ctx_ref.data.balance.clear_anim_seconds;
+        let clear_dur = ctx_ref.anim_duration(ctx_ref.data.balance.clear_anim_seconds);
         input_state.selected = None;
         input_state.phase = BoardAnimPhase::Clearing {
             prepared: prep,
@@ -726,17 +839,20 @@ fn execute_patron_fury(
     }
 }
 
-/// Handles HUD button interactions and keyboard shortcuts (`1-6` tools, `Space` Fury, `H` Hint, `Escape`).
+/// Handles HUD button interactions and keyboard shortcuts (`1-6`, `Space`, `H`, `Backspace` Undo, Arrows+`Enter`, `Escape`).
 #[allow(clippy::too_many_arguments)]
 pub fn handle_match3_hud_buttons(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
+    textures: Res<RuneTextures>,
     mut sound_bank: ResMut<SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut scroll_mem: ResMut<UiScrollMemory>,
     mut input_state: ResMut<Match3InputState>,
     mut next_state: ResMut<NextState<AppState>>,
+    selection_markers: Query<Entity, With<SelectionMarker>>,
+    kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
     buttons: Query<(&Interaction, &Match3UiAction), Changed<Interaction>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -750,6 +866,159 @@ pub fn handle_match3_hud_buttons(
             ctx.armed_tool = None;
             input_state.dirty_hud = true;
             return;
+        }
+    }
+
+    if keys.just_pressed(KeyCode::Backspace)
+        && input_state.is_idle()
+        && ctx.active_modal != ActiveModal::Help
+    {
+        execute_undo(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+        return;
+    }
+
+    // Keyboard grid navigation (Arrow keys + Enter) for full accessibility.
+    if input_state.is_idle() && ctx.active_modal != ActiveModal::Help {
+        let arrow_delta = if keys.just_pressed(KeyCode::ArrowUp) {
+            Some((0i32, -1i32))
+        } else if keys.just_pressed(KeyCode::ArrowDown) {
+            Some((0, 1))
+        } else if keys.just_pressed(KeyCode::ArrowLeft) {
+            Some((-1, 0))
+        } else if keys.just_pressed(KeyCode::ArrowRight) {
+            Some((1, 0))
+        } else {
+            None
+        };
+        if let (Some((dc, dr)), Some(session)) = (arrow_delta, &ctx.active_session) {
+            let cols = session.board.cols();
+            let rows = session.board.rows();
+            let start = input_state.kbd_cursor.unwrap_or_else(|| {
+                let mut best = CellPos::new(cols / 2, rows / 2);
+                if session.board.get(best).map(|c| c.blocked).unwrap_or(true) {
+                    for r in 0..rows {
+                        for c in 0..cols {
+                            let p = CellPos::new(c, r);
+                            if session
+                                .board
+                                .get(p)
+                                .map(|cell| !cell.blocked)
+                                .unwrap_or(false)
+                            {
+                                best = p;
+                                break;
+                            }
+                        }
+                    }
+                }
+                best
+            });
+            let nc = (start.col as i32 + dc).clamp(0, cols.saturating_sub(1) as i32) as usize;
+            let nr = (start.row as i32 + dr).clamp(0, rows.saturating_sub(1) as i32) as usize;
+            let next = CellPos::new(nc, nr);
+            if session.board.get(next).map(|c| !c.blocked).unwrap_or(false) {
+                input_state.kbd_cursor = Some(next);
+            } else {
+                input_state.kbd_cursor = Some(start);
+            }
+            update_kbd_cursor_marker(&mut commands, &input_state, &kbd_markers);
+            return;
+        }
+        if keys.just_pressed(KeyCode::Enter) {
+            if let Some(cell) = input_state.kbd_cursor {
+                if let Some(tool) = ctx.armed_tool {
+                    let prepared = ctx
+                        .active_session
+                        .as_ref()
+                        .and_then(|s| s.board.prepare_tool_step(tool, cell));
+                    if let Some(prep) = prepared {
+                        let (cols, rows) = ctx
+                            .active_session
+                            .as_ref()
+                            .map(|s| (s.board.cols(), s.board.rows()))
+                            .unwrap_or((8, 8));
+                        if ctx.city.tools.consume(tool) {
+                            ctx.armed_tool = None;
+                            ctx.persist();
+                            input_state.undo_snapshot = None;
+                            play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
+                            anim::spawn_tool_vfx(
+                                &mut commands,
+                                tool,
+                                cell,
+                                &prep.cells,
+                                cols,
+                                rows,
+                                &input_state,
+                            );
+                            let clear_dur = ctx.anim_duration(ctx.data.balance.clear_anim_seconds);
+                            let cleared_set: HashSet<CellPos> =
+                                prep.cells.iter().copied().collect();
+                            input_state.selected = None;
+                            input_state.shake_secs = SHAKE_DURATION_SECS;
+                            input_state.dirty_hud = true;
+                            input_state.phase = BoardAnimPhase::Clearing {
+                                prepared: prep,
+                                cleared_set,
+                                combo: 1,
+                                consumes_turn: false,
+                                elapsed: 0.0,
+                                duration: clear_dur,
+                                particles_spawned: false,
+                            };
+                        }
+                    } else {
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    }
+                    return;
+                }
+                if let Some(prev) = input_state.selected {
+                    if prev == cell {
+                        input_state.selected = None;
+                        update_selection_marker(
+                            &mut commands,
+                            &textures,
+                            &input_state,
+                            &selection_markers,
+                        );
+                    } else if prev.is_adjacent(cell) {
+                        if start_swap_animation(prev, cell, &ctx, &mut input_state) {
+                            update_selection_marker(
+                                &mut commands,
+                                &textures,
+                                &input_state,
+                                &selection_markers,
+                            );
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                        } else {
+                            update_selection_marker(
+                                &mut commands,
+                                &textures,
+                                &input_state,
+                                &selection_markers,
+                            );
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        }
+                    } else {
+                        input_state.selected = Some(cell);
+                        update_selection_marker(
+                            &mut commands,
+                            &textures,
+                            &input_state,
+                            &selection_markers,
+                        );
+                    }
+                } else {
+                    input_state.selected = Some(cell);
+                    update_selection_marker(
+                        &mut commands,
+                        &textures,
+                        &input_state,
+                        &selection_markers,
+                    );
+                }
+                return;
+            }
         }
     }
 
@@ -827,6 +1096,9 @@ pub fn handle_match3_hud_buttons(
                 next_state.set(AppState::FjordCity);
                 return;
             }
+            Match3UiAction::Undo => {
+                execute_undo(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+            }
             Match3UiAction::ToggleHelp => {
                 ctx.toggle_modal(ActiveModal::Help);
                 scroll_mem.modal_offset_y = 0.0;
@@ -850,6 +1122,12 @@ pub fn handle_match3_hud_buttons(
                 ctx.persist();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 input_state.dirty_board = true;
+                input_state.dirty_hud = true;
+            }
+            Match3UiAction::ToggleFastAnim => {
+                ctx.fast_animations = !ctx.fast_animations;
+                ctx.persist();
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 input_state.dirty_hud = true;
             }
             Match3UiAction::TriggerFury => {
@@ -888,13 +1166,18 @@ pub fn handle_board_pointer_input(
     sound_bank: Res<SoundBank>,
     mut input_state: ResMut<Match3InputState>,
     hover_overlays: Query<Entity, With<ToolHoverOverlay>>,
+    drag_highlights: Query<Entity, With<DragTargetHighlight>>,
     selection_markers: Query<Entity, With<SelectionMarker>>,
 ) {
     if !input_state.is_idle() || ctx.active_modal == ActiveModal::Help {
         for e in &hover_overlays {
             commands.entity(e).despawn();
         }
+        for e in &drag_highlights {
+            commands.entity(e).despawn();
+        }
         input_state.hover_cell = None;
+        input_state.drag_highlight_cell = None;
         return;
     }
     let Ok(window) = windows.get_single() else {
@@ -982,6 +1265,7 @@ pub fn handle_board_pointer_input(
                         if ctx.city.tools.consume(tool) {
                             ctx.armed_tool = None;
                             ctx.persist();
+                            input_state.undo_snapshot = None;
                             play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
                             anim::spawn_tool_vfx(
                                 &mut commands,
@@ -992,7 +1276,7 @@ pub fn handle_board_pointer_input(
                                 rows,
                                 &input_state,
                             );
-                            let clear_dur = ctx.data.balance.clear_anim_seconds;
+                            let clear_dur = ctx.anim_duration(ctx.data.balance.clear_anim_seconds);
                             let cleared_set: HashSet<CellPos> =
                                 prep.cells.iter().copied().collect();
                             input_state.selected = None;
@@ -1061,8 +1345,8 @@ pub fn handle_board_pointer_input(
         input_state.drag_origin_screen,
     ) {
         let delta = curr - origin_screen;
-        if delta.length() >= swipe_threshold {
-            let target = if delta.x.abs() >= delta.y.abs() {
+        let candidate_target = if delta.length() >= swipe_threshold * 0.4 {
+            if delta.x.abs() >= delta.y.abs() {
                 if delta.x > 0.0 && origin_cell.col + 1 < cols {
                     Some(CellPos::new(origin_cell.col + 1, origin_cell.row))
                 } else if delta.x < 0.0 && origin_cell.col > 0 {
@@ -1076,11 +1360,39 @@ pub fn handle_board_pointer_input(
                 Some(CellPos::new(origin_cell.col, origin_cell.row - 1))
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
+        if candidate_target != input_state.drag_highlight_cell {
+            input_state.drag_highlight_cell = candidate_target;
+            for e in &drag_highlights {
+                commands.entity(e).despawn();
+            }
+            if let Some(hl) = candidate_target {
+                let w = cell_to_world(hl, &input_state);
+                commands.spawn((
+                    Match3Cleanup,
+                    DragTargetHighlight,
+                    Sprite {
+                        color: Color::srgba(0.45, 0.90, 1.0, 0.32),
+                        custom_size: Some(Vec2::splat(input_state.cell_step * 0.94)),
+                        ..default()
+                    },
+                    Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.15),
+                ));
+            }
+        }
+
+        if delta.length() >= swipe_threshold {
             input_state.drag_origin_cell = None;
             input_state.drag_origin_screen = None;
-            if let Some(nb) = target {
+            input_state.drag_highlight_cell = None;
+            for e in &drag_highlights {
+                commands.entity(e).despawn();
+            }
+            if let Some(nb) = candidate_target {
                 if start_swap_animation(origin_cell, nb, &ctx, &mut input_state) {
                     update_selection_marker(
                         &mut commands,
@@ -1105,6 +1417,10 @@ pub fn handle_board_pointer_input(
     if released {
         input_state.drag_origin_cell = None;
         input_state.drag_origin_screen = None;
+        input_state.drag_highlight_cell = None;
+        for e in &drag_highlights {
+            commands.entity(e).despawn();
+        }
     }
 }
 
@@ -1122,6 +1438,7 @@ fn start_swap_animation(
     input_state.selected = None;
     input_state.drag_origin_cell = None;
     input_state.drag_origin_screen = None;
+    input_state.drag_highlight_cell = None;
     if !can_swap {
         return false;
     }
@@ -1129,12 +1446,12 @@ fn start_swap_animation(
         a,
         b,
         elapsed: 0.0,
-        duration: ctx.data.balance.swap_anim_seconds,
+        duration: ctx.anim_duration(ctx.data.balance.swap_anim_seconds),
     };
     true
 }
 
-/// Rebuilds board sprites and/or HUD when dirty flags are raised.
+/// Rebuilds static/dynamic board sprites and/or HUD when dirty flags are raised.
 #[allow(clippy::too_many_arguments)]
 pub fn sync_match3_visuals(
     mut commands: Commands,
@@ -1145,9 +1462,27 @@ pub fn sync_match3_visuals(
     scroll_mem: Res<UiScrollMemory>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut input_state: ResMut<Match3InputState>,
+    static_sprites: Query<Entity, With<BoardStaticEntity>>,
     sprites: Query<Entity, With<Match3Entity>>,
     huds: Query<Entity, With<Match3HudRoot>>,
 ) {
+    if input_state.dirty_static_board {
+        if let (Some(session), Ok(window)) = (&ctx.active_session, windows.get_single()) {
+            for e in &static_sprites {
+                commands.entity(e).despawn_recursive();
+            }
+            compute_board_layout(
+                window.width(),
+                window.height(),
+                session.board.cols(),
+                session.board.rows(),
+                &mut input_state,
+            );
+            spawn_board_static_sprites(&mut commands, session, &textures, &input_state);
+        }
+        input_state.dirty_static_board = false;
+    }
+
     if input_state.dirty_board {
         if let (Some(session), Ok(window)) = (&ctx.active_session, windows.get_single()) {
             rebuild_board_now(
@@ -1175,6 +1510,7 @@ pub fn sync_match3_visuals(
             &sound_bank,
             scroll_mem.modal_offset_y,
             input_state.is_compact_hud,
+            input_state.can_undo(&ctx),
         );
         input_state.dirty_hud = false;
     }

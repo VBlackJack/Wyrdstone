@@ -496,11 +496,15 @@ pub fn tick_board_animation(
             }
 
             if elapsed >= duration {
+                let pre_swap = ctx.active_session.clone();
                 let prepared = ctx
                     .active_session
                     .as_mut()
                     .and_then(|s| s.board.begin_swap_step(a, b));
                 if let Some(prep) = prepared {
+                    if !input_state.undo_used {
+                        input_state.undo_snapshot = pre_swap;
+                    }
                     if let Some(session) = ctx.active_session.as_mut() {
                         session.consume_move();
                         session.last_combo = 1;
@@ -524,7 +528,7 @@ pub fn tick_board_animation(
                             prepared: prep,
                             consumes_turn: true,
                             elapsed: 0.0,
-                            duration: 0.36,
+                            duration: ctx.anim_duration(0.36),
                             beams_spawned: false,
                         };
                     } else {
@@ -535,7 +539,7 @@ pub fn tick_board_animation(
                             combo: 1,
                             consumes_turn: true,
                             elapsed: 0.0,
-                            duration: ctx.data.balance.clear_anim_seconds,
+                            duration: ctx.anim_duration(ctx.data.balance.clear_anim_seconds),
                             particles_spawned: false,
                         };
                     }
@@ -638,7 +642,7 @@ pub fn tick_board_animation(
                     combo: 1,
                     consumes_turn,
                     elapsed: 0.0,
-                    duration: ctx.data.balance.clear_anim_seconds,
+                    duration: ctx.anim_duration(ctx.data.balance.clear_anim_seconds),
                     particles_spawned: false,
                 };
             } else {
@@ -797,7 +801,7 @@ pub fn tick_board_animation(
                     combo,
                     consumes_turn,
                     elapsed: 0.0,
-                    duration: ctx.data.balance.fall_anim_seconds,
+                    duration: ctx.anim_duration(ctx.data.balance.fall_anim_seconds),
                 };
             } else {
                 input_state.phase = BoardAnimPhase::Clearing {
@@ -876,7 +880,7 @@ pub fn tick_board_animation(
                         combo,
                         consumes_turn,
                         elapsed: 0.0,
-                        duration: ctx.data.balance.fall_anim_seconds,
+                        duration: ctx.anim_duration(ctx.data.balance.fall_anim_seconds),
                     };
                     return;
                 }
@@ -897,7 +901,7 @@ pub fn tick_board_animation(
                         combo: combo + 1,
                         consumes_turn,
                         elapsed: 0.0,
-                        duration: ctx.data.balance.clear_anim_seconds,
+                        duration: ctx.anim_duration(ctx.data.balance.clear_anim_seconds),
                         particles_spawned: false,
                     };
                 } else {
@@ -954,7 +958,7 @@ pub fn tick_board_animation(
                         let has_cursed = ctx
                             .active_session
                             .as_ref()
-                            .map(|s| !s.level.cursed_cells.is_empty())
+                            .map(|s| s.board.has_cursed_runes())
                             .unwrap_or(false);
                         if has_cursed {
                             input_state.dirty_board = true;
@@ -1231,6 +1235,7 @@ pub fn animate_particles(
             input_state.is_compact_hud = now_compact;
             input_state.dirty_hud = true;
         }
+        input_state.dirty_static_board = true;
         input_state.dirty_board = true;
     }
 

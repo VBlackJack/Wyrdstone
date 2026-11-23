@@ -26,6 +26,7 @@ use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use wyrdstone_core::{ActiveTool, Objective};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_match3_hud(
     commands: &mut Commands,
     ctx: &GameContext,
@@ -33,6 +34,7 @@ pub(super) fn spawn_match3_hud(
     sound_bank: &SoundBank,
     modal_scroll_y: f32,
     is_compact: bool,
+    can_undo: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let Some(session) = &ctx.active_session else {
@@ -304,6 +306,36 @@ pub(super) fn spawn_match3_hud(
                             TextColor(COLOR_ACCENT_GOLD),
                         ));
                     }
+
+                    right
+                        .spawn((
+                            Button,
+                            Match3UiAction::Undo,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                ..default()
+                            },
+                            BackgroundColor(if can_undo {
+                                COLOR_ACCENT_TEAL
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            }),
+                            BorderRadius::all(Val::Px(6.0)),
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new(i18n.t("match3.hud.undo")),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(if can_undo {
+                                    COLOR_TEXT_DARK
+                                } else {
+                                    COLOR_TEXT_MUTED
+                                }),
+                            ));
+                        });
 
                     right
                         .spawn((
@@ -659,6 +691,11 @@ pub(super) fn spawn_match3_hud(
                             } else {
                                 i18n.t("city.panel.colorblind.off")
                             };
+                            let fast_lbl = if ctx.fast_animations {
+                                i18n.t("city.panel.fast_anim.on")
+                            } else {
+                                i18n.t("city.panel.fast_anim.off")
+                            };
                             for (lbl, act, bg_col) in [
                                 (
                                     mute_lbl.to_string(),
@@ -685,6 +722,15 @@ pub(super) fn spawn_match3_hud(
                                     cb_lbl.to_string(),
                                     Match3UiAction::ToggleColorblind,
                                     if ctx.colorblind_mode {
+                                        COLOR_ACCENT_TEAL
+                                    } else {
+                                        COLOR_PANEL_CARD
+                                    },
+                                ),
+                                (
+                                    fast_lbl.to_string(),
+                                    Match3UiAction::ToggleFastAnim,
+                                    if ctx.fast_animations {
                                         COLOR_ACCENT_TEAL
                                     } else {
                                         COLOR_PANEL_CARD
