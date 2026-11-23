@@ -1023,7 +1023,7 @@ pub(super) fn spawn_match3_hud(
                                             i18n.t("app.audio.on")
                                         };
                                         let bgm_pct =
-                                            (sound_bank.bgm_volume * 200.0).round() as u32;
+                                            crate::audio::bgm_volume_percent(sound_bank.bgm_volume);
                                         let sfx_pct =
                                             (sound_bank.sfx_volume * 100.0).round() as u32;
                                         let cb_lbl = if ctx.colorblind_mode {
