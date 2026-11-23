@@ -917,7 +917,8 @@ pub(super) fn rebuild_board_now(
     for e in sprites {
         commands.entity(e).despawn_recursive();
     }
-    // Hover and drag overlays are Match3Entity, so they were just despawned: forget their cells.
+    // Hover and drag overlays are not Match3Entity (the pointer handler owns their lifecycle, so a
+    // rebuild never double-despawns them): forget their cells so the handler redraws them.
     input_state.hover_cell = None;
     input_state.drag_highlight_cell = None;
     compute_board_layout(
@@ -1675,7 +1676,6 @@ pub fn handle_board_pointer_input(
                 let w = cell_to_world(p, &input_state);
                 commands.spawn((
                     Match3Cleanup,
-                    Match3Entity,
                     ToolHoverOverlay,
                     Sprite {
                         color: Color::srgba(0.98, 0.82, 0.28, 0.36),
@@ -1697,7 +1697,6 @@ pub fn handle_board_pointer_input(
                 let w = cell_to_world(cell, &input_state);
                 commands.spawn((
                     Match3Cleanup,
-                    Match3Entity,
                     ToolHoverOverlay,
                     Sprite {
                         image: vfx.soft_orb.clone(),
@@ -1873,7 +1872,6 @@ pub fn handle_board_pointer_input(
                 let w = cell_to_world(hl, &input_state);
                 commands.spawn((
                     Match3Cleanup,
-                    Match3Entity,
                     DragTargetHighlight,
                     Sprite {
                         color: Color::srgba(0.45, 0.90, 1.0, 0.32),

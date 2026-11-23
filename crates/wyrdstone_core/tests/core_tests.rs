@@ -1736,6 +1736,9 @@ fn resource_and_tool_arithmetic_saturates_instead_of_overflowing() {
     assert_eq!(scaled.wood, u32::MAX);
 }
 
+/// Last dotted segments that mark a file name (for example `a.png`), not a locale key.
+const KEY_SCAN_FILE_EXTENSIONS: [&str; 6] = ["ron", "json", "png", "ogg", "wav", "ttf"];
+
 /// Collects every `"dotted.lowercase.key"` string literal found in `text`.
 fn collect_key_literals(text: &str, out: &mut HashSet<String>) {
     let bytes = text.as_bytes();
@@ -1757,7 +1760,11 @@ fn collect_key_literals(text: &str, out: &mut HashSet<String>) {
         }
         if end < bytes.len() && bytes[end] == b'"' && end > start {
             let lit = &text[start..end];
-            if lit.contains('.') && !lit.starts_with('.') && !lit.ends_with('.') {
+            let is_file_name = lit
+                .rsplit('.')
+                .next()
+                .is_some_and(|last| KEY_SCAN_FILE_EXTENSIONS.contains(&last));
+            if lit.contains('.') && !lit.starts_with('.') && !lit.ends_with('.') && !is_file_name {
                 out.insert(lit.to_string());
             }
             i = end + 1;
