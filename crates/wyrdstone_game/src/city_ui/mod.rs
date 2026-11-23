@@ -23,20 +23,20 @@ use crate::audio::{
     cycle_bgm_volume, cycle_sfx_volume, play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank,
 };
 use crate::fjord_art::FjordTextures;
-use crate::scroll::UiScrollMemory;
+use crate::scroll::{PressArm, UiScrollMemory};
 use crate::state::{
     now_unix_secs, today_day_index, ActiveModal, AppState, ChapterDialogue, GameContext,
 };
 use crate::theme::*;
 use crate::ui_style::{
     button_shadow, display_font, gold_glow_shadow, modal_shadow, panel_shadow, sliced_panel_image,
-    NoButtonScale,
+    spawn_notice_toast, NoButtonScale, NOTICE_TOAST_DURATION_SECS,
 };
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 use bevy::window::{PrimaryWindow, WindowResized};
-use wyrdstone_core::{ActiveTool, BuildingDef, PatronGod, QuestCondition};
+use wyrdstone_core::{ActiveTool, BuildingDef, I18nCatalog, PatronGod, QuestCondition};
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
 const BACKUP_NOTICE_DURATION_SECS: f32 = 6.0;
@@ -131,6 +131,10 @@ pub struct CityLayoutMode {
     pub harvest_poll_timer: Timer,
     pub ui_clock_timer: Timer,
     pub just_built_id: Option<String>,
+    /// Last notice key rendered by the hub toast, used to detect changes and restart its timer.
+    pub last_notice_key: Option<String>,
+    /// Seconds left before the current notice toast is cleared.
+    pub notice_secs_left: f32,
 }
 
 #[derive(Component)]
@@ -208,6 +212,8 @@ pub fn setup_city_ui(
         harvest_poll_timer: Timer::from_seconds(HARVEST_POLL_SECS, TimerMode::Repeating),
         ui_clock_timer: Timer::from_seconds(1.0, TimerMode::Repeating),
         just_built_id: None,
+        last_notice_key: ctx.status_notice_key.clone(),
+        notice_secs_left: NOTICE_TOAST_DURATION_SECS,
     });
     spawn_city_tree(
         &mut commands,
@@ -231,14 +237,36 @@ pub fn cleanup_city_ui(mut commands: Commands, roots: Query<Entity, With<CityRoo
     commands.remove_resource::<CityLayoutMode>();
 }
 
-pub(super) fn format_countdown(secs: u64) -> String {
+pub(super) fn format_countdown(i18n: &I18nCatalog, secs: u64) -> String {
     let mins = secs / 60;
     let rem = secs % 60;
     if mins > 0 {
-        format!("{mins}m {rem:02}s")
+        i18n.t_fmt(
+            "city.time.min_sec",
+            &[("mins", mins.to_string()), ("secs", format!("{rem:02}"))],
+        )
     } else {
-        format!("{rem}s")
+        i18n.t_fmt("city.time.sec", &[("secs", rem.to_string())])
     }
+}
+
+/// Formats the "title - reward summary" line shown in claim celebrations.
+fn celebration_claim_line(i18n: &I18nCatalog, title: String, summary: String) -> String {
+    i18n.t_fmt(
+        "city.celebration.claim_line",
+        &[("title", title), ("summary", summary)],
+    )
+}
+
+/// Formats one resource pill text ("Wood: 120") through the shared locale template.
+fn resource_pill_text(i18n: &I18nCatalog, label_key: &str, amount: u32) -> String {
+    i18n.t_fmt(
+        "city.header.resource_pill",
+        &[
+            ("label", i18n.t(label_key).to_string()),
+            ("amount", amount.to_string()),
+        ],
+    )
 }
 
 fn format_energy_label(ctx: &GameContext) -> String {
@@ -259,15 +287,16 @@ fn format_energy_label(ctx: &GameContext) -> String {
             &[
                 ("cur", ctx.city.energy.to_string()),
                 ("max", max_energy.to_string()),
-                ("time", format_countdown(rem_secs)),
+                ("time", format_countdown(i18n, rem_secs)),
             ],
         )
     } else {
-        format!(
-            "{}: {}/{}",
-            i18n.t("resources.label.energy"),
-            ctx.city.energy,
-            max_energy
+        i18n.t_fmt(
+            "city.header.energy_full",
+            &[
+                ("cur", ctx.city.energy.to_string()),
+                ("max", max_energy.to_string()),
+            ],
         )
     }
 }
@@ -346,10 +375,20 @@ fn spawn_city_tree(
                         &[("glory", ctx.city.glory.to_string())],
                     );
                     let subtitle_line = if is_portrait {
-                        format!("{rank_label}  -  {mastery_label}")
+                        i18n.t_fmt(
+                            "city.header.subtitle_compact",
+                            &[("rank", rank_label.to_string()), ("mastery", mastery_label)],
+                        )
                     } else {
                         let perk_label = i18n.t(rank.perk_key());
-                        format!("{rank_label}  -  {mastery_label}  ({perk_label})")
+                        i18n.t_fmt(
+                            "city.header.subtitle_full",
+                            &[
+                                ("rank", rank_label.to_string()),
+                                ("mastery", mastery_label),
+                                ("perk", perk_label.to_string()),
+                            ],
+                        )
                     };
                     col.spawn((
                         Text::new(subtitle_line),
@@ -372,25 +411,25 @@ fn spawn_city_tree(
                     spawn_resource_pill_with_icon(
                         pills,
                         vfx.icon_wood.clone(),
-                        &format!("{}: {}", i18n.t("resources.label.wood"), res.wood),
+                        &resource_pill_text(i18n, "resources.label.wood", res.wood),
                         Color::srgb(0.44, 0.80, 0.52),
                     );
                     spawn_resource_pill_with_icon(
                         pills,
                         vfx.icon_stone.clone(),
-                        &format!("{}: {}", i18n.t("resources.label.stone"), res.stone),
+                        &resource_pill_text(i18n, "resources.label.stone", res.stone),
                         Color::srgb(0.76, 0.74, 0.88),
                     );
                     spawn_resource_pill_with_icon(
                         pills,
                         vfx.icon_gold.clone(),
-                        &format!("{}: {}", i18n.t("resources.label.gold"), res.gold),
+                        &resource_pill_text(i18n, "resources.label.gold", res.gold),
                         COLOR_ACCENT_GOLD,
                     );
                     spawn_resource_pill_with_icon(
                         pills,
                         vfx.icon_mead.clone(),
-                        &format!("{}: {}", i18n.t("resources.label.mead"), res.mead),
+                        &resource_pill_text(i18n, "resources.label.mead", res.mead),
                         Color::srgb(0.95, 0.66, 0.30),
                     );
                     pills
@@ -439,10 +478,12 @@ fn spawn_city_tree(
                     let blessing_lbl = if is_portrait {
                         i18n.t(blessing.name_key()).to_string()
                     } else {
-                        format!(
-                            "{}: {}",
-                            i18n.t(blessing.name_key()),
-                            i18n.t(blessing.desc_key())
+                        i18n.t_fmt(
+                            "city.header.blessing_pill",
+                            &[
+                                ("name", i18n.t(blessing.name_key()).to_string()),
+                                ("desc", i18n.t(blessing.desc_key()).to_string()),
+                            ],
                         )
                     };
                     spawn_resource_pill(pills, &blessing_lbl, COLOR_ACCENT_TEAL);
@@ -508,13 +549,24 @@ fn spawn_city_tree(
                             let daily_ready = ctx.city.is_daily_available(today_day_index());
                             let daily_label = if daily_ready {
                                 if ctx.city.stats.daily_streak > 0 {
-                                    format!(
-                                        "{} ({})",
-                                        i18n.t("city.panel.daily.button"),
-                                        i18n.t_fmt(
-                                            "city.panel.daily.streak",
-                                            &[("days", ctx.city.stats.daily_streak.to_string())]
-                                        )
+                                    i18n.t_fmt(
+                                        "city.button.label_with_count",
+                                        &[
+                                            (
+                                                "label",
+                                                i18n.t("city.panel.daily.button").to_string(),
+                                            ),
+                                            (
+                                                "count",
+                                                i18n.t_fmt(
+                                                    "city.panel.daily.streak",
+                                                    &[(
+                                                        "days",
+                                                        ctx.city.stats.daily_streak.to_string(),
+                                                    )],
+                                                ),
+                                            ),
+                                        ],
                                     )
                                 } else {
                                     i18n.t("city.panel.daily.button").to_string()
@@ -585,7 +637,13 @@ fn spawn_city_tree(
                                 ctx.data.bosses.len(),
                             );
                             let feats_lbl = if claimable_feats > 0 {
-                                format!("{} ({claimable_feats})", i18n.t("city.panel.feats.button"))
+                                i18n.t_fmt(
+                                    "city.button.label_with_count",
+                                    &[
+                                        ("label", i18n.t("city.panel.feats.button").to_string()),
+                                        ("count", claimable_feats.to_string()),
+                                    ],
+                                )
                             } else {
                                 i18n.t("city.panel.feats.button").to_string()
                             };
@@ -602,9 +660,15 @@ fn spawn_city_tree(
                             let claimable_cols =
                                 ctx.city.claimable_collection_count(&ctx.data.collections);
                             let cols_lbl = if claimable_cols > 0 {
-                                format!(
-                                    "{} ({claimable_cols})",
-                                    i18n.t("city.panel.collections.button")
+                                i18n.t_fmt(
+                                    "city.button.label_with_count",
+                                    &[
+                                        (
+                                            "label",
+                                            i18n.t("city.panel.collections.button").to_string(),
+                                        ),
+                                        ("count", claimable_cols.to_string()),
+                                    ],
                                 )
                             } else {
                                 i18n.t("city.panel.collections.button").to_string()
@@ -766,10 +830,12 @@ fn spawn_city_tree(
                         })
                         .with_children(|info| {
                             info.spawn((
-                                Text::new(format!(
-                                    "{} - {}",
-                                    i18n.t("city.panel.quests.title"),
-                                    i18n.t(&quest.title_key)
+                                Text::new(i18n.t_fmt(
+                                    "city.panel.quests.banner",
+                                    &[
+                                        ("title", i18n.t("city.panel.quests.title").to_string()),
+                                        ("quest", i18n.t(&quest.title_key).to_string()),
+                                    ],
                                 )),
                                 TextFont {
                                     font_size: FONT_BODY,
@@ -881,7 +947,7 @@ fn spawn_city_tree(
                             font_size: FONT_BODY,
                             ..default()
                         },
-                        TextColor(COLOR_ACCENT_GOLD),
+                        TextColor(COLOR_TEXT_PRIMARY),
                     ));
                 });
             }
@@ -1161,6 +1227,13 @@ fn spawn_city_tree(
                     modals::spawn_chapter_dialogue_modal(root, ctx, fjord_art, vfx, m_scroll)
                 }
             }
+
+            // 5. Hub-level notice toast (modals and the inspector render notices themselves).
+            if ctx.active_modal == ActiveModal::None && !inspector_open {
+                if let Some(notice_key) = &ctx.status_notice_key {
+                    spawn_notice_toast(root, i18n.t(notice_key), None);
+                }
+            }
         });
 }
 
@@ -1238,14 +1311,24 @@ fn spawn_map_building_pin(
 
     let max_left_pct = if is_portrait { 64.0 } else { 76.0 };
     let max_top_pct = if is_portrait { 54.0 } else { 68.0 };
+    // Portrait pins use explicit coordinates when the building defines them, so that pins
+    // never collapse into the same clamped column.
+    let pin_left_pct = match (is_portrait, b.portrait_left_pct) {
+        (true, Some(left)) => left,
+        _ => (b.map_x_pct - 9.0).clamp(1.0, max_left_pct),
+    };
+    let pin_top_pct = match (is_portrait, b.portrait_top_pct) {
+        (true, Some(top)) => top,
+        _ => (b.map_y_pct - 14.0).clamp(2.0, max_top_pct),
+    };
 
     map.spawn((
         Button,
         CityAction::SelectBuilding(b.id.clone()),
         Node {
             position_type: PositionType::Absolute,
-            left: Val::Percent((b.map_x_pct - 9.0).clamp(1.0, max_left_pct)),
-            top: Val::Percent((b.map_y_pct - 14.0).clamp(2.0, max_top_pct)),
+            left: Val::Percent(pin_left_pct),
+            top: Val::Percent(pin_top_pct),
             width: Val::Px(pin_w),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
@@ -1447,6 +1530,7 @@ fn spawn_map_building_pin(
                         CityAction::CollectHarvest(b.id.clone()),
                         Node {
                             width: Val::Percent(100.0),
+                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
                             padding: UiRect::axes(Val::Px(4.0), Val::Px(2.0)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
@@ -1467,18 +1551,26 @@ fn spawn_map_building_pin(
                     });
             } else {
                 let badge = if !unlocked {
-                    "---".to_string()
+                    i18n.t("city.panel.building.badge.locked").to_string()
                 } else if can_upgrade {
-                    format!(
-                        "{} ({}/{})",
-                        i18n.t("city.panel.building.status.ready"),
-                        tier,
-                        b.max_tier
+                    i18n.t_fmt(
+                        "city.panel.building.badge.ready",
+                        &[
+                            (
+                                "status",
+                                i18n.t("city.panel.building.status.ready").to_string(),
+                            ),
+                            ("tier", tier.to_string()),
+                            ("max", b.max_tier.to_string()),
+                        ],
                     )
                 } else if tier == 0 {
                     i18n.t("city.panel.building.status.ruined").to_string()
                 } else {
-                    format!("T{} / {}", tier, b.max_tier)
+                    i18n.t_fmt(
+                        "city.panel.building.badge.tier",
+                        &[("tier", tier.to_string()), ("max", b.max_tier.to_string())],
+                    )
                 };
                 plate.spawn((
                     Text::new(badge),
@@ -1562,6 +1654,18 @@ pub(crate) fn spawn_resource_pill(parent: &mut ChildBuilder, text: &str, text_co
         });
 }
 
+/// Swaps light text for the dark accent text colour when the button sits on a green or teal
+/// accent, where light text only reaches about 2.8:1 contrast.
+pub(crate) fn readable_text_color(bg_color: Color, text_color: Color) -> Color {
+    if text_color == COLOR_TEXT_PRIMARY
+        && (bg_color == COLOR_ACCENT_GREEN || bg_color == COLOR_ACCENT_TEAL)
+    {
+        COLOR_TEXT_ON_ACCENT
+    } else {
+        text_color
+    }
+}
+
 pub(crate) fn spawn_small_button(
     parent: &mut ChildBuilder,
     label: &str,
@@ -1578,10 +1682,12 @@ pub(crate) fn spawn_small_button_colored(
     bg_color: Color,
     text_color: Color,
 ) {
+    let text_color = readable_text_color(bg_color, text_color);
     let mut cmd = parent.spawn((
         Button,
         action,
         Node {
+            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
             padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -1614,11 +1720,13 @@ pub(crate) fn spawn_full_button(
     bg_color: Color,
     text_color: Color,
 ) {
+    let text_color = readable_text_color(bg_color, text_color);
     let mut cmd = parent.spawn((
         Button,
         action,
         Node {
             flex_grow: 1.0,
+            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
             padding: UiRect::axes(Val::Px(12.0), Val::Px(11.0)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -1663,13 +1771,17 @@ pub fn handle_city_buttons(
     mut sound_bank: ResMut<SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut layout_mode: ResMut<CityLayoutMode>,
-    mut scroll_mem: ResMut<UiScrollMemory>,
     mut resize_events: EventReader<WindowResized>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<CityRoot>>,
     mut energy_texts: Query<&mut Text, (With<CityEnergyText>, Without<InspectorHarvestTimerText>)>,
     mut harvest_texts: HarvestTimerQuery,
-    buttons: Query<(&Interaction, &CityAction), Changed<Interaction>>,
+    (touches, mut press_arm, mut scroll_mem): (
+        Res<Touches>,
+        Local<PressArm>,
+        ResMut<UiScrollMemory>,
+    ),
+    buttons: Query<(Entity, &Interaction, &CityAction), Changed<Interaction>>,
 ) {
     let mut rebuild = false;
 
@@ -1687,6 +1799,10 @@ pub fn handle_city_buttons(
         } else if layout_mode.inspector_open {
             layout_mode.inspector_open = false;
             rebuild = true;
+        } else {
+            // Nothing is open: Escape (and the Android Back button) leaves the hub.
+            next_state.set(AppState::Title);
+            return;
         }
     }
 
@@ -1769,6 +1885,19 @@ pub fn handle_city_buttons(
         }
     }
 
+    // Hub toast: restart its timer on a new notice, clear the notice once the timer runs out.
+    if ctx.status_notice_key.is_some() && ctx.status_notice_key == layout_mode.last_notice_key {
+        layout_mode.notice_secs_left -= time.delta_secs();
+        if layout_mode.notice_secs_left <= 0.0 {
+            ctx.status_notice_key = None;
+        }
+    }
+    if ctx.status_notice_key != layout_mode.last_notice_key {
+        layout_mode.last_notice_key = ctx.status_notice_key.clone();
+        layout_mode.notice_secs_left = NOTICE_TOAST_DURATION_SECS;
+        rebuild = true;
+    }
+
     if layout_mode.last_muted != sound_bank.muted {
         layout_mode.last_muted = sound_bank.muted;
         rebuild = true;
@@ -1827,7 +1956,7 @@ pub fn handle_city_buttons(
                 (
                     ctx.data.i18n.t_fmt(
                         "city.panel.building.harvest_in",
-                        &[("time", format_countdown(rem))],
+                        &[("time", format_countdown(&ctx.data.i18n, rem))],
                     ),
                     COLOR_ACCENT_TEAL,
                 )
@@ -1859,24 +1988,28 @@ pub fn handle_city_buttons(
         }
     }
 
-    let suppress_clicks = scroll_mem.is_touch_scrolling();
-    let has_harvest_press = !suppress_clicks
-        && buttons
-            .iter()
-            .any(|(i, a)| *i == Interaction::Pressed && matches!(a, CityAction::CollectHarvest(_)));
-    let has_pin_press = !suppress_clicks
-        && buttons.iter().any(|(i, a)| {
-            *i == Interaction::Pressed
-                && matches!(
-                    a,
-                    CityAction::SelectBuilding(_) | CityAction::CollectHarvest(_)
-                )
-        });
+    // Actions fire on release so a touch that starts a scroll never triggers a button.
+    let tapped = press_arm.completed_taps(
+        buttons.iter().map(|(entity, i, _)| (entity, *i)),
+        &touches,
+        &scroll_mem,
+    );
+    let tapped_actions: Vec<&CityAction> = buttons
+        .iter()
+        .filter(|(entity, _, _)| tapped.contains(entity))
+        .map(|(_, _, action)| action)
+        .collect();
+    let has_harvest_press = tapped_actions
+        .iter()
+        .any(|a| matches!(a, CityAction::CollectHarvest(_)));
+    let has_pin_press = tapped_actions.iter().any(|a| {
+        matches!(
+            a,
+            CityAction::SelectBuilding(_) | CityAction::CollectHarvest(_)
+        )
+    });
 
-    for (interaction, action) in &buttons {
-        if suppress_clicks || *interaction != Interaction::Pressed {
-            continue;
-        }
+    for action in tapped_actions {
         match action {
             CityAction::SelectBuilding(id) => {
                 if has_harvest_press {
@@ -1944,13 +2077,12 @@ pub fn handle_city_buttons(
                 if let Some((day, res, _tool)) = ctx.city.try_claim_login_tribute(today_day_index())
                 {
                     let summary = modals::format_reward_summary(&ctx.data.i18n, res, 0);
-                    ctx.celebration_message = Some(format!(
-                        "{}  -  {}",
-                        ctx.data
-                            .i18n
-                            .t_fmt("city.panel.tribute.day", &[("day", day.to_string())]),
-                        summary
-                    ));
+                    let title = ctx
+                        .data
+                        .i18n
+                        .t_fmt("city.panel.tribute.day", &[("day", day.to_string())]);
+                    ctx.celebration_message =
+                        Some(celebration_claim_line(&ctx.data.i18n, title, summary));
                     ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                     ctx.status_notice_key = None;
                     ctx.persist();
@@ -2060,10 +2192,10 @@ pub fn handle_city_buttons(
                     if let Some(ach) = achievements.iter().find(|a| a.id == *ach_id) {
                         let summary =
                             modals::format_reward_summary(&ctx.data.i18n, ach.reward, ach.glory);
-                        ctx.celebration_message = Some(format!(
-                            "{}  -  {}",
-                            ctx.data.i18n.t(&ach.title_key),
-                            summary
+                        ctx.celebration_message = Some(celebration_claim_line(
+                            &ctx.data.i18n,
+                            ctx.data.i18n.t(&ach.title_key).to_string(),
+                            summary,
                         ));
                         ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                     }
@@ -2135,12 +2267,19 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::PlayDailyTrial => {
-                if ctx.city.is_daily_available(today_day_index()) && ctx.start_daily_trial().is_ok()
-                {
-                    next_state.set(AppState::Match3);
-                    return;
+                if ctx.city.is_daily_available(today_day_index()) {
+                    match ctx.start_daily_trial() {
+                        Ok(()) => {
+                            next_state.set(AppState::Match3);
+                            return;
+                        }
+                        Err(err_key) => ctx.status_notice_key = Some(err_key.to_string()),
+                    }
+                } else {
+                    ctx.status_notice_key = Some("city.panel.daily.done".to_string());
                 }
                 play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                rebuild = true;
             }
             CityAction::UpgradeBuilding(building_id) => {
                 if let Some(def) = ctx.data.building_by_id(building_id).cloned() {
@@ -2200,10 +2339,10 @@ pub fn handle_city_buttons(
                     if ctx.city.try_claim_quest(&quest, &balance) {
                         let summary =
                             modals::format_reward_summary(&ctx.data.i18n, quest.reward, 0);
-                        ctx.celebration_message = Some(format!(
-                            "{}  -  {}",
-                            ctx.data.i18n.t(&quest.title_key),
-                            summary
+                        ctx.celebration_message = Some(celebration_claim_line(
+                            &ctx.data.i18n,
+                            ctx.data.i18n.t(&quest.title_key).to_string(),
+                            summary,
                         ));
                         ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                         ctx.status_notice_key = None;
@@ -2353,10 +2492,10 @@ pub fn handle_city_buttons(
                     if ctx.city.try_claim_collection(&col, &balance) {
                         let summary =
                             modals::format_reward_summary(&ctx.data.i18n, col.reward_resources, 0);
-                        ctx.celebration_message = Some(format!(
-                            "{}  -  {}",
-                            ctx.data.i18n.t(&col.name_key),
-                            summary
+                        ctx.celebration_message = Some(celebration_claim_line(
+                            &ctx.data.i18n,
+                            ctx.data.i18n.t(&col.name_key).to_string(),
+                            summary,
                         ));
                         ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                         ctx.status_notice_key = None;
@@ -2767,5 +2906,60 @@ pub fn animate_city_ambience(
     let beacon_col = Color::srgb(0.95 + 0.05 * glow, 0.72 + 0.25 * glow, 0.24 + 0.45 * glow);
     for mut border in &mut beacon_q {
         border.0 = beacon_col;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wyrdstone_core::{GameDataBundle, Language};
+
+    /// Portrait pin footprint and the smallest map size the layout is designed for.
+    const PIN_WIDTH_PX: f32 = 108.0;
+    const PIN_HEIGHT_PX: f32 = 100.0;
+    const MIN_PORTRAIT_MAP_WIDTH_PX: f32 = 336.0;
+    const MIN_PORTRAIT_MAP_HEIGHT_PX: f32 = 560.0;
+
+    #[test]
+    fn portrait_pins_never_overlap() {
+        let data = GameDataBundle::load_bundled(Language::En).expect("bundled data must parse");
+        let pins: Vec<(&str, f32, f32)> = data
+            .buildings
+            .iter()
+            .map(|b| {
+                (
+                    b.id.as_str(),
+                    b.portrait_left_pct
+                        .expect("every building needs a portrait_left_pct"),
+                    b.portrait_top_pct
+                        .expect("every building needs a portrait_top_pct"),
+                )
+            })
+            .collect();
+        for (i, a) in pins.iter().enumerate() {
+            assert!(
+                a.1 >= 0.0
+                    && a.1 / 100.0 * MIN_PORTRAIT_MAP_WIDTH_PX + PIN_WIDTH_PX
+                        <= MIN_PORTRAIT_MAP_WIDTH_PX,
+                "pin {} leaves the map horizontally",
+                a.0
+            );
+            assert!(
+                a.2 >= 0.0
+                    && a.2 / 100.0 * MIN_PORTRAIT_MAP_HEIGHT_PX + PIN_HEIGHT_PX
+                        <= MIN_PORTRAIT_MAP_HEIGHT_PX,
+                "pin {} leaves the map vertically",
+                a.0
+            );
+            for b in &pins[i + 1..] {
+                let dx = (a.1 - b.1).abs() / 100.0 * MIN_PORTRAIT_MAP_WIDTH_PX;
+                let dy = (a.2 - b.2).abs() / 100.0 * MIN_PORTRAIT_MAP_HEIGHT_PX;
+                assert!(
+                    dx >= PIN_WIDTH_PX || dy >= PIN_HEIGHT_PX,
+                    "portrait pins {} and {} overlap",
+                    a.0,
+                    b.0
+                );
+            }
+        }
     }
 }

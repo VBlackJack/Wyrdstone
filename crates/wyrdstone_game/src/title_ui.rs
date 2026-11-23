@@ -18,11 +18,12 @@
 
 use crate::audio::{toggle_mute, BgmTrack, SoundBank};
 use crate::fjord_art::FjordTextures;
+use crate::scroll::{PressArm, UiScrollMemory};
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
 use crate::ui_style::{
     button_shadow, display_font, gold_glow_shadow, panel_shadow, sliced_gold_button_image,
-    sliced_panel_image,
+    sliced_panel_image, spawn_notice_toast, ToastLife, NOTICE_TOAST_DURATION_SECS,
 };
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
@@ -50,7 +51,7 @@ pub struct TitleSnowflake {
     pub phase: f32,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, Copy)]
 pub enum TitleAction {
     EnterFjord,
     NewSaga,
@@ -70,7 +71,13 @@ pub fn setup_title_ui(
 }
 
 /// Cleans up Title screen entities on state exit.
-pub fn cleanup_title_ui(mut commands: Commands, roots: Query<Entity, With<TitleRoot>>) {
+pub fn cleanup_title_ui(
+    mut commands: Commands,
+    mut ctx: ResMut<GameContext>,
+    roots: Query<Entity, With<TitleRoot>>,
+) {
+    // A notice shown on the Title screen has been seen: do not repeat it on the hub.
+    ctx.status_notice_key = None;
     for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
@@ -317,7 +324,7 @@ fn spawn_title_tree(
                                 act,
                                 Node {
                                     width: Val::Px(178.0),
-                                    height: Val::Px(44.0),
+                                    height: Val::Px(MIN_TOUCH_TARGET_PX),
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
                                     border: UiRect::all(Val::Px(1.5)),
@@ -341,6 +348,11 @@ fn spawn_title_tree(
                         }
                     });
             });
+
+            // Save and recovery notices (restored from backup, read-only, unreadable save).
+            if let Some(notice_key) = &ctx.status_notice_key {
+                spawn_notice_toast(bg, i18n.t(notice_key), Some(NOTICE_TOAST_DURATION_SECS));
+            }
         });
 }
 
@@ -396,10 +408,25 @@ pub fn animate_title_ambience(
     }
 }
 
+type TitleButtonQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Interaction,
+        &'static TitleAction,
+        &'static mut BackgroundColor,
+        Option<&'static mut ImageNode>,
+    ),
+    Changed<Interaction>,
+>;
+
 /// Handles clicks and keyboard shortcuts (`Enter`/`Space`) on the Title screen.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_title_buttons(
     mut commands: Commands,
+    time: Res<Time>,
+    mut toasts: Query<(Entity, &mut ToastLife)>,
     keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
     fjord_art: Res<FjordTextures>,
@@ -408,16 +435,19 @@ pub fn handle_title_buttons(
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<TitleRoot>>,
-    mut buttons: Query<
-        (
-            &Interaction,
-            &TitleAction,
-            &mut BackgroundColor,
-            Option<&mut ImageNode>,
-        ),
-        Changed<Interaction>,
-    >,
+    touches: Res<Touches>,
+    scroll_mem: Res<UiScrollMemory>,
+    mut press_arm: Local<PressArm>,
+    mut buttons: TitleButtonQuery,
 ) {
+    for (entity, mut life) in &mut toasts {
+        life.0 -= time.delta_secs();
+        if life.0 <= 0.0 {
+            commands.entity(entity).despawn_recursive();
+            ctx.status_notice_key = None;
+        }
+    }
+
     if keys.just_pressed(KeyCode::Escape) && ctx.confirm_reset {
         ctx.confirm_reset = false;
         for entity in &roots {
@@ -441,46 +471,61 @@ pub fn handle_title_buttons(
         return;
     }
 
-    for (interaction, action, mut bg, img_opt) in &mut buttons {
-        match *interaction {
-            Interaction::Pressed => match action {
-                TitleAction::EnterFjord => {
-                    ctx.confirm_reset = false;
+    // Actions fire on release so a touch that starts a scroll never triggers a button.
+    let tapped = press_arm.completed_taps(
+        buttons.iter().map(|(entity, i, ..)| (entity, *i)),
+        &touches,
+        &scroll_mem,
+    );
+    let tapped_actions: Vec<TitleAction> = buttons
+        .iter()
+        .filter(|(entity, ..)| tapped.contains(entity))
+        .map(|(_, _, action, ..)| *action)
+        .collect();
+    for action in tapped_actions {
+        match action {
+            TitleAction::EnterFjord => {
+                ctx.confirm_reset = false;
+                next_state.set(AppState::FjordCity);
+            }
+            TitleAction::NewSaga => {
+                if ctx.confirm_reset {
+                    ctx.reset_saga();
                     next_state.set(AppState::FjordCity);
-                }
-                TitleAction::NewSaga => {
-                    if ctx.confirm_reset {
-                        ctx.reset_saga();
-                        next_state.set(AppState::FjordCity);
-                    } else {
-                        ctx.confirm_reset = true;
-                        for entity in &roots {
-                            commands.entity(entity).despawn_recursive();
-                        }
-                        spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
-                    }
-                    return;
-                }
-                TitleAction::ToggleLanguage => {
-                    ctx.confirm_reset = false;
-                    ctx.data.i18n.toggle_language();
-                    ctx.persist();
+                } else {
+                    ctx.confirm_reset = true;
                     for entity in &roots {
                         commands.entity(entity).despawn_recursive();
                     }
                     spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
-                    return;
                 }
-                TitleAction::ToggleAudio => {
-                    ctx.confirm_reset = false;
-                    toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
-                    for entity in &roots {
-                        commands.entity(entity).despawn_recursive();
-                    }
-                    spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
-                    return;
+                return;
+            }
+            TitleAction::ToggleLanguage => {
+                ctx.confirm_reset = false;
+                ctx.data.i18n.toggle_language();
+                ctx.persist();
+                for entity in &roots {
+                    commands.entity(entity).despawn_recursive();
                 }
-            },
+                spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+                return;
+            }
+            TitleAction::ToggleAudio => {
+                ctx.confirm_reset = false;
+                toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
+                for entity in &roots {
+                    commands.entity(entity).despawn_recursive();
+                }
+                spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+                return;
+            }
+        }
+    }
+
+    for (_, interaction, action, mut bg, img_opt) in &mut buttons {
+        match *interaction {
+            Interaction::Pressed => {}
             Interaction::Hovered => match action {
                 TitleAction::EnterFjord => {
                     if let Some(mut img) = img_opt {

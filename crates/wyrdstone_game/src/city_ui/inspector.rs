@@ -27,7 +27,7 @@ use crate::theme::*;
 use crate::ui_style::{button_shadow, display_font};
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
-use wyrdstone_core::{BuildingDef, Objective};
+use wyrdstone_core::{BuildingDef, I18nCatalog, Objective};
 
 pub(super) fn spawn_building_inspector(
     inspector: &mut ChildBuilder,
@@ -158,20 +158,26 @@ pub(super) fn spawn_building_inspector(
                         TextColor(COLOR_ACCENT_GOLD),
                     ));
 
-                    let status_line = format!(
-                        "{}   |   {}",
-                        if tier == 0 {
-                            i18n.t("city.panel.building.status.ruined").to_string()
-                        } else {
-                            i18n.t_fmt(
-                                "city.panel.building.level",
-                                &[("level", tier.to_string()), ("max", b.max_tier.to_string())],
-                            )
-                        },
+                    let level_text = if tier == 0 {
+                        i18n.t("city.panel.building.status.ruined").to_string()
+                    } else {
                         i18n.t_fmt(
-                            "city.panel.building.mastery",
-                            &[("stars", stars.to_string())],
-                        ),
+                            "city.panel.building.level",
+                            &[("level", tier.to_string()), ("max", b.max_tier.to_string())],
+                        )
+                    };
+                    let status_line = i18n.t_fmt(
+                        "city.panel.building.status_line",
+                        &[
+                            ("level", level_text),
+                            (
+                                "mastery",
+                                i18n.t_fmt(
+                                    "city.panel.building.mastery",
+                                    &[("stars", stars.to_string())],
+                                ),
+                            ),
+                        ],
                     );
                     top.spawn((
                         Text::new(status_line),
@@ -196,7 +202,7 @@ pub(super) fn spawn_building_inspector(
                             (
                                 i18n.t_fmt(
                                     "city.panel.building.harvest_in",
-                                    &[("time", format_countdown(rem))],
+                                    &[("time", format_countdown(i18n, rem))],
                                 ),
                                 COLOR_ACCENT_TEAL,
                             )
@@ -263,7 +269,7 @@ pub(super) fn spawn_building_inspector(
                         .with_children(|tabs| {
                             let std_stars = ctx.city.level_stars(&b.level_id);
                             let std_lbl = if std_stars > 0 {
-                                format!("{} ({}/3)", i18n.t("city.difficulty.standard"), std_stars)
+                                difficulty_label(i18n, "city.difficulty.standard", std_stars)
                             } else {
                                 i18n.t("city.difficulty.standard").to_string()
                             };
@@ -276,13 +282,17 @@ pub(super) fn spawn_building_inspector(
                                 } else {
                                     COLOR_PANEL_CARD
                                 },
-                                COLOR_TEXT_PRIMARY,
+                                if active_diff == 0 {
+                                    COLOR_TEXT_ON_ACCENT
+                                } else {
+                                    COLOR_TEXT_PRIMARY
+                                },
                             );
                             if has_mastery {
                                 let m_id = b.mastery_level_id.as_deref().unwrap_or("");
                                 let m_stars = ctx.city.level_stars(m_id);
                                 let m_lbl = if m_stars > 0 {
-                                    format!("{} ({}/3)", i18n.t("city.difficulty.mastery"), m_stars)
+                                    difficulty_label(i18n, "city.difficulty.mastery", m_stars)
                                 } else {
                                     i18n.t("city.difficulty.mastery").to_string()
                                 };
@@ -306,11 +316,7 @@ pub(super) fn spawn_building_inspector(
                                 let l_id = b.legendary_level_id.as_deref().unwrap_or("");
                                 let l_stars = ctx.city.level_stars(l_id);
                                 let l_lbl = if l_stars > 0 {
-                                    format!(
-                                        "{} ({}/3)",
-                                        i18n.t("city.difficulty.legendary"),
-                                        l_stars
-                                    )
+                                    difficulty_label(i18n, "city.difficulty.legendary", l_stars)
                                 } else {
                                     i18n.t("city.difficulty.legendary").to_string()
                                 };
@@ -370,21 +376,32 @@ pub(super) fn spawn_building_inspector(
                             BorderRadius::all(Val::Px(8.0)),
                         ))
                         .with_children(|prev| {
-                            let mut header = format!(
-                                "{} ({}",
-                                i18n.t("city.panel.building.preview_title"),
-                                i18n.t_fmt(
-                                    "match3.hud.moves",
-                                    &[("moves", level.max_moves.to_string())]
-                                ),
+                            let preview_title = i18n.t("city.panel.building.preview_title");
+                            let moves_text = i18n.t_fmt(
+                                "match3.hud.moves",
+                                &[("moves", level.max_moves.to_string())],
                             );
-                            if let Some(secs) = level.time_limit_seconds {
-                                header.push_str(", ");
-                                header.push_str(
-                                    &i18n.t_fmt("match3.hud.timer", &[("secs", secs.to_string())]),
-                                );
-                            }
-                            header.push(')');
+                            let header = if let Some(secs) = level.time_limit_seconds {
+                                i18n.t_fmt(
+                                    "city.panel.building.preview_header_timed",
+                                    &[
+                                        ("title", preview_title.to_string()),
+                                        ("moves", moves_text),
+                                        (
+                                            "time",
+                                            i18n.t_fmt(
+                                                "match3.hud.timer",
+                                                &[("secs", secs.to_string())],
+                                            ),
+                                        ),
+                                    ],
+                                )
+                            } else {
+                                i18n.t_fmt(
+                                    "city.panel.building.preview_header",
+                                    &[("title", preview_title.to_string()), ("moves", moves_text)],
+                                )
+                            };
                             prev.spawn((
                                 Text::new(header),
                                 TextFont {
@@ -425,7 +442,7 @@ pub(super) fn spawn_building_inspector(
                             }
                             if !level.cursed_cells.is_empty() {
                                 mode_badges
-                                    .push((i18n.t("city.mode.cursed"), COLOR_ACCENT_CRIMSON));
+                                    .push((i18n.t("city.mode.cursed"), COLOR_ACCENT_CRIMSON_TEXT));
                             }
                             if !mode_badges.is_empty() {
                                 prev.spawn(Node {
@@ -463,7 +480,7 @@ pub(super) fn spawn_building_inspector(
                                 });
                             }
                             prev.spawn((
-                                Text::new(obj_summary.join("  |  ")),
+                                Text::new(obj_summary.join(i18n.t("ui.separator.pipe"))),
                                 TextFont {
                                     font_size: FONT_SMALL,
                                     ..default()
@@ -528,7 +545,7 @@ pub(super) fn spawn_building_inspector(
                                 font_size: FONT_BODY,
                                 ..default()
                             },
-                            TextColor(COLOR_ACCENT_CRIMSON),
+                            TextColor(COLOR_ACCENT_CRIMSON_TEXT),
                         ));
                     } else if let Some(cost) = next_cost {
                         top.spawn((
@@ -560,26 +577,22 @@ pub(super) fn spawn_building_inspector(
                                 let ok = have >= need;
                                 spawn_resource_pill(
                                     costs,
-                                    &format!("{}: {}/{}", label, have, need),
+                                    &i18n.t_fmt(
+                                        "city.panel.building.cost_pill",
+                                        &[
+                                            ("label", label.to_string()),
+                                            ("have", have.to_string()),
+                                            ("need", need.to_string()),
+                                        ],
+                                    ),
                                     if ok {
                                         COLOR_ACCENT_GREEN
                                     } else {
-                                        COLOR_ACCENT_CRIMSON
+                                        COLOR_ACCENT_CRIMSON_TEXT
                                     },
                                 );
                             }
                         });
-                    }
-
-                    if let Some(notice_key) = &ctx.status_notice_key {
-                        top.spawn((
-                            Text::new(i18n.t(notice_key)),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_ACCENT_CRIMSON),
-                        ));
                     }
                 });
             spawn_scrollbar_track(scroll_row, ScrollPanelKind::Inspector);
@@ -621,6 +634,18 @@ pub(super) fn spawn_building_inspector(
             ..default()
         })
         .with_children(|actions| {
+            // Notice pinned above the action buttons so it never hides at the end of scroll content.
+            if let Some(notice_key) = &ctx.status_notice_key {
+                actions.spawn((
+                    Text::new(i18n.t(notice_key)),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_CRIMSON_TEXT),
+                ));
+            }
+
             // 1-click Pre-Combat Loadout strip (Patron God + Amulet)
             actions
                 .spawn(Node {
@@ -652,6 +677,7 @@ pub(super) fn spawn_building_inspector(
                                 CityAction::CyclePatron,
                                 Node {
                                     flex_grow: 1.0,
+                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
                                     padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
                                     column_gap: Val::Px(6.0),
                                     align_items: AlignItems::Center,
@@ -701,6 +727,7 @@ pub(super) fn spawn_building_inspector(
                                 CityAction::CycleAmulet,
                                 Node {
                                     flex_grow: 1.0,
+                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
                                     padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
                                     column_gap: Val::Px(6.0),
                                     align_items: AlignItems::Center,
@@ -759,7 +786,7 @@ pub(super) fn spawn_building_inspector(
                 _ => (
                     i18n.t("city.button.play_level"),
                     COLOR_ACCENT_TEAL,
-                    COLOR_TEXT_PRIMARY,
+                    COLOR_TEXT_ON_ACCENT,
                 ),
             };
             let (play_bg, play_fg) = if can_play {
@@ -796,7 +823,26 @@ pub(super) fn spawn_building_inspector(
                 },
                 CityAction::UpgradeBuilding(b.id.clone()),
                 upg_bg,
-                COLOR_TEXT_PRIMARY,
+                if upg_bg == COLOR_ACCENT_GREEN {
+                    COLOR_TEXT_ON_ACCENT
+                } else {
+                    COLOR_TEXT_PRIMARY
+                },
             );
         });
+}
+
+/// Formats a difficulty tab label with its earned stars, e.g. "Standard (2/3)".
+fn difficulty_label(i18n: &I18nCatalog, key: &str, stars: u8) -> String {
+    if stars > 0 {
+        i18n.t_fmt(
+            "city.difficulty.with_stars",
+            &[
+                ("label", i18n.t(key).to_string()),
+                ("stars", stars.to_string()),
+            ],
+        )
+    } else {
+        i18n.t(key).to_string()
+    }
 }

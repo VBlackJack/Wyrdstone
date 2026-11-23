@@ -18,6 +18,7 @@
 
 use crate::fjord_art::FjordTextures;
 use crate::state::GameContext;
+use crate::theme::*;
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::widget::NodeImageMode;
@@ -28,6 +29,67 @@ use bevy::ui::widget::NodeImageMode;
 pub struct NoButtonScale;
 
 const FADE_DURATION_SECS: f32 = 0.24;
+
+/// Seconds a hub-level notice toast stays on screen before it is cleared.
+pub const NOTICE_TOAST_DURATION_SECS: f32 = 4.5;
+const NOTICE_TOAST_BOTTOM_PX: f32 = 28.0;
+const NOTICE_TOAST_MAX_WIDTH_PX: f32 = 560.0;
+const NOTICE_TOAST_Z_INDEX: i32 = 80;
+
+/// Marker on a notice toast root so screens can find and despawn it.
+#[derive(Component)]
+pub struct NoticeToast;
+
+/// Remaining lifetime in seconds of a notice toast that ticks itself down (Title screen).
+#[derive(Component)]
+pub struct ToastLife(pub f32);
+
+/// Spawns an absolutely positioned notice toast near the bottom of its parent.
+///
+/// The toast does not take part in the flex layout and never intercepts pointer input.
+pub fn spawn_notice_toast(parent: &mut ChildBuilder, text: &str, life_secs: Option<f32>) {
+    let mut cmd = parent.spawn((
+        NoticeToast,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            bottom: Val::Px(NOTICE_TOAST_BOTTOM_PX),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        ZIndex(NOTICE_TOAST_Z_INDEX),
+        PickingBehavior::IGNORE,
+    ));
+    if let Some(life) = life_secs {
+        cmd.insert(ToastLife(life));
+    }
+    cmd.with_children(|row| {
+        row.spawn((
+            Node {
+                max_width: Val::Px(NOTICE_TOAST_MAX_WIDTH_PX),
+                padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                border: UiRect::all(Val::Px(1.5)),
+                ..default()
+            },
+            BackgroundColor(COLOR_PANEL_DARK),
+            BorderColor(COLOR_ACCENT_GOLD),
+            BorderRadius::all(Val::Px(8.0)),
+            PickingBehavior::IGNORE,
+        ))
+        .with_children(|card| {
+            card.spawn((
+                Text::new(text),
+                TextFont {
+                    font_size: FONT_BODY,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_PRIMARY),
+                PickingBehavior::IGNORE,
+            ));
+        });
+    });
+}
 
 /// Returns a 9-slice sculpted Nordic obsidian/bronze panel `ImageNode`.
 pub fn sliced_panel_image(vfx: &VfxTextures) -> ImageNode {

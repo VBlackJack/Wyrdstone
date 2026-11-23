@@ -18,6 +18,7 @@
 
 use crate::audio::{play_sfx, SfxKind, SoundBank};
 use crate::fjord_art::FjordTextures;
+use crate::scroll::{PressArm, UiScrollMemory};
 use crate::state::{today_day_index, AppState, GameContext};
 use crate::theme::*;
 use crate::ui_style::{
@@ -38,11 +39,21 @@ pub struct ResultStarAnim {
     pub earned: bool,
 }
 
+/// Locale template and placeholder for the animated score line.
+const SCORE_TEMPLATE_KEY: &str = "result.score.line";
+const SCORE_TEMPLATE_ARG: &str = "score";
+/// Locale template and placeholder for the animated "+N" resource reward pills.
+const REWARD_TEMPLATE_KEY: &str = "match3.popup.score";
+const REWARD_TEMPLATE_ARG: &str = "n";
+
 /// Smooth ease-out numeric roll-up animation for Victory score and resource reward pills.
 #[derive(Component)]
 pub struct RollUpNumber {
     pub target: u32,
-    pub prefix: String,
+    /// Locale key of the template that wraps the animated number.
+    pub template_key: &'static str,
+    /// Placeholder name of the number inside the template.
+    pub arg_name: &'static str,
     pub elapsed: f32,
     pub duration: f32,
     pub done: bool,
@@ -133,7 +144,7 @@ pub fn setup_result_ui(
     let accent = if is_victory {
         COLOR_ACCENT_GOLD
     } else {
-        COLOR_ACCENT_CRIMSON
+        COLOR_ACCENT_CRIMSON_TEXT
     };
 
     commands
@@ -195,14 +206,16 @@ pub fn setup_result_ui(
                         TextColor(COLOR_TEXT_PRIMARY),
                     ));
 
-                    let score_prefix = i18n.t_fmt("match3.hud.score", &[("score", String::new())]);
                     let initial_score = if is_victory && !ctx.reduced_motion {
                         0
                     } else {
                         ctx.last_score
                     };
                     let mut score_cmd = card.spawn((
-                        Text::new(format!("{score_prefix}{initial_score}")),
+                        Text::new(i18n.t_fmt(
+                            SCORE_TEMPLATE_KEY,
+                            &[(SCORE_TEMPLATE_ARG, initial_score.to_string())],
+                        )),
                         TextFont {
                             font_size: FONT_HEADING,
                             ..default()
@@ -212,7 +225,8 @@ pub fn setup_result_ui(
                     if is_victory && !ctx.reduced_motion && ctx.last_score > 0 {
                         score_cmd.insert(RollUpNumber {
                             target: ctx.last_score,
-                            prefix: score_prefix,
+                            template_key: SCORE_TEMPLATE_KEY,
+                            arg_name: SCORE_TEMPLATE_ARG,
                             elapsed: 0.0,
                             duration: 0.85,
                             done: false,
@@ -327,7 +341,10 @@ pub fn setup_result_ui(
                                         let initial_amt =
                                             if ctx.reduced_motion { amount } else { 0 };
                                         let mut amt_cmd = pill.spawn((
-                                            Text::new(format!("+{initial_amt}")),
+                                            Text::new(i18n.t_fmt(
+                                                REWARD_TEMPLATE_KEY,
+                                                &[(REWARD_TEMPLATE_ARG, initial_amt.to_string())],
+                                            )),
                                             TextFont {
                                                 font_size: FONT_BODY,
                                                 ..default()
@@ -337,7 +354,8 @@ pub fn setup_result_ui(
                                         if !ctx.reduced_motion {
                                             amt_cmd.insert(RollUpNumber {
                                                 target: amount,
-                                                prefix: "+".to_string(),
+                                                template_key: REWARD_TEMPLATE_KEY,
+                                                arg_name: REWARD_TEMPLATE_ARG,
                                                 elapsed: 0.0,
                                                 duration: 0.72,
                                                 done: false,
@@ -373,7 +391,7 @@ pub fn setup_result_ui(
                             }
                             if !bonus_tags.is_empty() {
                                 card.spawn((
-                                    Text::new(bonus_tags.join("  |  ")),
+                                    Text::new(bonus_tags.join(i18n.t("ui.separator.pipe"))),
                                     TextFont {
                                         font_size: FONT_SMALL,
                                         ..default()
@@ -511,7 +529,7 @@ pub fn setup_result_ui(
                                         font_size: FONT_BODY,
                                         ..default()
                                     },
-                                    TextColor(COLOR_ACCENT_CRIMSON),
+                                    TextColor(COLOR_ACCENT_CRIMSON_TEXT),
                                 ));
                             } else {
                                 for prog in &session.objectives {
@@ -595,7 +613,7 @@ pub fn setup_result_ui(
                                     COLOR_BUTTON_DISABLED
                                 },
                                 if has_energy {
-                                    COLOR_TEXT_PRIMARY
+                                    COLOR_TEXT_ON_ACCENT
                                 } else {
                                     COLOR_TEXT_MUTED
                                 },
@@ -629,7 +647,7 @@ pub fn setup_result_ui(
                                     COLOR_BUTTON_DISABLED
                                 },
                                 if replay_ok {
-                                    COLOR_TEXT_PRIMARY
+                                    COLOR_TEXT_ON_ACCENT
                                 } else {
                                     COLOR_TEXT_MUTED
                                 },
@@ -651,6 +669,7 @@ fn spawn_result_btn(
     let mut cmd = parent.spawn((
         Button,
         Node {
+            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
             padding: UiRect::axes(Val::Px(20.0), Val::Px(12.0)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -693,7 +712,10 @@ pub fn animate_result_stars(
         for (mut roll, mut text) in &mut rollups {
             if !roll.done {
                 roll.done = true;
-                text.0 = format!("{}{}", roll.prefix, roll.target);
+                text.0 = ctx.data.i18n.t_fmt(
+                    roll.template_key,
+                    &[(roll.arg_name, roll.target.to_string())],
+                );
             }
         }
         return;
@@ -713,7 +735,10 @@ pub fn animate_result_stars(
         } else {
             (roll.target as f32 * eased).round() as u32
         };
-        text.0 = format!("{}{}", roll.prefix, cur);
+        text.0 = ctx
+            .data
+            .i18n
+            .t_fmt(roll.template_key, &[(roll.arg_name, cur.to_string())]);
     }
     for (mut anim, mut tf) in &mut stars {
         if !anim.earned {
@@ -768,7 +793,10 @@ pub fn handle_result_buttons(
     keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
     mut next_state: ResMut<NextState<AppState>>,
-    buttons: Query<(&Interaction, &ResultAction), Changed<Interaction>>,
+    touches: Res<Touches>,
+    scroll_mem: Res<UiScrollMemory>,
+    mut press_arm: Local<PressArm>,
+    buttons: Query<(Entity, &Interaction, &ResultAction), Changed<Interaction>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         next_state.set(AppState::FjordCity);
@@ -790,8 +818,14 @@ pub fn handle_result_buttons(
         return;
     }
 
-    for (interaction, action) in &buttons {
-        if *interaction != Interaction::Pressed {
+    // Actions fire on release so a touch that starts a scroll never triggers a button.
+    let tapped = press_arm.completed_taps(
+        buttons.iter().map(|(entity, i, _)| (entity, *i)),
+        &touches,
+        &scroll_mem,
+    );
+    for (entity, _, action) in &buttons {
+        if !tapped.contains(&entity) {
             continue;
         }
         match action {

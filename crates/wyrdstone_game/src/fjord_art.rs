@@ -97,6 +97,29 @@ pub fn app_icon_rgba() -> (Vec<u8>, u32, u32) {
     (img.data, w, h)
 }
 
+/// Portrait used for any speaker that has neither its own painting nor an alias.
+const PORTRAIT_FALLBACK_KEY: &str = "jarl";
+
+/// Speakers that share the painting of another character, or use the fallback explicitly.
+const PORTRAIT_ALIASES: &[(&str, &str)] = &[
+    ("smith", "brokk"),
+    ("seer", "volva"),
+    ("navigator", PORTRAIT_FALLBACK_KEY),
+    ("innkeeper", PORTRAIT_FALLBACK_KEY),
+];
+
+/// Maps a speaker id to the key of the portrait texture that represents it.
+pub fn portrait_key(speaker: &str) -> &str {
+    if matches!(speaker, "jarl" | "brokk" | "volva") {
+        return speaker;
+    }
+    PORTRAIT_ALIASES
+        .iter()
+        .find(|(name, _)| *name == speaker)
+        .map(|(_, key)| *key)
+        .unwrap_or(PORTRAIT_FALLBACK_KEY)
+}
+
 impl FjordTextures {
     /// Returns the painted illustration handle for a given building ID (Inspector view).
     pub fn building_image(&self, building_id: &str) -> Option<Handle<Image>> {
@@ -111,9 +134,12 @@ impl FjordTextures {
             .cloned()
     }
 
-    /// Returns the painted character portrait for a Saga speaker (`"jarl"`, `"brokk"`, `"volva"`).
+    /// Returns the painted character portrait for a Saga or chapter speaker.
+    ///
+    /// Speakers without their own painting resolve through [`portrait_key`], so every
+    /// speaker renders with a portrait.
     pub fn portrait(&self, speaker: &str) -> Option<Handle<Image>> {
-        self.portraits.get(speaker).cloned()
+        self.portraits.get(portrait_key(speaker)).cloned()
     }
 
     /// Returns the painted skill icon for one of the six active tools.
@@ -384,4 +410,24 @@ fn decode_png(bytes: &[u8]) -> Image {
         RenderAssetUsages::RENDER_WORLD,
     )
     .expect("Bundled PNG sprite must decode cleanly")
+}
+
+#[cfg(test)]
+mod portrait_tests {
+    use super::portrait_key;
+
+    #[test]
+    fn chapter_speakers_resolve_to_a_painted_portrait() {
+        for speaker in ["jarl", "smith", "navigator", "seer", "innkeeper"] {
+            assert!(matches!(portrait_key(speaker), "jarl" | "brokk" | "volva"));
+        }
+    }
+
+    #[test]
+    fn aliases_and_fallback_are_explicit() {
+        assert_eq!(portrait_key("smith"), "brokk");
+        assert_eq!(portrait_key("seer"), "volva");
+        assert_eq!(portrait_key("navigator"), "jarl");
+        assert_eq!(portrait_key("unknown_speaker"), "jarl");
+    }
 }

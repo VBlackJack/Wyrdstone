@@ -35,23 +35,55 @@ pub(super) fn format_reward_summary(i18n: &I18nCatalog, res: ResourceBundle, glo
     if glory > 0 {
         parts.push(i18n.t_fmt("city.panel.reward.glory", &[("glory", glory.to_string())]));
     }
-    if res.wood > 0 {
-        parts.push(format!("+{} {}", res.wood, i18n.t("resources.label.wood")));
-    }
-    if res.stone > 0 {
-        parts.push(format!(
-            "+{} {}",
-            res.stone,
-            i18n.t("resources.label.stone")
-        ));
-    }
-    if res.gold > 0 {
-        parts.push(format!("+{} {}", res.gold, i18n.t("resources.label.gold")));
-    }
-    if res.mead > 0 {
-        parts.push(format!("+{} {}", res.mead, i18n.t("resources.label.mead")));
-    }
-    i18n.t_fmt("city.panel.reward.prefix", &[("items", parts.join(", "))])
+    parts.extend(reward_item_lines(i18n, res));
+    i18n.t_fmt(
+        "city.panel.reward.prefix",
+        &[("items", parts.join(i18n.t("ui.separator.comma")))],
+    )
+}
+
+/// Resource amounts paired with their locale label keys, in display order.
+fn resource_entries(res: ResourceBundle) -> [(u32, &'static str); 4] {
+    [
+        (res.wood, "resources.label.wood"),
+        (res.stone, "resources.label.stone"),
+        (res.gold, "resources.label.gold"),
+        (res.mead, "resources.label.mead"),
+    ]
+}
+
+/// One "+amount resource" text per non-zero resource of the bundle.
+fn reward_item_lines(i18n: &I18nCatalog, res: ResourceBundle) -> Vec<String> {
+    resource_entries(res)
+        .into_iter()
+        .filter(|(amount, _)| *amount > 0)
+        .map(|(amount, label_key)| {
+            i18n.t_fmt(
+                "city.panel.reward.item",
+                &[
+                    ("amount", amount.to_string()),
+                    ("resource", i18n.t(label_key).to_string()),
+                ],
+            )
+        })
+        .collect()
+}
+
+/// One "amount resource" text per non-zero resource of a cost bundle.
+fn cost_item_lines(i18n: &I18nCatalog, cost: ResourceBundle) -> Vec<String> {
+    resource_entries(cost)
+        .into_iter()
+        .filter(|(amount, _)| *amount > 0)
+        .map(|(amount, label_key)| {
+            i18n.t_fmt(
+                "city.panel.shop.cost_item",
+                &[
+                    ("amount", amount.to_string()),
+                    ("resource", i18n.t(label_key).to_string()),
+                ],
+            )
+        })
+        .collect()
 }
 
 fn format_amulet_effect(i18n: &I18nCatalog, effect: AmuletEffect) -> String {
@@ -196,7 +228,7 @@ fn spawn_modal_shell<F>(
                                     font_size: FONT_SMALL,
                                     ..default()
                                 },
-                                TextColor(COLOR_ACCENT_GOLD),
+                                TextColor(COLOR_TEXT_PRIMARY),
                             ));
                         });
                 }
@@ -301,9 +333,9 @@ pub(super) fn spawn_amulets_modal(
                 let (btn_bg, btn_fg) = if equipped {
                     (COLOR_ACCENT_GOLD, COLOR_TEXT_DARK)
                 } else if crafted {
-                    (COLOR_ACCENT_TEAL, COLOR_TEXT_PRIMARY)
+                    (COLOR_ACCENT_TEAL, COLOR_TEXT_ON_ACCENT)
                 } else if can_afford_next {
-                    (COLOR_ACCENT_GREEN, COLOR_TEXT_PRIMARY)
+                    (COLOR_ACCENT_GREEN, COLOR_TEXT_ON_ACCENT)
                 } else {
                     (COLOR_BUTTON_DISABLED, COLOR_TEXT_PRIMARY)
                 };
@@ -360,13 +392,12 @@ pub(super) fn spawn_amulets_modal(
                             })
                             .with_children(|info| {
                                 let title = if crafted {
-                                    format!(
-                                        "{}  ({})",
-                                        i18n.t(&amulet.name_key),
-                                        i18n.t_fmt(
-                                            "city.panel.amulets.tier",
-                                            &[("tier", tier.to_string())]
-                                        )
+                                    i18n.t_fmt(
+                                        "city.panel.amulets.name_with_tier",
+                                        &[
+                                            ("name", i18n.t(&amulet.name_key).to_string()),
+                                            ("tier", tier.to_string()),
+                                        ],
                                     )
                                 } else {
                                     i18n.t(&amulet.name_key).to_string()
@@ -567,16 +598,13 @@ pub(super) fn spawn_collections_modal(
                                     ));
                                 }
                                 hdr_left.spawn((
-                                    Text::new(format!(
-                                        "{}  ({})",
-                                        i18n.t(&col.name_key),
-                                        i18n.t_fmt(
-                                            "city.panel.collections.progress",
-                                            &[
-                                                ("found", found.to_string()),
-                                                ("total", total.to_string()),
-                                            ],
-                                        )
+                                    Text::new(i18n.t_fmt(
+                                        "city.panel.collections.header",
+                                        &[
+                                            ("name", i18n.t(&col.name_key).to_string()),
+                                            ("found", found.to_string()),
+                                            ("total", total.to_string()),
+                                        ],
                                     )),
                                     TextFont {
                                         font_size: FONT_BODY,
@@ -664,19 +692,7 @@ pub(super) fn spawn_tool_shop_modal(
                 let count = ctx.city.tools.count(recipe.tool);
                 let can_afford = ctx.city.resources.can_afford(&recipe.cost);
                 let c = recipe.cost;
-                let mut cost_parts = Vec::new();
-                if c.wood > 0 {
-                    cost_parts.push(format!("{} {}", c.wood, i18n.t("resources.label.wood")));
-                }
-                if c.stone > 0 {
-                    cost_parts.push(format!("{} {}", c.stone, i18n.t("resources.label.stone")));
-                }
-                if c.gold > 0 {
-                    cost_parts.push(format!("{} {}", c.gold, i18n.t("resources.label.gold")));
-                }
-                if c.mead > 0 {
-                    cost_parts.push(format!("{} {}", c.mead, i18n.t("resources.label.mead")));
-                }
+                let cost_parts = cost_item_lines(i18n, c);
 
                 modal
                     .spawn((
@@ -740,7 +756,7 @@ pub(super) fn spawn_tool_shop_modal(
                                     TextColor(COLOR_TEXT_PRIMARY),
                                 ));
                                 info.spawn((
-                                    Text::new(cost_parts.join("  |  ")),
+                                    Text::new(cost_parts.join(i18n.t("ui.separator.pipe"))),
                                     TextFont {
                                         font_size: FONT_SMALL,
                                         ..default()
@@ -1159,7 +1175,7 @@ pub(super) fn spawn_patrons_modal(
                             if active {
                                 COLOR_TEXT_DARK
                             } else {
-                                COLOR_TEXT_PRIMARY
+                                COLOR_TEXT_ON_ACCENT
                             },
                         );
                     });
@@ -1246,17 +1262,24 @@ pub(super) fn spawn_raids_modal(
                             })
                             .with_children(|info| {
                                 let header = if slain {
-                                    format!(
-                                        "{} - {} [{}]",
-                                        i18n.t(&boss.name_key),
-                                        i18n.t(&boss.title_key),
-                                        i18n.t("city.panel.raids.defeated")
+                                    i18n.t_fmt(
+                                        "city.panel.raids.header_slain",
+                                        &[
+                                            ("name", i18n.t(&boss.name_key).to_string()),
+                                            ("title", i18n.t(&boss.title_key).to_string()),
+                                            (
+                                                "state",
+                                                i18n.t("city.panel.raids.defeated").to_string(),
+                                            ),
+                                        ],
                                     )
                                 } else {
-                                    format!(
-                                        "{} - {}",
-                                        i18n.t(&boss.name_key),
-                                        i18n.t(&boss.title_key)
+                                    i18n.t_fmt(
+                                        "city.panel.raids.header",
+                                        &[
+                                            ("name", i18n.t(&boss.name_key).to_string()),
+                                            ("title", i18n.t(&boss.title_key).to_string()),
+                                        ],
                                     )
                                 };
                                 info.spawn((
@@ -1724,35 +1747,7 @@ pub(super) fn spawn_login_calendar_modal(
                                     ));
                                 }
                             }
-                            let mut lines = Vec::new();
-                            if res.wood > 0 {
-                                lines.push(format!(
-                                    "+{} {}",
-                                    res.wood,
-                                    i18n.t("resources.label.wood")
-                                ));
-                            }
-                            if res.stone > 0 {
-                                lines.push(format!(
-                                    "+{} {}",
-                                    res.stone,
-                                    i18n.t("resources.label.stone")
-                                ));
-                            }
-                            if res.gold > 0 {
-                                lines.push(format!(
-                                    "+{} {}",
-                                    res.gold,
-                                    i18n.t("resources.label.gold")
-                                ));
-                            }
-                            if res.mead > 0 {
-                                lines.push(format!(
-                                    "+{} {}",
-                                    res.mead,
-                                    i18n.t("resources.label.mead")
-                                ));
-                            }
+                            let lines = reward_item_lines(i18n, res);
                             card.spawn((
                                 Text::new(lines.join("\n")),
                                 TextFont {

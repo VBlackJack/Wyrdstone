@@ -12,6 +12,8 @@
         legendary_level_id: Some("great_hall_3"),
         map_x_pct: 48.0,
         map_y_pct: 48.0,
+        portrait_left_pct: Some(34.0),
+        portrait_top_pct: Some(36.0),
         upgrade_costs: [
             ResourceBundle(wood: 60, stone: 40, gold: 40, mead: 0),
             ResourceBundle(wood: 140, stone: 100, gold: 100, mead: 15),
@@ -32,6 +34,8 @@
         legendary_level_id: Some("forge_3"),
         map_x_pct: 20.0,
         map_y_pct: 47.0,
+        portrait_left_pct: Some(1.0),
+        portrait_top_pct: Some(22.0),
         upgrade_costs: [
             ResourceBundle(wood: 50, stone: 80, gold: 60, mead: 0),
             ResourceBundle(wood: 120, stone: 180, gold: 130, mead: 10),
@@ -52,6 +56,8 @@
         legendary_level_id: Some("dock_3"),
         map_x_pct: 73.0,
         map_y_pct: 56.0,
+        portrait_left_pct: Some(67.0),
+        portrait_top_pct: Some(34.0),
         upgrade_costs: [
             ResourceBundle(wood: 100, stone: 50, gold: 80, mead: 10),
             ResourceBundle(wood: 200, stone: 110, gold: 170, mead: 25),
@@ -72,6 +78,8 @@
         legendary_level_id: Some("shrine_3"),
         map_x_pct: 18.0,
         map_y_pct: 72.0,
+        portrait_left_pct: Some(1.0),
+        portrait_top_pct: Some(50.0),
         upgrade_costs: [
             ResourceBundle(wood: 70, stone: 110, gold: 120, mead: 15),
             ResourceBundle(wood: 160, stone: 240, gold: 250, mead: 35),
@@ -92,6 +100,8 @@
         legendary_level_id: Some("meadery_3"),
         map_x_pct: 76.0,
         map_y_pct: 78.0,
+        portrait_left_pct: Some(67.0),
+        portrait_top_pct: Some(60.0),
         upgrade_costs: [
             ResourceBundle(wood: 75, stone: 45, gold: 50, mead: 0),
             ResourceBundle(wood: 160, stone: 100, gold: 120, mead: 15),
@@ -112,6 +122,8 @@
         legendary_level_id: Some("watchtower_3"),
         map_x_pct: 82.0,
         map_y_pct: 35.0,
+        portrait_left_pct: Some(67.0),
+        portrait_top_pct: Some(8.0),
         upgrade_costs: [
             ResourceBundle(wood: 110, stone: 130, gold: 140, mead: 20),
             ResourceBundle(wood: 220, stone: 260, gold: 280, mead: 40),

@@ -22,6 +22,8 @@ use bevy::ui::RelativeCursorPosition;
 
 const WHEEL_LINE_SCROLL_PX: f32 = 34.0;
 const TOUCH_SCROLL_DEADZONE_PX: f32 = 6.0;
+/// A touch that moved farther than this between press and release is a drag, never a tap.
+pub const TAP_SLOP_PX: f32 = 12.0;
 
 /// Identifies which scrollable panel owns a `ScrollPosition` so offsets survive UI rebuilds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +114,59 @@ impl UiScrollMemory {
     pub fn is_touch_scrolling(&self) -> bool {
         self.touch_scrolling || self.suppress_clicks_frames > 0
     }
+}
+
+/// Remembers which buttons were pressed so their action fires on release, not on contact.
+///
+/// On touch screens Bevy reports `Interaction::Pressed` the moment a finger lands, before
+/// any scroll gesture is recognised. Handlers feed their `Changed<Interaction>` items to
+/// [`PressArm::completed_taps`] and act only on the entities it returns.
+#[derive(Default)]
+pub struct PressArm {
+    armed: Vec<Entity>,
+}
+
+impl PressArm {
+    /// Returns the entities whose press was released as a genuine tap this frame.
+    ///
+    /// A press arms its entity without firing. The next change of an armed entity away from
+    /// `Pressed` fires it only if no touch scroll happened and every just-released touch
+    /// stayed within [`TAP_SLOP_PX`]. A new press disarms any earlier armed entity. A mouse
+    /// release outside the button (`None` without a touch release) cancels the action.
+    pub fn completed_taps(
+        &mut self,
+        changes: impl IntoIterator<Item = (Entity, Interaction)>,
+        touches: &Touches,
+        scroll: &UiScrollMemory,
+    ) -> Vec<Entity> {
+        let mut fired = Vec::new();
+        let mut new_presses = Vec::new();
+        let touch_released = touches.iter_just_released().next().is_some();
+        let tap_ok = !scroll.is_touch_scrolling() && released_within_slop(touches);
+        for (entity, interaction) in changes {
+            if interaction == Interaction::Pressed {
+                new_presses.push(entity);
+            } else if let Some(idx) = self.armed.iter().position(|e| *e == entity) {
+                self.armed.swap_remove(idx);
+                let released_on_target =
+                    interaction == Interaction::Hovered || (touch_released && tap_ok);
+                if tap_ok && released_on_target {
+                    fired.push(entity);
+                }
+            }
+        }
+        if !new_presses.is_empty() {
+            self.armed = new_presses;
+        }
+        fired
+    }
+}
+
+/// True when every touch released this frame stayed within [`TAP_SLOP_PX`] of where it started.
+fn released_within_slop(touches: &Touches) -> bool {
+    touches
+        .iter_just_released()
+        .all(|t| t.distance().length() <= TAP_SLOP_PX)
 }
 
 type ScrollPanelQuery<'w, 's> = Query<
@@ -312,4 +367,118 @@ fn point_inside_node(pos: Vec2, computed: &ComputedNode, gtf: &GlobalTransform) 
     let center = gtf.translation().truncate() * inv;
     let delta = (pos - center).abs();
     delta.x <= half.x && delta.y <= half.y
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::input::touch::{TouchInput, TouchPhase};
+    use bevy::input::InputPlugin;
+
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(InputPlugin);
+        app
+    }
+
+    /// Feeds one touch event through the real input system and advances one frame.
+    fn touch(app: &mut App, phase: TouchPhase, x: f32, y: f32) {
+        app.world_mut().send_event(TouchInput {
+            phase,
+            position: Vec2::new(x, y),
+            window: Entity::PLACEHOLDER,
+            force: None,
+            id: 1,
+        });
+        app.update();
+    }
+
+    fn entity() -> Entity {
+        Entity::from_raw(7)
+    }
+
+    #[test]
+    fn press_alone_never_fires() {
+        let mut arm = PressArm::default();
+        let touches = Touches::default();
+        let mem = UiScrollMemory::default();
+        let fired = arm.completed_taps([(entity(), Interaction::Pressed)], &touches, &mem);
+        assert!(fired.is_empty());
+    }
+
+    #[test]
+    fn mouse_release_over_button_fires() {
+        let mut arm = PressArm::default();
+        let touches = Touches::default();
+        let mem = UiScrollMemory::default();
+        arm.completed_taps([(entity(), Interaction::Pressed)], &touches, &mem);
+        let fired = arm.completed_taps([(entity(), Interaction::Hovered)], &touches, &mem);
+        assert_eq!(fired, vec![entity()]);
+    }
+
+    #[test]
+    fn mouse_release_outside_button_cancels() {
+        let mut arm = PressArm::default();
+        let touches = Touches::default();
+        let mem = UiScrollMemory::default();
+        arm.completed_taps([(entity(), Interaction::Pressed)], &touches, &mem);
+        let fired = arm.completed_taps([(entity(), Interaction::None)], &touches, &mem);
+        assert!(fired.is_empty());
+    }
+
+    #[test]
+    fn short_touch_release_fires() {
+        let mut app = test_app();
+        let mut arm = PressArm::default();
+        let mem = UiScrollMemory::default();
+        touch(&mut app, TouchPhase::Started, 10.0, 10.0);
+        arm.completed_taps(
+            [(entity(), Interaction::Pressed)],
+            app.world().resource::<Touches>(),
+            &mem,
+        );
+        touch(&mut app, TouchPhase::Ended, 12.0, 11.0);
+        let fired = arm.completed_taps(
+            [(entity(), Interaction::None)],
+            app.world().resource::<Touches>(),
+            &mem,
+        );
+        assert_eq!(fired, vec![entity()]);
+    }
+
+    #[test]
+    fn dragged_touch_release_does_not_fire() {
+        let mut app = test_app();
+        let mut arm = PressArm::default();
+        let mem = UiScrollMemory::default();
+        touch(&mut app, TouchPhase::Started, 10.0, 10.0);
+        arm.completed_taps(
+            [(entity(), Interaction::Pressed)],
+            app.world().resource::<Touches>(),
+            &mem,
+        );
+        touch(&mut app, TouchPhase::Moved, 10.0, 10.0 + TAP_SLOP_PX * 4.0);
+        touch(&mut app, TouchPhase::Ended, 10.0, 10.0 + TAP_SLOP_PX * 4.0);
+        let fired = arm.completed_taps(
+            [(entity(), Interaction::None)],
+            app.world().resource::<Touches>(),
+            &mem,
+        );
+        assert!(fired.is_empty());
+    }
+
+    #[test]
+    fn new_press_on_other_entity_disarms_previous() {
+        let mut arm = PressArm::default();
+        let touches = Touches::default();
+        let mem = UiScrollMemory::default();
+        arm.completed_taps([(entity(), Interaction::Pressed)], &touches, &mem);
+        arm.completed_taps(
+            [(Entity::from_raw(8), Interaction::Pressed)],
+            &touches,
+            &mem,
+        );
+        let fired = arm.completed_taps([(entity(), Interaction::Hovered)], &touches, &mem);
+        assert!(fired.is_empty());
+    }
 }

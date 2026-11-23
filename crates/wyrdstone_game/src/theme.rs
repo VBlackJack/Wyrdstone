@@ -80,11 +80,6 @@ pub const COLOR_ACCENT_CRIMSON_TEXT: Color = Color::srgb(0.96, 0.50, 0.50);
 /// Minimum logical size in px for tappable controls.
 pub const MIN_TOUCH_TARGET_PX: f32 = 44.0;
 
-// Compile-time references keep the shared tokens alive until the UI call sites adopt them.
-const _: Color = COLOR_TEXT_ON_ACCENT;
-const _: Color = COLOR_ACCENT_CRIMSON_TEXT;
-const _: () = assert!(MIN_TOUCH_TARGET_PX > 0.0);
-
 /// Returns RGB tuple `[r, g, b]` in 0..=255 for procedural rune stone rendering.
 pub const fn rune_base_rgb(rune: RuneType) -> [u8; 3] {
     match rune {

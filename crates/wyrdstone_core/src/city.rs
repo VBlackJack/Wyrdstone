@@ -116,6 +116,13 @@ pub struct BuildingDef {
     pub legendary_level_id: Option<String>,
     pub map_x_pct: f32,
     pub map_y_pct: f32,
+    /// Optional explicit pin left edge (percent of map width) in portrait layout.
+    /// When absent the landscape position is projected and clamped.
+    #[serde(default)]
+    pub portrait_left_pct: Option<f32>,
+    /// Optional explicit pin top edge (percent of map height) in portrait layout.
+    #[serde(default)]
+    pub portrait_top_pct: Option<f32>,
     pub upgrade_costs: Vec<ResourceBundle>,
     pub glory_per_tier: u32,
     #[serde(default)]

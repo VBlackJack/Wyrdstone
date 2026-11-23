@@ -467,5 +467,6 @@
   "result.score.line": "Score : {score}",
   "save.notice.recovered_from_backup": "Progression restaurée depuis la copie de secours.",
   "save.warning.read_only": "Le fichier de sauvegarde est illisible. La progression ne sera pas enregistrée tant que le problème n'est pas corrigé. Le fichier d'origine a été conservé.",
-  "save.notice.unreadable_backed_up": "La sauvegarde est illisible. Une copie a été conservée à côté sous le nom {name}. Une nouvelle saga a démarré."
+  "save.notice.unreadable_backed_up": "La sauvegarde est illisible. Une copie a été conservée à côté. Une nouvelle saga a démarré.",
+  "city.header.blessing_pill": "{name} : {desc}"
 }

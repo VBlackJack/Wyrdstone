@@ -467,5 +467,6 @@
   "result.score.line": "Score: {score}",
   "save.notice.recovered_from_backup": "Progress restored from the backup copy.",
   "save.warning.read_only": "The save file could not be read. Progress will not be saved until the problem is fixed. The original file was kept.",
-  "save.notice.unreadable_backed_up": "The save could not be read. A copy was kept next to it as {name}. A new saga was started."
+  "save.notice.unreadable_backed_up": "The save could not be read. A copy of it was kept next to it. A new saga was started.",
+  "city.header.blessing_pill": "{name}: {desc}"
 }
