@@ -21,6 +21,12 @@ All notable changes to Wyrdstone are documented in this file.
 - **Externalized RON Data**: Moved Skalds' Feats (`achievements.ron`), Clan Rank thresholds (`balance.ron`), and per-building passive harvest yields (`buildings.ron`) out of Rust code.
 
 ### Fixed
+- **Unwinnable Content**: `meadery_1` now targets a rune that actually spawns; Expedition wave 1 only targets runes inside its pool; Daily Trial relics never land on blocked cells. Data-feasibility tests cover every bundled level, a full year of dailies, and Expedition waves.
+- **Board Dead-Ends**: The shuffle fallback is verified, swaps must form a match involving a swapped cell (hints agree), and unshufflable boards are regenerated instead of soft-locking.
+- **Save Safety**: An unreadable save is never overwritten: it is copied aside, the `.bak` is tried, and the session stays read-only (with a persistent warning) while the original could still load. Saves are fsynced and a rotating `.bak` is kept.
+- **Android Platform**: Save path from the app's internal data dir, BGM paused and progress saved on suspend, Back button mapped to Escape (City -> Title -> quit), packaging switched to NativeActivity with full `configChanges`, signed release APK via repository secrets, and CI now builds the Android APK.
+- **Endurance Regen**: Driven by the wall clock, so time spent in the background or asleep is credited.
+- **Touch & UI**: Buttons fire on release so touch scrolling never buys or picks anything; notices show as a toast on the hub and Title; portrait pins no longer overlap; every chapter speaker has a portrait; Undo state refreshes; HUD clicks no longer reach the board; text on accent buttons meets 4.5:1 contrast; tappable controls are at least 44 px; composite UI strings come from locale templates; the Windows build no longer opens a console.
 - **Fog of War**: Prevented invisible matches inside fog, fog-targeted Bifrost Prisms, hidden starting/Fury boosters, and shuffle deadlocks on fogged tiles.
 - **Free Tools & Divine Fury**: Stopped free tools and Patron Fury from ticking Boss Riposte counters or triggering Niflheim Frost spread.
 - **Eye of Odin Amulet (Tiers 1-3)**: Scaled starting boosters from 1 to 3 across upgrade tiers and updated the Amulets modal to show live scaled effects.
