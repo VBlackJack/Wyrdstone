@@ -902,3 +902,68 @@ fn typography_guard_recursively_scans_all_project_text_files() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn win_streak_two_phase_boss_and_cursed_runes_work() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(777);
+
+    // 1. Win Streak >= 2 grants +1 starting booster and resets on reset_win_streak().
+    let mut city = CityState::new(&data.balance);
+    assert_eq!(city.compute_bonuses(&data.balance).starting_boosters, 0);
+    city.record_level_victory(
+        "great_hall",
+        "great_hall_1",
+        3,
+        &data.levels[0].base_reward,
+        &data.balance,
+    );
+    assert_eq!(city.stats.win_streak, 1);
+    assert_eq!(city.compute_bonuses(&data.balance).starting_boosters, 0);
+    city.record_level_victory(
+        "great_hall",
+        "great_hall_1",
+        3,
+        &data.levels[0].base_reward,
+        &data.balance,
+    );
+    assert_eq!(city.stats.win_streak, 2);
+    assert_eq!(city.compute_bonuses(&data.balance).starting_boosters, 1);
+    city.reset_win_streak();
+    assert_eq!(city.stats.win_streak, 0);
+    assert_eq!(city.stats.best_win_streak, 2);
+
+    // 2. Boss 2-Phase transition below 50% HP switches weakness and riposte.
+    let fenrir = data.boss_by_id("boss_fenrir").unwrap().clone();
+    let mut boss_session = LevelSession::start_boss(
+        fenrir.clone(),
+        None,
+        CityBonuses::default(),
+        PatronGod::Thor,
+        &mut rng,
+    );
+    let boss = boss_session.boss.as_mut().unwrap();
+    assert!(!boss.is_phase2());
+    assert_eq!(boss.active_weakness(), RuneType::Fire);
+    boss.hp = fenrir.max_hp / 2 - 10;
+    assert!(boss.is_phase2());
+    assert_eq!(boss.active_weakness(), RuneType::Ice);
+
+    // 3. Cursed Rune ticks down and freezes orthogonal neighbors at 0 without chaining relics.
+    let mut cells = vec![Cell::playable(RuneType::Wood); 16];
+    cells[5].curse_turns = 2; // (1, 1)
+    cells[1].relic = true; // (1, 0) neighbor is a relic
+    cells[1].rune = None;
+    let mut board = Board::from_cells(4, 4, 6, cells);
+    assert!(board.tick_cursed_runes().is_empty());
+    assert_eq!(board.get(CellPos::new(1, 1)).unwrap().curse_turns, 1);
+    let affected = board.tick_cursed_runes();
+    assert!(!affected.is_empty());
+    assert_eq!(board.get(CellPos::new(1, 1)).unwrap().curse_turns, 0);
+    assert_eq!(board.get(CellPos::new(2, 1)).unwrap().ice_layers, 1);
+    assert!(
+        !board.get(CellPos::new(1, 0)).unwrap().chained
+            && board.get(CellPos::new(1, 0)).unwrap().ice_layers == 0,
+        "Cursed rune detonation must never freeze or chain a relic"
+    );
+}

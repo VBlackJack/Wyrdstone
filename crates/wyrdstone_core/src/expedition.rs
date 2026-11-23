@@ -168,6 +168,11 @@ impl ExpeditionRun {
             } else {
                 vec![]
             },
+            cursed_cells: if w >= 6 {
+                vec![(2, 2, 6), (5, 5, 6)]
+            } else {
+                vec![]
+            },
             blocked_cells: vec![(0, 0), (7, 0), (0, 7), (7, 7)],
             base_reward: ResourceBundle {
                 wood: 50 + w * 20,

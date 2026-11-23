@@ -77,6 +77,8 @@ pub struct LevelDef {
     pub frost_spread: bool,
     #[serde(default)]
     pub fog_cells: Vec<(usize, usize)>,
+    #[serde(default)]
+    pub cursed_cells: Vec<(usize, usize, u8)>,
     pub blocked_cells: Vec<(usize, usize)>,
     pub base_reward: ResourceBundle,
 }
@@ -222,6 +224,7 @@ impl LevelDef {
             } else {
                 vec![]
             },
+            cursed_cells: vec![],
             blocked_cells,
             base_reward: ResourceBundle {
                 wood: 140,
@@ -338,10 +341,12 @@ impl LevelSession {
         rng: &mut R,
     ) -> Self {
         let mut board = Board::new_for_level(&level, rng);
+        let mut total_starting_boosters = city_bonuses.starting_boosters;
         if let Some(AmuletEffect::StartingBoosters(count)) = amulet {
-            for _ in 0..count {
-                board.spawn_random_starting_booster(rng);
-            }
+            total_starting_boosters += count;
+        }
+        for _ in 0..total_starting_boosters {
+            board.spawn_random_starting_booster(rng);
         }
 
         let objectives = level
@@ -414,8 +419,16 @@ impl LevelSession {
 
     /// Unleashes the active Patron God's Divine Fury power (free, consumes no move).
     pub fn trigger_patron_fury<R: Rng>(&mut self, rng: &mut R) -> Option<PreparedClear> {
+        self.trigger_patron_fury_detailed(rng).0
+    }
+
+    /// Unleashes Divine Fury, returning `(optional_clear, spawned_booster_positions)`.
+    pub fn trigger_patron_fury_detailed<R: Rng>(
+        &mut self,
+        rng: &mut R,
+    ) -> (Option<PreparedClear>, Vec<CellPos>) {
         if !self.can_trigger_fury() {
-            return None;
+            return (None, Vec::new());
         }
         self.fury = 0;
         match self.patron {
@@ -427,7 +440,7 @@ impl LevelSession {
             }
             PatronGod::Thor | PatronGod::Loki => {}
         }
-        self.board.apply_patron_fury(self.patron, rng)
+        self.board.apply_patron_fury_detailed(self.patron, rng)
     }
 
     /// Advances the optional countdown timer and triggers Defeat when time expires.
@@ -464,8 +477,9 @@ impl LevelSession {
             self.consume_move();
             self.apply_step_progress(&step);
             self.apply_frost_spread_if_needed(rng);
+            let curse_hits = self.tick_cursed_runes_if_needed();
             let riposte = self.tick_boss_riposte_if_needed(rng);
-            if !riposte.is_empty() && !self.board.has_valid_moves() {
+            if (!riposte.is_empty() || !curse_hits.is_empty()) && !self.board.has_valid_moves() {
                 self.board.shuffle_free_runes(rng);
                 self.last_shuffled = true;
             }
@@ -551,6 +565,19 @@ impl LevelSession {
         } else {
             Vec::new()
         }
+    }
+
+    /// Ticks Cursed Rune countdowns at the end of a player turn unless the board is already won.
+    pub fn tick_cursed_runes_if_needed(&mut self) -> Vec<CellPos> {
+        let already_won = if let Some(boss) = &self.boss {
+            boss.is_defeated()
+        } else {
+            self.objectives.iter().all(ObjectiveProgress::is_complete)
+        };
+        if already_won {
+            return Vec::new();
+        }
+        self.board.tick_cursed_runes()
     }
 
     /// On frost-spread levels, freezes 1 adjacent cell if no ice was broken during this turn.

@@ -128,6 +128,8 @@ pub struct Cell {
     pub relic: bool,
     #[serde(default)]
     pub fog: bool,
+    #[serde(default)]
+    pub curse_turns: u8,
 }
 
 impl Cell {
@@ -141,6 +143,7 @@ impl Cell {
             crate_layers: 0,
             relic: false,
             fog: false,
+            curse_turns: 0,
         }
     }
 
@@ -154,6 +157,7 @@ impl Cell {
             crate_layers: 0,
             relic: false,
             fog: false,
+            curse_turns: 0,
         }
     }
 
@@ -293,6 +297,21 @@ impl Board {
             if let Some(cell) = board.get_mut(pos) {
                 if !cell.blocked {
                     cell.fog = true;
+                }
+            }
+        }
+
+        for &(col, row, turns) in &level.cursed_cells {
+            let pos = CellPos::new(col, row);
+            if let Some(cell) = board.get_mut(pos) {
+                if !cell.blocked
+                    && !cell.fog
+                    && cell.crate_layers == 0
+                    && !cell.relic
+                    && cell.rune.is_some()
+                    && turns > 0
+                {
+                    cell.curse_turns = turns;
                 }
             }
         }
@@ -609,6 +628,8 @@ impl Board {
                             self.cells[si].booster = Booster::None;
                             self.cells[di].relic = self.cells[si].relic;
                             self.cells[si].relic = false;
+                            self.cells[di].curse_turns = self.cells[si].curse_turns;
+                            self.cells[si].curse_turns = 0;
                             moves.push(FallMove {
                                 col: dst.col,
                                 from_row: (dst.row as i32) - 1,
@@ -641,6 +662,7 @@ impl Board {
                     self.cells[wi].rune = Some(self.random_rune(rng));
                     self.cells[wi].booster = Booster::None;
                     self.cells[wi].relic = false;
+                    self.cells[wi].curse_turns = 0;
                     moves.push(FallMove {
                         col,
                         from_row: -spawn_offset,
@@ -685,6 +707,8 @@ impl Board {
                         self.cells[ri].booster = Booster::None;
                         self.cells[wi].relic = self.cells[ri].relic;
                         self.cells[ri].relic = false;
+                        self.cells[wi].curse_turns = self.cells[ri].curse_turns;
+                        self.cells[ri].curse_turns = 0;
                         moves.push(FallMove {
                             col,
                             from_row: read_row,
@@ -794,12 +818,15 @@ impl Board {
         let rune_a = self.cells[ia].rune;
         let booster_a = self.cells[ia].booster;
         let relic_a = self.cells[ia].relic;
+        let curse_a = self.cells[ia].curse_turns;
         self.cells[ia].rune = self.cells[ib].rune;
         self.cells[ia].booster = self.cells[ib].booster;
         self.cells[ia].relic = self.cells[ib].relic;
+        self.cells[ia].curse_turns = self.cells[ib].curse_turns;
         self.cells[ib].rune = rune_a;
         self.cells[ib].booster = booster_a;
         self.cells[ib].relic = relic_a;
+        self.cells[ib].curse_turns = curse_a;
     }
 
     fn check_special_swap_combo(&self, a: CellPos, b: CellPos) -> Option<SpecialSwapCombo> {
@@ -1200,6 +1227,7 @@ impl Board {
             }
 
             if let Some(rune) = self.cells[idx].rune.take() {
+                self.cells[idx].curse_turns = 0;
                 *outcome.cleared_runes.entry(rune).or_insert(0) += 1;
                 outcome.score_gained += (balance.points_per_tile as f32 * mult).round() as u32;
                 outcome.cleared_positions.push(pos);
@@ -1278,6 +1306,7 @@ impl Board {
                 !c.blocked
                     && !c.chained
                     && !c.fog
+                    && c.curse_turns == 0
                     && c.crate_layers == 0
                     && !c.relic
                     && c.rune.is_some()
@@ -1346,6 +1375,7 @@ impl Board {
                 !c.blocked
                     && !c.chained
                     && !c.fog
+                    && c.curse_turns == 0
                     && c.crate_layers == 0
                     && !c.relic
                     && c.rune.is_some()
@@ -1421,12 +1451,55 @@ impl Board {
             .unwrap_or_default()
     }
 
+    /// Decrements all active Cursed Rune timers; any rune reaching 0 detonates and chains/freezes orthogonal neighbors.
+    pub fn tick_cursed_runes(&mut self) -> Vec<CellPos> {
+        let mut detonated = Vec::new();
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                let pos = CellPos::new(col, row);
+                let idx = self.idx(pos);
+                if self.cells[idx].curse_turns > 0 {
+                    self.cells[idx].curse_turns -= 1;
+                    if self.cells[idx].curse_turns == 0 {
+                        detonated.push(pos);
+                    }
+                }
+            }
+        }
+        let mut affected = Vec::new();
+        for origin in detonated {
+            affected.push(origin);
+            for nb in self.orthogonal_neighbors(origin) {
+                let idx = self.idx(nb);
+                let c = &mut self.cells[idx];
+                if !c.blocked && c.crate_layers == 0 && !c.relic && c.rune.is_some() {
+                    if c.ice_layers == 0 {
+                        c.ice_layers = 1;
+                    } else if !c.chained {
+                        c.chained = true;
+                    }
+                    affected.push(nb);
+                }
+            }
+        }
+        affected
+    }
+
     /// Executes a Patron God's Divine Fury power, returning a `PreparedClear` if tiles are blasted.
     pub fn apply_patron_fury<R: Rng>(
         &mut self,
         god: PatronGod,
         rng: &mut R,
     ) -> Option<PreparedClear> {
+        self.apply_patron_fury_detailed(god, rng).0
+    }
+
+    /// Executes a Patron God's Divine Fury power, returning `(optional_clear, spawned_booster_positions)`.
+    pub fn apply_patron_fury_detailed<R: Rng>(
+        &mut self,
+        god: PatronGod,
+        rng: &mut R,
+    ) -> (Option<PreparedClear>, Vec<CellPos>) {
         match god {
             PatronGod::Thor => {
                 let mut priority: Vec<CellPos> = Vec::new();
@@ -1438,7 +1511,8 @@ impl Board {
                         if c.blocked || c.relic {
                             continue;
                         }
-                        if c.crate_layers > 0 || c.chained || c.ice_layers > 0 {
+                        if c.crate_layers > 0 || c.chained || c.ice_layers > 0 || c.curse_turns > 0
+                        {
                             priority.push(p);
                         } else if c.rune.is_some() {
                             fallback.push(p);
@@ -1450,35 +1524,48 @@ impl Board {
                 priority.extend(fallback);
                 priority.truncate(4);
                 if priority.is_empty() {
-                    None
+                    (None, Vec::new())
                 } else {
-                    Some(PreparedClear {
-                        cells: priority,
-                        spawned_boosters: Vec::new(),
-                        converted_boosters: Vec::new(),
-                        is_direct_blast: true,
-                    })
+                    (
+                        Some(PreparedClear {
+                            cells: priority,
+                            spawned_boosters: Vec::new(),
+                            converted_boosters: Vec::new(),
+                            is_direct_blast: true,
+                        }),
+                        Vec::new(),
+                    )
                 }
             }
             PatronGod::Freya => {
-                let target = self.most_frequent_rune()?;
+                let Some(target) = self.most_frequent_rune() else {
+                    return (None, Vec::new());
+                };
                 let mut set = HashSet::new();
                 self.collect_all_of_rune(target, &mut set);
                 if set.is_empty() {
-                    None
+                    (None, Vec::new())
                 } else {
-                    Some(PreparedClear {
-                        cells: set.into_iter().collect(),
-                        spawned_boosters: Vec::new(),
-                        converted_boosters: Vec::new(),
-                        is_direct_blast: true,
-                    })
+                    (
+                        Some(PreparedClear {
+                            cells: set.into_iter().collect(),
+                            spawned_boosters: Vec::new(),
+                            converted_boosters: Vec::new(),
+                            is_direct_blast: true,
+                        }),
+                        Vec::new(),
+                    )
                 }
             }
             PatronGod::Loki => {
-                self.spawn_random_starting_booster(rng);
-                self.spawn_random_starting_booster(rng);
-                None
+                let mut spawned = Vec::new();
+                if let Some(p1) = self.spawn_random_starting_booster(rng) {
+                    spawned.push(p1);
+                }
+                if let Some(p2) = self.spawn_random_starting_booster(rng) {
+                    spawned.push(p2);
+                }
+                (None, spawned)
             }
             PatronGod::Odin => {
                 let candidates: Vec<CellPos> = (0..self.rows)
@@ -1488,17 +1575,20 @@ impl Board {
                         !c.blocked
                             && !c.chained
                             && !c.fog
+                            && c.curse_turns == 0
                             && c.crate_layers == 0
                             && !c.relic
                             && c.rune.is_some()
                             && c.booster == Booster::None
                     })
                     .collect();
+                let mut spawned = Vec::new();
                 if let Some(&pos) = candidates.choose(rng) {
                     let idx = self.idx(pos);
                     self.cells[idx].booster = Booster::Bomb;
+                    spawned.push(pos);
                 }
-                None
+                (None, spawned)
             }
         }
     }

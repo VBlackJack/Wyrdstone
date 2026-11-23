@@ -47,6 +47,10 @@ pub struct BossDef {
     pub weakness: RuneType,
     pub riposte_interval: u32,
     pub riposte: BossRiposteKind,
+    #[serde(default)]
+    pub phase2_weakness: Option<RuneType>,
+    #[serde(default)]
+    pub phase2_riposte: Option<BossRiposteKind>,
     pub required_glory: u32,
     pub reward_resources: ResourceBundle,
     pub reward_tools: ToolInventory,
@@ -104,6 +108,7 @@ impl BossDef {
             portals: vec![],
             frost_spread: false,
             fog_cells: vec![],
+            cursed_cells: vec![],
             blocked_cells,
             base_reward: self.reward_resources,
         }
@@ -118,6 +123,8 @@ pub struct BossState {
     pub turns_until_riposte: u32,
     pub last_damage_dealt: u32,
     pub last_riposte_cells: Vec<CellPos>,
+    pub phase2_triggered: bool,
+    pub just_entered_phase2: bool,
 }
 
 impl BossState {
@@ -130,6 +137,8 @@ impl BossState {
             turns_until_riposte: turns,
             last_damage_dealt: 0,
             last_riposte_cells: Vec::new(),
+            phase2_triggered: false,
+            just_entered_phase2: false,
         }
     }
 
@@ -137,11 +146,37 @@ impl BossState {
         self.hp == 0
     }
 
-    /// Applies damage from a Match-3 clear step (2x multiplier on boss weakness rune).
+    /// Returns true once the boss drops below 50% HP and has a configured Phase 2.
+    pub fn is_phase2(&self) -> bool {
+        self.hp > 0
+            && self.hp * 2 < self.def.max_hp
+            && (self.def.phase2_weakness.is_some() || self.def.phase2_riposte.is_some())
+    }
+
+    /// Active elemental weakness (switches in Phase 2 when configured).
+    pub fn active_weakness(&self) -> RuneType {
+        if self.is_phase2() {
+            self.def.phase2_weakness.unwrap_or(self.def.weakness)
+        } else {
+            self.def.weakness
+        }
+    }
+
+    /// Active counter-attack action (escalates in Phase 2 when configured).
+    pub fn active_riposte(&self) -> BossRiposteKind {
+        if self.is_phase2() {
+            self.def.phase2_riposte.unwrap_or(self.def.riposte)
+        } else {
+            self.def.riposte
+        }
+    }
+
+    /// Applies damage from a Match-3 clear step (2x multiplier on active boss weakness rune).
     pub fn apply_step_damage(&mut self, step: &MatchStepOutcome, score_bonus_pct: u32) -> u32 {
+        let weakness = self.active_weakness();
         let mut raw_dmg = 0u32;
         for (&rune, &count) in &step.cleared_runes {
-            let mult = if rune == self.def.weakness { 2 } else { 1 };
+            let mult = if rune == weakness { 2 } else { 1 };
             raw_dmg += count * BOSS_DMG_PER_TILE * mult;
         }
         let obstacles = step.ice_broken + step.chains_broken + step.crates_broken;
@@ -151,6 +186,12 @@ impl BossState {
         let total = boosted + (boosted * score_bonus_pct) / 100;
         self.hp = self.hp.saturating_sub(total);
         self.last_damage_dealt = total;
+        if !self.phase2_triggered && self.is_phase2() {
+            self.phase2_triggered = true;
+            self.just_entered_phase2 = true;
+        } else {
+            self.just_entered_phase2 = false;
+        }
         total
     }
 
@@ -169,7 +210,7 @@ impl BossState {
             return Vec::new();
         }
         self.turns_until_riposte = self.def.riposte_interval.max(1);
-        let hit = board.apply_boss_riposte(self.def.riposte, rng);
+        let hit = board.apply_boss_riposte(self.active_riposte(), rng);
         self.last_riposte_cells = hit.clone();
         hit
     }

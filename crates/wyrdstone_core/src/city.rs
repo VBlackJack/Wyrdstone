@@ -97,6 +97,7 @@ pub struct CityBonuses {
     pub energy_regen_speed_pct: u32,
     pub fury_charge_bonus_pct: u32,
     pub starting_fury: u32,
+    pub starting_boosters: u32,
 }
 
 /// Static building definition loaded from `assets/data/buildings.ron`.
@@ -252,6 +253,10 @@ pub struct ClanStats {
     pub bosses_defeated: u32,
     #[serde(default)]
     pub best_expedition_wave: u32,
+    #[serde(default)]
+    pub win_streak: u32,
+    #[serde(default)]
+    pub best_win_streak: u32,
 }
 
 /// Mutable player progression in the Wyrdstone Fjord.
@@ -385,7 +390,19 @@ impl CityState {
             fury_charge_bonus_pct: self.building_tier("watchtower")
                 * balance.watchtower_fury_pct_per_tier,
             starting_fury: rank.starting_fury(),
+            starting_boosters: u32::from(self.stats.win_streak >= 2),
         }
+    }
+
+    /// Increments the active win streak and updates the lifetime best streak.
+    fn bump_win_streak(&mut self) {
+        self.stats.win_streak += 1;
+        self.stats.best_win_streak = self.stats.best_win_streak.max(self.stats.win_streak);
+    }
+
+    /// Resets the active win streak on defeat or retreat.
+    pub fn reset_win_streak(&mut self) {
+        self.stats.win_streak = 0;
     }
 
     /// Returns effective max endurance including Great Hall bonus.
@@ -692,6 +709,7 @@ impl CityState {
         }
         self.glory += balance.victory_glory;
         self.stats.total_victories += 1;
+        self.bump_win_streak();
     }
 
     /// Returns true when today's Daily Trial has not yet been completed.
@@ -738,6 +756,7 @@ impl CityState {
             self.tools.drakkar_charge += 1;
         }
         self.glory += balance.daily_glory;
+        self.bump_win_streak();
         new_streak
     }
 
@@ -882,6 +901,7 @@ impl CityState {
         self.defeated_bosses.insert(boss.id.clone());
         self.stats.bosses_defeated += 1;
         self.stats.total_victories += 1;
+        self.bump_win_streak();
     }
 
     /// Records an Endless Drakkar Expedition wave victory and updates best wave record.
@@ -894,6 +914,7 @@ impl CityState {
         self.resources.add(rewards);
         self.stats.best_expedition_wave = self.stats.best_expedition_wave.max(wave);
         self.stats.total_victories += 1;
+        self.bump_win_streak();
         self.glory += balance.victory_glory + wave * 5;
     }
 
