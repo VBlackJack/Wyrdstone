@@ -1092,8 +1092,9 @@ fn execute_patron_fury(
         return;
     }
     let ctx_ref = ctx;
+    let session_tuning = ctx_ref.data.balance.session;
     let (prepared, spawned_positions) = if let Some(session) = ctx_ref.active_session.as_mut() {
-        session.trigger_patron_fury_detailed(&mut ctx_ref.rng)
+        session.trigger_patron_fury_detailed_with(&session_tuning, &mut ctx_ref.rng)
     } else {
         (None, Vec::new())
     };
@@ -1471,7 +1472,9 @@ pub fn handle_match3_hud_buttons(
                 let was_expedition = ctx
                     .active_session
                     .as_ref()
-                    .map(|s| s.level.building_id == "expedition")
+                    .map(|s| {
+                        s.level.building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID
+                    })
                     .unwrap_or(false);
                 if was_expedition {
                     ctx.active_expedition = None;

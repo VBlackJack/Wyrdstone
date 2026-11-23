@@ -16,16 +16,21 @@
 
 //! Mythological Boss Raid definitions, HP tracking, weakness multipliers, and counter-attacks.
 
+use crate::balance::BossTuning;
 use crate::board::{Board, CellPos, MatchStepOutcome, RuneType};
 use crate::city::{ResourceBundle, ToolInventory};
 use crate::level::{LevelDef, Objective};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-/// Base damage dealt to a boss per cleared rune tile.
-pub const BOSS_DMG_PER_TILE: u32 = 45;
-/// Bonus damage dealt per obstacle broken during a boss fight.
-pub const BOSS_DMG_PER_OBSTACLE: u32 = 85;
+/// Building identifier carried by Mythological Boss Raid levels.
+pub const BOSS_RAID_BUILDING_ID: &str = "boss_raid";
+/// Number of cells along each side of a boss raid board.
+const BOSS_BOARD_SIZE: usize = 8;
+/// Number of rune types in play during a boss raid.
+const BOSS_RUNE_TYPES: usize = 6;
+/// Percent scale used by the phase 2 hit point threshold.
+const PERCENT_SCALE: u64 = 100;
 
 /// Counter-attack action executed by a boss every N turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,12 +108,12 @@ impl BossDef {
 
         LevelDef {
             id: self.id.clone(),
-            building_id: "boss_raid".to_string(),
-            cols: 8,
-            rows: 8,
+            building_id: BOSS_RAID_BUILDING_ID.to_string(),
+            cols: BOSS_BOARD_SIZE,
+            rows: BOSS_BOARD_SIZE,
             max_moves: self.max_moves,
             time_limit_seconds: None,
-            rune_types_count: 6,
+            rune_types_count: BOSS_RUNE_TYPES,
             objectives: vec![Objective::ReachScore {
                 target: self.max_hp,
             }],
@@ -136,13 +141,21 @@ pub struct BossState {
     pub last_riposte_cells: Vec<CellPos>,
     pub phase2_triggered: bool,
     pub just_entered_phase2: bool,
+    /// Combat tuning captured when the encounter started.
+    pub tuning: BossTuning,
 }
 
 impl BossState {
     pub fn new(def: BossDef) -> Self {
+        Self::new_with(def, &BossTuning::default())
+    }
+
+    /// Builds a boss state that keeps a copy of the given combat tuning.
+    pub fn new_with(def: BossDef, tuning: &BossTuning) -> Self {
         let hp = def.max_hp;
         let turns = def.riposte_interval.max(1);
         Self {
+            tuning: *tuning,
             def,
             hp,
             turns_until_riposte: turns,
@@ -157,10 +170,11 @@ impl BossState {
         self.hp == 0
     }
 
-    /// Returns true once the boss drops below 50% HP and has a configured Phase 2.
+    /// Returns true once the boss drops below the Phase 2 HP threshold and has a configured Phase 2.
     pub fn is_phase2(&self) -> bool {
         self.hp > 0
-            && self.hp * 2 < self.def.max_hp
+            && u64::from(self.hp) * PERCENT_SCALE
+                < u64::from(self.def.max_hp) * u64::from(self.tuning.phase2_hp_pct)
             && (self.def.phase2_weakness.is_some() || self.def.phase2_riposte.is_some())
     }
 
@@ -187,12 +201,21 @@ impl BossState {
         let weakness = self.active_weakness();
         let mut raw_dmg = 0u32;
         for (&rune, &count) in &step.cleared_runes {
-            let mult = if rune == weakness { 2 } else { 1 };
-            raw_dmg += count * BOSS_DMG_PER_TILE * mult;
+            let mult = if rune == weakness {
+                self.tuning.weakness_multiplier
+            } else {
+                1
+            };
+            raw_dmg = raw_dmg.saturating_add(
+                count
+                    .saturating_mul(self.tuning.damage_per_tile)
+                    .saturating_mul(mult),
+            );
         }
         let obstacles = step.ice_broken + step.chains_broken + step.crates_broken;
-        raw_dmg += obstacles * BOSS_DMG_PER_OBSTACLE;
-        let combo_mult = 1.0 + step.max_combo.saturating_sub(1) as f32 * 0.35;
+        raw_dmg = raw_dmg.saturating_add(obstacles.saturating_mul(self.tuning.damage_per_obstacle));
+        let combo_mult =
+            1.0 + step.max_combo.saturating_sub(1) as f32 * self.tuning.combo_damage_step;
         let boosted = (raw_dmg as f32 * combo_mult).round() as u32;
         let total = boosted + (boosted * score_bonus_pct) / 100;
         self.hp = self.hp.saturating_sub(total);
@@ -221,7 +244,8 @@ impl BossState {
             return Vec::new();
         }
         self.turns_until_riposte = self.def.riposte_interval.max(1);
-        let hit = board.apply_boss_riposte(self.active_riposte(), rng);
+        let hit =
+            board.apply_boss_riposte_with(self.active_riposte(), self.tuning.curse_turns, rng);
         self.last_riposte_cells = hit.clone();
         hit
     }

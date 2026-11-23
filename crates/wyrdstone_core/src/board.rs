@@ -16,7 +16,7 @@
 
 //! Match-3 board simulation: runes, obstacles, relics, boosters, cascades, and all six active tools.
 
-use crate::balance::BalanceConfig;
+use crate::balance::{BalanceConfig, BossTuning};
 use crate::boss::BossRiposteKind;
 use crate::level::LevelDef;
 use crate::patron::PatronGod;
@@ -35,6 +35,14 @@ pub const BIFROST_MATCH_LEN: usize = 5;
 const MAX_SHUFFLE_ATTEMPTS: usize = 32;
 /// Maximum attempts when regenerating free runes from the rune pool as a last resort.
 const MAX_REGENERATION_ATTEMPTS: usize = 128;
+/// Maximum gravity passes spent transferring pieces through Bifrost portals.
+const MAX_PORTAL_PASSES: usize = 32;
+/// Blast radius (in cells) of the Surtr Ember tool.
+const SURTR_EMBER_RADIUS: i32 = 1;
+/// Blast radius (in cells) of a Bomb + Bomb super combo.
+const BOMB_COMBO_RADIUS: i32 = 2;
+/// Blast radius (in cells) of a single detonated Bomb booster.
+const BOMB_BLAST_RADIUS: i32 = 1;
 
 /// Coordinates on the Match-3 grid (`col` left-to-right, `row` top-to-bottom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -492,7 +500,10 @@ impl Board {
                 is_direct_blast: true,
             }),
             ActiveTool::SurtrEmber => Some(PreparedClear {
-                cells: self.area_positions(target, 1).into_iter().collect(),
+                cells: self
+                    .area_positions(target, SURTR_EMBER_RADIUS)
+                    .into_iter()
+                    .collect(),
                 spawned_boosters: Vec::new(),
                 converted_boosters: Vec::new(),
                 is_direct_blast: true,
@@ -647,7 +658,7 @@ impl Board {
         // Iteratively transfer movable pieces through Bifrost portals when destination is empty.
         let portals_snapshot = self.portals.clone();
         if !portals_snapshot.is_empty() {
-            for _ in 0..(self.rows * self.cols).min(32) {
+            for _ in 0..(self.rows * self.cols).min(MAX_PORTAL_PASSES) {
                 let mut moved_any = false;
                 for &(src, dst) in &portals_snapshot {
                     if self.in_bounds(src) && self.in_bounds(dst) {
@@ -933,7 +944,7 @@ impl Board {
                 Some((affected, converted))
             }
             (Booster::Bomb, Booster::Bomb) => {
-                affected.extend(self.area_positions(b, 2));
+                affected.extend(self.area_positions(b, BOMB_COMBO_RADIUS));
                 Some((affected, converted))
             }
             (
@@ -965,7 +976,7 @@ impl Board {
     }
 
     fn most_frequent_rune(&self) -> Option<RuneType> {
-        let mut counts = [0u32; 6];
+        let mut counts = [0u32; RuneType::ALL.len()];
         for cell in &self.cells {
             if !cell.blocked && !cell.fog && cell.crate_layers == 0 {
                 if let Some(r) = cell.rune {
@@ -1228,7 +1239,7 @@ impl Board {
                         }
                     }
                     Booster::Bomb => {
-                        for p in self.area_positions(pos, 1) {
+                        for p in self.area_positions(pos, BOMB_BLAST_RADIUS) {
                             queue.push_back(p);
                         }
                     }
@@ -1634,9 +1645,14 @@ impl Board {
     }
 
     /// Executes a Patron God's Divine Fury power, returning `(optional_clear, spawned_booster_positions)`.
+    ///
+    /// `thor_strike_cells` caps the cells struck by Thor and `loki_boosters` is the number of
+    /// boosters Loki attempts to spawn.
     pub fn apply_patron_fury_detailed<R: Rng>(
         &mut self,
         god: PatronGod,
+        thor_strike_cells: usize,
+        loki_boosters: u32,
         rng: &mut R,
     ) -> (Option<PreparedClear>, Vec<CellPos>) {
         match god {
@@ -1661,7 +1677,7 @@ impl Board {
                 priority.shuffle(rng);
                 fallback.shuffle(rng);
                 priority.extend(fallback);
-                priority.truncate(4);
+                priority.truncate(thor_strike_cells);
                 if priority.is_empty() {
                     (None, Vec::new())
                 } else {
@@ -1698,11 +1714,10 @@ impl Board {
             }
             PatronGod::Loki => {
                 let mut spawned = Vec::new();
-                if let Some(p1) = self.spawn_random_starting_booster(rng) {
-                    spawned.push(p1);
-                }
-                if let Some(p2) = self.spawn_random_starting_booster(rng) {
-                    spawned.push(p2);
+                for _ in 0..loki_boosters {
+                    if let Some(pos) = self.spawn_random_starting_booster(rng) {
+                        spawned.push(pos);
+                    }
                 }
                 (None, spawned)
             }
@@ -1723,6 +1738,16 @@ impl Board {
     pub fn apply_boss_riposte<R: Rng>(
         &mut self,
         riposte: BossRiposteKind,
+        rng: &mut R,
+    ) -> Vec<CellPos> {
+        self.apply_boss_riposte_with(riposte, BossTuning::default().curse_turns, rng)
+    }
+
+    /// Executes a boss counter-attack; cursed runes detonate after `curse_turns` player turns.
+    pub fn apply_boss_riposte_with<R: Rng>(
+        &mut self,
+        riposte: BossRiposteKind,
+        curse_turns: u8,
         rng: &mut R,
     ) -> Vec<CellPos> {
         let mut hit = Vec::new();
@@ -1799,7 +1824,7 @@ impl Board {
                 cands.shuffle(rng);
                 for pos in cands.into_iter().take(count) {
                     let idx = self.idx(pos);
-                    self.cells[idx].curse_turns = 5;
+                    self.cells[idx].curse_turns = curse_turns;
                     hit.push(pos);
                 }
             }

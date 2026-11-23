@@ -16,7 +16,7 @@
 
 //! Level definitions, objective tracking, timed mode, frost spread, amulet modifiers, and Match-3 session state.
 
-use crate::balance::BalanceConfig;
+use crate::balance::{BalanceConfig, BossTuning, DailyTuning, ExpeditionTuning, SessionTuning};
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, PreparedClear, RuneType};
 use crate::boss::{BossDef, BossState};
 use crate::city::{AmuletEffect, CityBonuses, ResourceBundle};
@@ -28,6 +28,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
+/// Building identifier carried by procedurally generated Daily Trial levels.
+pub const DAILY_TRIAL_BUILDING_ID: &str = "daily_trial";
 const DAILY_SEED_SALT: u64 = 0x5759_5244_5354_4F4E;
 /// Preferred top-row relic columns for the relic excavation daily (2 and 3 relic variants).
 const DAILY_RELIC_COLUMNS_TWO: [usize; 2] = [2, 5];
@@ -136,6 +138,11 @@ pub struct LevelDef {
 impl LevelDef {
     /// Deterministically generates today's procedural Daily Trial board from the UTC day index.
     pub fn daily_challenge(day_index: u64) -> Self {
+        Self::daily_challenge_with(day_index, &DailyTuning::default())
+    }
+
+    /// Same as [`LevelDef::daily_challenge`] but driven by the given Daily Trial tuning.
+    pub fn daily_challenge_with(day_index: u64, tuning: &DailyTuning) -> Self {
         let mut rng = StdRng::seed_from_u64(day_index ^ DAILY_SEED_SALT);
         let archetype = rng.gen_range(0..4usize);
         let target_rune = RuneType::ALL[rng.gen_range(0..RuneType::ALL.len())];
@@ -172,20 +179,23 @@ impl LevelDef {
                 chained_cells.push((4, 4));
                 crate_cells.push((1, 3, 1));
                 crate_cells.push((6, 4, 1));
-                frost_spread = rng.gen_bool(0.5);
+                frost_spread = rng.gen_bool(tuning.glacial_frost_chance);
                 vec![
                     Objective::ClearIce {
                         target: ice_cells.len() as u32,
                     },
                     Objective::CollectRune {
                         rune: target_rune,
-                        target: rng.gen_range(20..=26),
+                        target: rng.gen_range(
+                            tuning.glacial_collect_range.0..=tuning.glacial_collect_range.1,
+                        ),
                     },
                 ]
             }
             1 => {
                 // Relic excavation: drop 2-3 relics through crates & ice
-                let relic_count = rng.gen_range(2..=3usize);
+                let relic_count =
+                    rng.gen_range(tuning.relic_count_range.0..=tuning.relic_count_range.1);
                 let preferred: &[usize] = if relic_count == 2 {
                     &DAILY_RELIC_COLUMNS_TWO
                 } else {
@@ -225,7 +235,8 @@ impl LevelDef {
             }
             2 => {
                 // Timed Skald's Blitz: score + rune collection
-                time_limit_seconds = Some(rng.gen_range(95..=115));
+                time_limit_seconds =
+                    Some(rng.gen_range(tuning.blitz_time_range.0..=tuning.blitz_time_range.1));
                 for &(c, r) in &[
                     (1, 2),
                     (2, 2),
@@ -241,11 +252,13 @@ impl LevelDef {
                 chained_cells.extend([(3, 3), (4, 3), (3, 4), (4, 4)]);
                 vec![
                     Objective::ReachScore {
-                        target: rng.gen_range(4800..=5600),
+                        target: rng
+                            .gen_range(tuning.blitz_score_range.0..=tuning.blitz_score_range.1),
                     },
                     Objective::CollectRune {
                         rune: target_rune,
-                        target: rng.gen_range(22..=26),
+                        target: rng
+                            .gen_range(tuning.blitz_collect_range.0..=tuning.blitz_collect_range.1),
                     },
                 ]
             }
@@ -263,17 +276,19 @@ impl LevelDef {
                 chained_cells.push((4, 3));
                 vec![
                     Objective::ClearIce { target: 8 },
-                    Objective::ReachScore { target: 5000 },
+                    Objective::ReachScore {
+                        target: tuning.portal_score_target,
+                    },
                 ]
             }
         };
 
         Self {
             id: format!("daily_{day_index}"),
-            building_id: "daily_trial".to_string(),
+            building_id: DAILY_TRIAL_BUILDING_ID.to_string(),
             cols: 8,
             rows: 8,
-            max_moves: rng.gen_range(24..=28),
+            max_moves: rng.gen_range(tuning.max_moves_range.0..=tuning.max_moves_range.1),
             time_limit_seconds,
             rune_types_count: 6,
             objectives,
@@ -290,12 +305,7 @@ impl LevelDef {
             },
             cursed_cells: vec![],
             blocked_cells,
-            base_reward: ResourceBundle {
-                wood: 140,
-                stone: 140,
-                gold: 180,
-                mead: 40,
-            },
+            base_reward: tuning.base_reward,
         }
     }
 }
@@ -368,13 +378,43 @@ impl LevelSession {
         patron: PatronGod,
         rng: &mut R,
     ) -> Self {
+        Self::start_boss_tuned(
+            boss,
+            amulet,
+            city_bonuses,
+            patron,
+            &BossTuning::default(),
+            rng,
+        )
+    }
+
+    /// Starts a Mythological Boss Raid encounter driven by the balance boss tuning.
+    pub fn start_boss_with<R: Rng>(
+        boss: BossDef,
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        balance: &BalanceConfig,
+        rng: &mut R,
+    ) -> Self {
+        Self::start_boss_tuned(boss, amulet, city_bonuses, patron, &balance.boss, rng)
+    }
+
+    fn start_boss_tuned<R: Rng>(
+        boss: BossDef,
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        tuning: &BossTuning,
+        rng: &mut R,
+    ) -> Self {
         let level = boss.to_level_def();
         Self::start_full(
             level,
             amulet,
             city_bonuses,
             patron,
-            Some(BossState::new(boss)),
+            Some(BossState::new_with(boss, tuning)),
             rng,
         )
     }
@@ -387,10 +427,32 @@ impl LevelSession {
         patron: PatronGod,
         rng: &mut R,
     ) -> Self {
-        let level = run.generate_wave_level(rng);
+        Self::start_expedition_wave_with(
+            run,
+            &ExpeditionTuning::default(),
+            amulet,
+            city_bonuses,
+            patron,
+            rng,
+        )
+    }
+
+    /// Starts an Endless Drakkar Expedition wave driven by the given expedition tuning.
+    pub fn start_expedition_wave_with<R: Rng>(
+        run: &ExpeditionRun,
+        tuning: &ExpeditionTuning,
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        rng: &mut R,
+    ) -> Self {
+        let level = run.generate_wave_level_with(tuning, rng);
         let mut session = Self::start_full(level, amulet, city_bonuses, patron, None, rng);
         session.score_bonus_pct += run.score_bonus_pct;
-        session.fury = (session.fury + run.fury_headstart).min(FURY_CHARGE_MAX);
+        session.fury = session
+            .fury
+            .saturating_add(run.fury_headstart)
+            .min(FURY_CHARGE_MAX);
         for _ in 0..run.starting_boosters {
             session.board.spawn_random_starting_booster(rng);
         }
@@ -482,20 +544,25 @@ impl LevelSession {
 
     /// Applies today's Daily Fjord Blessing modifier onto this session.
     pub fn apply_daily_blessing(&mut self, blessing: DailyBlessing) {
+        self.apply_daily_blessing_with(blessing, &SessionTuning::default());
+    }
+
+    /// Applies today's Daily Fjord Blessing using the given session tuning.
+    pub fn apply_daily_blessing_with(&mut self, blessing: DailyBlessing, tuning: &SessionTuning) {
         self.daily_blessing = Some(blessing);
         match blessing {
             DailyBlessing::OdinFavor => {
-                self.fury_charge_bonus_pct += 20;
+                self.fury_charge_bonus_pct += tuning.blessing_odin_fury_pct;
             }
             DailyBlessing::NjordBreeze => {
-                self.resource_bonus_pct += 15;
+                self.resource_bonus_pct += tuning.blessing_njord_resource_pct;
             }
             DailyBlessing::FenrirEclipse => {
-                self.boss_damage_bonus_pct += 25;
+                self.boss_damage_bonus_pct += tuning.blessing_fenrir_boss_damage_pct;
             }
             DailyBlessing::IdunnGrace => {
-                self.initial_moves += 1;
-                self.moves_left += 1;
+                self.initial_moves += tuning.blessing_idunn_extra_moves;
+                self.moves_left += tuning.blessing_idunn_extra_moves;
             }
         }
     }
@@ -515,20 +582,34 @@ impl LevelSession {
         &mut self,
         rng: &mut R,
     ) -> (Option<PreparedClear>, Vec<CellPos>) {
+        self.trigger_patron_fury_detailed_with(&SessionTuning::default(), rng)
+    }
+
+    /// Unleashes Divine Fury using the given session tuning.
+    pub fn trigger_patron_fury_detailed_with<R: Rng>(
+        &mut self,
+        tuning: &SessionTuning,
+        rng: &mut R,
+    ) -> (Option<PreparedClear>, Vec<CellPos>) {
         if !self.can_trigger_fury() {
             return (None, Vec::new());
         }
         self.fury = 0;
         match self.patron {
             PatronGod::Freya => {
-                self.fury_resource_bonus_pct += 25;
+                self.fury_resource_bonus_pct += tuning.freya_fury_resource_pct;
             }
             PatronGod::Odin => {
-                self.moves_left += 2;
+                self.moves_left += tuning.odin_fury_extra_moves;
             }
             PatronGod::Thor | PatronGod::Loki => {}
         }
-        self.board.apply_patron_fury_detailed(self.patron, rng)
+        self.board.apply_patron_fury_detailed(
+            self.patron,
+            tuning.thor_fury_strike_cells,
+            tuning.loki_fury_boosters,
+            rng,
+        )
     }
 
     /// Advances the optional countdown timer and triggers Defeat when time expires.
@@ -703,6 +784,11 @@ impl LevelSession {
 
     /// Computes a 1..=3 star rating for a completed victory based on remaining moves efficiency.
     pub fn earned_stars(&self) -> u8 {
+        self.earned_stars_with(&SessionTuning::default())
+    }
+
+    /// Computes the star rating using the given session tuning thresholds.
+    pub fn earned_stars_with(&self, tuning: &SessionTuning) -> u8 {
         if self.outcome != LevelOutcome::Victory {
             return 0;
         }
@@ -711,9 +797,9 @@ impl LevelSession {
         } else {
             0.0
         };
-        if ratio >= 0.30 {
+        if ratio >= tuning.three_star_moves_ratio {
             3
-        } else if ratio >= 0.12 {
+        } else if ratio >= tuning.two_star_moves_ratio {
             2
         } else {
             1

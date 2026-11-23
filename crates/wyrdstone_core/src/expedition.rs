@@ -16,15 +16,23 @@
 
 //! Endless Drakkar Expedition: roguelite Match-3 waves with escalating challenges and boons.
 
+use crate::balance::ExpeditionTuning;
 use crate::board::RuneType;
 use crate::city::{CityState, ResourceBundle};
 use crate::level::{LevelDef, Objective};
+use crate::patron::FURY_CHARGE_MAX;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-/// Number of rune types in play during the first expedition wave (later waves use all of them).
-pub const WAVE_ONE_RUNE_TYPES: usize = 5;
+/// Building identifier carried by Endless Drakkar Expedition levels.
+pub const EXPEDITION_BUILDING_ID: &str = "expedition";
+/// Number of cells along each side of an expedition board.
+const EXPEDITION_BOARD_SIZE: usize = 8;
+/// Rows of the central ice field filled in reading order.
+const EXPEDITION_ICE_ROWS: std::ops::RangeInclusive<usize> = 2..=5;
+/// Columns of the central ice field filled in reading order.
+const EXPEDITION_ICE_COLS: std::ops::RangeInclusive<usize> = 2..=5;
 
 /// Roguelite blessing offered between Expedition waves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,53 +105,70 @@ impl ExpeditionRun {
 
     /// Generates an escalating procedural board for the current expedition wave.
     pub fn generate_wave_level<R: Rng>(&self, rng: &mut R) -> LevelDef {
+        self.generate_wave_level_with(&ExpeditionTuning::default(), rng)
+    }
+
+    /// Generates the current wave board driven by the given expedition tuning.
+    pub fn generate_wave_level_with<R: Rng>(&self, t: &ExpeditionTuning, rng: &mut R) -> LevelDef {
         let w = self.wave;
         let rune_types_count = if w == 1 {
-            WAVE_ONE_RUNE_TYPES
+            t.wave_one_rune_types.min(RuneType::ALL.len())
         } else {
             RuneType::ALL.len()
         };
         let target_rune = RuneType::ALL[rng.gen_range(0..rune_types_count)];
-        let ice_target = (6 + w * 2).min(16);
-        let rune_target = (14 + w * 3).min(36);
+        let ice_target = t
+            .ice_base
+            .saturating_add(w.saturating_mul(t.ice_per_wave))
+            .min(t.ice_cap);
+        let rune_target = t
+            .rune_target_base
+            .saturating_add(w.saturating_mul(t.rune_target_per_wave))
+            .min(t.rune_target_cap);
 
         let mut ice_cells = Vec::new();
-        for r in 2..=5 {
-            for c in 2..=5 {
+        for r in EXPEDITION_ICE_ROWS {
+            for c in EXPEDITION_ICE_COLS {
                 if (ice_cells.len() as u32) < ice_target {
-                    let layers = if w >= 3 && (c == 2 || c == 5) { 2 } else { 1 };
+                    let layers = if w >= t.double_ice_from_wave && (c == 2 || c == 5) {
+                        2
+                    } else {
+                        1
+                    };
                     ice_cells.push((c, r, layers));
                 }
             }
         }
 
         let mut chained_cells = Vec::new();
-        if w >= 2 {
+        if w >= t.chains_from_wave {
             chained_cells.push((3, 3));
             chained_cells.push((4, 4));
         }
-        if w >= 4 {
+        if w >= t.extra_chains_from_wave {
             chained_cells.push((3, 4));
             chained_cells.push((4, 3));
         }
 
         let mut crate_cells = Vec::new();
-        if w >= 3 {
+        if w >= t.crates_from_wave {
             crate_cells.push((1, 3, 1));
             crate_cells.push((6, 4, 1));
         }
 
-        let portals = if w >= 4 && w.is_multiple_of(2) {
+        let portals = if w >= t.portals_from_wave && w.is_multiple_of(2) {
             vec![((1, 1), (6, 6)), ((6, 1), (1, 6))]
         } else {
             vec![]
         };
 
-        let objectives = if w.is_multiple_of(3) {
+        let objectives = if w.is_multiple_of(t.score_wave_interval) {
             vec![
                 Objective::ClearIce { target: ice_target },
                 Objective::ReachScore {
-                    target: 3000 + w * 900,
+                    target: t
+                        .score_base
+                        .saturating_add(w.saturating_mul(t.score_per_wave)),
                 },
             ]
         } else {
@@ -156,12 +181,18 @@ impl ExpeditionRun {
             ]
         };
 
+        let wave_reward =
+            |base: u32, per_wave: u32| base.saturating_add(w.saturating_mul(per_wave));
+
         LevelDef {
             id: format!("expedition_w{w}"),
-            building_id: "expedition".to_string(),
-            cols: 8,
-            rows: 8,
-            max_moves: (22 + self.extra_moves).min(36),
+            building_id: EXPEDITION_BUILDING_ID.to_string(),
+            cols: EXPEDITION_BOARD_SIZE,
+            rows: EXPEDITION_BOARD_SIZE,
+            max_moves: t
+                .base_moves
+                .saturating_add(self.extra_moves)
+                .min(t.moves_cap),
             time_limit_seconds: None,
             rune_types_count,
             objectives,
@@ -170,44 +201,57 @@ impl ExpeditionRun {
             crate_cells,
             relic_cells: vec![],
             portals,
-            frost_spread: w >= 5,
-            fog_cells: if w >= 4 && !w.is_multiple_of(2) {
+            frost_spread: w >= t.frost_from_wave,
+            fog_cells: if w >= t.fog_from_wave && !w.is_multiple_of(2) {
                 vec![(2, 3), (3, 3), (4, 3), (5, 3), (3, 4), (4, 4)]
             } else {
                 vec![]
             },
-            cursed_cells: if w >= 6 {
-                vec![(2, 2, 6), (5, 5, 6)]
+            cursed_cells: if w >= t.curse_from_wave {
+                vec![(2, 2, t.curse_turns), (5, 5, t.curse_turns)]
             } else {
                 vec![]
             },
             blocked_cells: vec![(0, 0), (7, 0), (0, 7), (7, 7)],
             base_reward: ResourceBundle {
-                wood: 50 + w * 20,
-                stone: 45 + w * 20,
-                gold: 65 + w * 25,
-                mead: 12 + w * 5,
+                wood: wave_reward(t.reward_base.wood, t.reward_per_wave.wood),
+                stone: wave_reward(t.reward_base.stone, t.reward_per_wave.stone),
+                gold: wave_reward(t.reward_base.gold, t.reward_per_wave.gold),
+                mead: wave_reward(t.reward_base.mead, t.reward_per_wave.mead),
             },
         }
     }
 
     /// Rolls 3 distinct roguelite boons to choose from after winning a wave.
     pub fn roll_boon_choices<R: Rng>(&mut self, rng: &mut R) {
-        let mut pool = ExpeditionBoon::ALL.to_vec();
+        self.roll_boon_choices_with(&ExpeditionTuning::default(), rng);
+    }
+
+    /// Rolls the configured number of distinct boons from the configured boon pool.
+    pub fn roll_boon_choices_with<R: Rng>(&mut self, tuning: &ExpeditionTuning, rng: &mut R) {
+        let mut pool = tuning.boons.clone();
         pool.shuffle(rng);
-        pool.truncate(3);
+        pool.truncate(tuning.boon_choices);
         self.pending_boons = pool;
     }
 
     /// Applies a chosen boon and advances to the next wave.
     pub fn apply_boon(&mut self, boon: ExpeditionBoon, city: &mut CityState) {
         match boon {
-            ExpeditionBoon::ExtraMoves(m) => self.extra_moves += m,
-            ExpeditionBoon::ScoreBoostPct(p) => self.score_bonus_pct += p,
-            ExpeditionBoon::GrantMjolnir(n) => city.tools.mjolnir += n,
-            ExpeditionBoon::StartingBooster => self.starting_boosters += 1,
+            ExpeditionBoon::ExtraMoves(m) => {
+                self.extra_moves = self.extra_moves.saturating_add(m);
+            }
+            ExpeditionBoon::ScoreBoostPct(p) => {
+                self.score_bonus_pct = self.score_bonus_pct.saturating_add(p);
+            }
+            ExpeditionBoon::GrantMjolnir(n) => {
+                city.tools.mjolnir = city.tools.mjolnir.saturating_add(n);
+            }
+            ExpeditionBoon::StartingBooster => {
+                self.starting_boosters = self.starting_boosters.saturating_add(1);
+            }
             ExpeditionBoon::FuryHeadstart(f) => {
-                self.fury_headstart = (self.fury_headstart + f).min(100)
+                self.fury_headstart = self.fury_headstart.saturating_add(f).min(FURY_CHARGE_MAX);
             }
         }
         self.pending_boons.clear();

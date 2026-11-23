@@ -1832,7 +1832,7 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
             s.level.building_id.clone(),
             s.earned_rewards(&balance),
             s.score,
-            s.earned_stars(),
+            s.earned_stars_with(&balance.session),
             s.boss.as_ref().map(|b| b.def.clone()),
         )),
     });
@@ -1851,18 +1851,18 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
             if let Some(boss) = boss_def {
                 ctx.city.record_boss_victory_with_rewards(&boss, &rewards);
                 ctx.last_rewards = rewards;
-            } else if building_id == "expedition" {
+            } else if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
                 ctx.city.record_expedition_wave(wave, &rewards, &balance);
                 let ctx_ref = ctx;
                 if let Some(run) = ctx_ref.active_expedition.as_mut() {
-                    run.roll_boon_choices(&mut ctx_ref.rng);
+                    run.roll_boon_choices_with(&balance.expedition, &mut ctx_ref.rng);
                 }
                 ctx_ref.active_modal = ActiveModal::ExpeditionBoons;
                 ctx_ref.persist();
                 next_state.set(AppState::FjordCity);
                 return;
-            } else if building_id == "daily_trial" {
+            } else if building_id == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID {
                 let streak = ctx.city.record_daily_victory(
                     crate::state::today_day_index(),
                     &rewards,
@@ -1879,7 +1879,7 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                 .city
                 .discover_next_relic_for_building(&building_id, &collections);
         } else {
-            if building_id == "expedition" {
+            if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 ctx.active_expedition = None;
             }
             ctx.city.reset_win_streak();
