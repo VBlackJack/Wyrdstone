@@ -422,11 +422,18 @@ impl Board {
             });
         }
         let groups = self.find_match_groups();
-        if groups.is_empty() {
+        if !Self::groups_involve_swap(&groups, a, b) {
             self.swap_contents(a, b);
             return None;
         }
         Some(self.groups_to_prepared_clear(&groups, Some((a, b))))
+    }
+
+    /// Returns true when at least one match group contains one of the two swapped cells.
+    fn groups_involve_swap(groups: &[MatchGroup], a: CellPos, b: CellPos) -> bool {
+        groups
+            .iter()
+            .any(|g| g.cells.contains(&a) || g.cells.contains(&b))
     }
 
     /// Prepares the next cascade clear if any matches exist after gravity.
@@ -1318,7 +1325,7 @@ impl Board {
                     }
                     clone.swap_contents(a, nb);
                     let valid = clone.check_special_swap_combo(a, nb).is_some()
-                        || !clone.find_match_groups().is_empty();
+                        || Self::groups_involve_swap(&clone.find_match_groups(), a, nb);
                     clone.swap_contents(a, nb);
                     if valid {
                         return Some((a, nb));
@@ -1330,7 +1337,9 @@ impl Board {
     }
 
     /// Shuffles all unchained free runes without creating instant matches, ensuring a valid move.
-    pub fn shuffle_free_runes<R: Rng>(&mut self, rng: &mut R) {
+    /// Returns true when the resulting board has no pending match and at least one valid move.
+    /// On failure the original rune layout is restored and false is returned.
+    pub fn shuffle_free_runes<R: Rng>(&mut self, rng: &mut R) -> bool {
         let free_positions: Vec<CellPos> = (0..self.rows)
             .flat_map(|row| (0..self.cols).map(move |col| CellPos::new(col, row)))
             .filter(|&p| {
@@ -1347,13 +1356,14 @@ impl Board {
             .collect();
 
         if free_positions.len() < 2 {
-            return;
+            return false;
         }
 
-        let mut runes: Vec<RuneType> = free_positions
+        let original: Vec<Option<RuneType>> = free_positions
             .iter()
-            .filter_map(|&p| self.cells[self.idx(p)].rune)
+            .map(|&p| self.cells[self.idx(p)].rune)
             .collect();
+        let mut runes: Vec<RuneType> = original.iter().filter_map(|r| *r).collect();
 
         for _ in 0..MAX_SHUFFLE_ATTEMPTS {
             runes.shuffle(rng);
@@ -1361,41 +1371,113 @@ impl Board {
                 let idx = self.idx(pos);
                 self.cells[idx].rune = Some(rune);
             }
-            if self.find_match_groups().is_empty() && self.has_valid_moves() {
-                return;
+            if self.is_settled_and_playable() {
+                return true;
             }
         }
 
-        // Deterministic fallback: force a guaranteed playable swap if random shuffles all deadlocked.
+        if self.apply_deterministic_shuffle(&free_positions) {
+            return true;
+        }
+
+        self.restore_free_runes(&free_positions, &original);
+        false
+    }
+
+    fn restore_free_runes(&mut self, positions: &[CellPos], runes: &[Option<RuneType>]) {
+        for (&pos, &rune) in positions.iter().zip(runes.iter()) {
+            let idx = self.idx(pos);
+            self.cells[idx].rune = rune;
+        }
+    }
+
+    /// True when no match is pending and at least one legal move exists.
+    fn is_settled_and_playable(&self) -> bool {
+        self.find_match_groups().is_empty() && self.has_valid_moves()
+    }
+
+    /// Deterministic fallback: paints a match-free base layout over the free cells, then plants
+    /// a pair plus a mover (horizontal or vertical) and keeps the first layout that verifies.
+    fn apply_deterministic_shuffle(&mut self, free_positions: &[CellPos]) -> bool {
         let free_set: HashSet<CellPos> = free_positions.iter().copied().collect();
-        let target_rune = RuneType::ALL[0];
-        for row in 0..self.rows {
-            for col in 0..self.cols.saturating_sub(2) {
-                let p0 = CellPos::new(col, row);
-                let p1 = CellPos::new(col + 1, row);
-                let p2 = CellPos::new(col + 2, row);
-                let p_alt = if row + 1 < self.rows {
-                    CellPos::new(col + 2, row + 1)
-                } else if row > 0 {
-                    CellPos::new(col + 2, row - 1)
-                } else {
-                    continue;
-                };
-                if free_set.contains(&p0)
-                    && free_set.contains(&p1)
-                    && free_set.contains(&p2)
-                    && free_set.contains(&p_alt)
-                {
-                    let i0 = self.idx(p0);
-                    let i1 = self.idx(p1);
-                    let i_alt = self.idx(p_alt);
-                    self.cells[i0].rune = Some(target_rune);
-                    self.cells[i1].rune = Some(target_rune);
-                    self.cells[i_alt].rune = Some(target_rune);
-                    return;
+        let pool = self.rune_pool_len.clamp(1, RuneType::ALL.len());
+
+        // Base layout: greedy match-free fill, rotating the starting rune per cell.
+        for (n, &pos) in free_positions.iter().enumerate() {
+            let mut chosen = RuneType::ALL[n % pool];
+            for k in 0..pool {
+                let candidate = RuneType::ALL[(n + k) % pool];
+                if !self.would_complete_line(pos, candidate) {
+                    chosen = candidate;
+                    break;
+                }
+            }
+            let idx = self.idx(pos);
+            self.cells[idx].rune = Some(chosen);
+        }
+        if self.is_settled_and_playable() {
+            return true;
+        }
+
+        let base: Vec<Option<RuneType>> = free_positions
+            .iter()
+            .map(|&p| self.cells[self.idx(p)].rune)
+            .collect();
+
+        // Line directions as (dc, dr). The mover approaches the third cell from either side
+        // (perpendicular) or from beyond it (in line).
+        let directions: [(isize, isize); 2] = [(1, 0), (0, 1)];
+        for &target_rune in &RuneType::ALL[..pool] {
+            for &start in free_positions {
+                for &(dc, dr) in &directions {
+                    let cell_at = |step: isize, side: isize| -> Option<CellPos> {
+                        let col = start.col as isize + dc * step + dr * side;
+                        let row = start.row as isize + dr * step + dc * side;
+                        if col < 0 || row < 0 {
+                            return None;
+                        }
+                        let p = CellPos::new(col as usize, row as usize);
+                        (self.in_bounds(p) && free_set.contains(&p)).then_some(p)
+                    };
+                    let (Some(p0), Some(p1), Some(_p2)) =
+                        (cell_at(0, 0), cell_at(1, 0), cell_at(2, 0))
+                    else {
+                        continue;
+                    };
+                    for mover in [cell_at(2, 1), cell_at(2, -1), cell_at(3, 0)]
+                        .into_iter()
+                        .flatten()
+                    {
+                        for p in [p0, p1, mover] {
+                            let idx = self.idx(p);
+                            self.cells[idx].rune = Some(target_rune);
+                        }
+                        if self.is_settled_and_playable() {
+                            return true;
+                        }
+                        self.restore_free_runes(free_positions, &base);
+                    }
                 }
             }
         }
+        false
+    }
+
+    /// True when placing `rune` at `pos` would extend a run of identical runes to three
+    /// with already painted neighbors to the left or above.
+    fn would_complete_line(&self, pos: CellPos, rune: RuneType) -> bool {
+        let same = |col: isize, row: isize| -> bool {
+            if col < 0 || row < 0 {
+                return false;
+            }
+            let p = CellPos::new(col as usize, row as usize);
+            self.in_bounds(p) && {
+                let c = self.cells[self.idx(p)];
+                !c.blocked && c.rune == Some(rune)
+            }
+        };
+        let (c, r) = (pos.col as isize, pos.row as isize);
+        (same(c - 1, r) && same(c - 2, r)) || (same(c, r - 1) && same(c, r - 2))
     }
 
     /// Places a random Line or Bomb booster on an unblocked free rune cell (Odin's Eye amulet).

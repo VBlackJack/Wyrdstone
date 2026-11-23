@@ -29,6 +29,11 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 const DAILY_SEED_SALT: u64 = 0x5759_5244_5354_4F4E;
+/// Preferred top-row relic columns for the relic excavation daily (2 and 3 relic variants).
+const DAILY_RELIC_COLUMNS_TWO: [usize; 2] = [2, 5];
+const DAILY_RELIC_COLUMNS_THREE: [usize; 3] = [1, 4, 6];
+/// Extra top-row columns used when a preferred relic column is blocked.
+const DAILY_RELIC_FALLBACK_COLUMNS: [usize; 6] = [1, 2, 3, 4, 5, 6];
 
 /// Daily deterministic Fjord Blessing active for all Match-3 boards on a given UTC day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,14 +186,28 @@ impl LevelDef {
             1 => {
                 // Relic excavation: drop 2-3 relics through crates & ice
                 let relic_count = rng.gen_range(2..=3usize);
-                let cols = if relic_count == 2 {
-                    vec![2, 5]
+                let preferred: &[usize] = if relic_count == 2 {
+                    &DAILY_RELIC_COLUMNS_TWO
                 } else {
-                    vec![1, 4, 6]
+                    &DAILY_RELIC_COLUMNS_THREE
                 };
-                for c in cols {
+                // Only free top-row cells can hold a relic; fall back to other free columns.
+                let is_free = |c: usize| !blocked_cells.contains(&(c, 0));
+                let mut relic_columns: Vec<usize> =
+                    preferred.iter().copied().filter(|&c| is_free(c)).collect();
+                for c in DAILY_RELIC_FALLBACK_COLUMNS {
+                    if relic_columns.len() >= relic_count {
+                        break;
+                    }
+                    if is_free(c) && !relic_columns.contains(&c) {
+                        relic_columns.push(c);
+                    }
+                }
+                relic_columns.truncate(relic_count);
+                for c in relic_columns {
                     relic_cells.push((c, 0));
                 }
+                let relic_count = relic_cells.len();
                 for c in 2..=5 {
                     ice_cells.push((c, 4, if c == 2 || c == 5 { 2 } else { 1 }));
                     ice_cells.push((c, 6, 1));

@@ -23,6 +23,9 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+/// Number of rune types in play during the first expedition wave (later waves use all of them).
+pub const WAVE_ONE_RUNE_TYPES: usize = 5;
+
 /// Roguelite blessing offered between Expedition waves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpeditionBoon {
@@ -95,7 +98,12 @@ impl ExpeditionRun {
     /// Generates an escalating procedural board for the current expedition wave.
     pub fn generate_wave_level<R: Rng>(&self, rng: &mut R) -> LevelDef {
         let w = self.wave;
-        let target_rune = RuneType::ALL[rng.gen_range(0..RuneType::ALL.len())];
+        let rune_types_count = if w == 1 {
+            WAVE_ONE_RUNE_TYPES
+        } else {
+            RuneType::ALL.len()
+        };
+        let target_rune = RuneType::ALL[rng.gen_range(0..rune_types_count)];
         let ice_target = (6 + w * 2).min(16);
         let rune_target = (14 + w * 3).min(36);
 
@@ -155,7 +163,7 @@ impl ExpeditionRun {
             rows: 8,
             max_moves: (22 + self.extra_moves).min(36),
             time_limit_seconds: None,
-            rune_types_count: if w == 1 { 5 } else { 6 },
+            rune_types_count,
             objectives,
             ice_cells,
             chained_cells,

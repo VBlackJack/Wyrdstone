@@ -15,13 +15,15 @@
  */
 
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
+use std::collections::HashSet;
 use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME, SAVE_SCHEMA_VERSION};
 use wyrdstone_core::{
-    achievement_progress, ActiveTool, AmuletEffect, Board, Booster, Cell, CellPos, CityBonuses,
-    CityState, ClanRank, DailyBlessing, ExpeditionBoon, ExpeditionRun, GameDataBundle, Language,
-    LevelDef, LevelOutcome, LevelSession, PatronGod, QuestCondition, ResourceBundle, RuneType,
-    SaveData, FURY_CHARGE_MAX,
+    achievement_progress, ActiveTool, AmuletEffect, Board, Booster, BossDef, BossRiposteKind,
+    BossState, Cell, CellPos, CityBonuses, CityState, ClanRank, DailyBlessing, ExpeditionBoon,
+    ExpeditionRun, GameDataBundle, Language, LevelDef, LevelOutcome, LevelSession,
+    MatchStepOutcome, Objective, PatronGod, QuestCondition, ResourceBundle, RuneType, SaveData,
+    ToolInventory, FURY_CHARGE_MAX,
 };
 
 #[test]
@@ -1069,4 +1071,554 @@ fn login_tribute_calendar_tracks_7_day_cycle_and_resets_on_gap() {
     // Day 8 wraps cleanly back to Day 1; missing a day also resets to Day 1.
     assert_eq!(city.next_login_tribute_day(107), 1);
     assert_eq!(city.next_login_tribute_day(115), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Content feasibility: every level, daily and expedition wave must be winnable.
+// ---------------------------------------------------------------------------
+
+/// Number of consecutive day indices checked for the procedural daily challenge.
+const DAILY_FEASIBILITY_DAYS: u64 = 365;
+/// First day index of the second daily window (a realistic present-day UTC day count).
+const DAILY_WINDOW_OFFSET: u64 = 20_000;
+/// Seeds exercised for expedition wave generation.
+const EXPEDITION_FEASIBILITY_SEEDS: u64 = 60;
+/// Highest expedition wave checked.
+const EXPEDITION_MAX_WAVE: u32 = 20;
+
+fn count_relics(board: &Board) -> u32 {
+    let mut n = 0;
+    for row in 0..board.rows() {
+        for col in 0..board.cols() {
+            if board.get(CellPos::new(col, row)).is_some_and(|c| c.relic) {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// Asserts that every objective of the level can be reached with the rune pool and board built.
+fn assert_level_feasible(level: &LevelDef, rng: &mut StdRng) {
+    let pool = level.rune_types_count.clamp(3, RuneType::ALL.len());
+    let board = Board::new_for_level(level, rng);
+    for objective in &level.objectives {
+        match objective {
+            Objective::CollectRune { rune, .. } => assert!(
+                RuneType::ALL[..pool].contains(rune),
+                "level {}: target rune {rune:?} is outside the pool of {pool} runes",
+                level.id
+            ),
+            Objective::DropRelics { target } => {
+                let placed = count_relics(&board);
+                assert!(
+                    placed >= *target,
+                    "level {}: DropRelics target {target} but only {placed} relics placed",
+                    level.id
+                );
+            }
+            Objective::ClearIce { .. } | Objective::ReachScore { .. } => {}
+        }
+    }
+}
+
+#[test]
+fn every_bundled_level_is_feasible() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(11);
+    for level in &data.levels {
+        assert_level_feasible(level, &mut rng);
+    }
+}
+
+#[test]
+fn daily_challenges_are_feasible_for_a_full_year() {
+    let mut rng = StdRng::seed_from_u64(12);
+    for window in [0, DAILY_WINDOW_OFFSET] {
+        for day in window..window + DAILY_FEASIBILITY_DAYS {
+            let level = LevelDef::daily_challenge(day);
+            assert_level_feasible(&level, &mut rng);
+            for objective in &level.objectives {
+                if let Objective::DropRelics { target } = objective {
+                    assert_eq!(
+                        *target as usize,
+                        level.relic_cells.len(),
+                        "day {day}: relic target must match relic cells"
+                    );
+                    for &(c, r) in &level.relic_cells {
+                        assert!(
+                            !level.blocked_cells.contains(&(c, r)),
+                            "day {day}: relic placed on blocked cell"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn expedition_waves_only_target_runes_inside_the_pool() {
+    for seed in 0..EXPEDITION_FEASIBILITY_SEEDS {
+        let mut rng = StdRng::seed_from_u64(seed);
+        for wave in 1..=EXPEDITION_MAX_WAVE {
+            let mut run = ExpeditionRun::new();
+            run.wave = wave;
+            let level = run.generate_wave_level(&mut rng);
+            assert_level_feasible(&level, &mut rng);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Swap validation and shuffle safety.
+// ---------------------------------------------------------------------------
+
+fn rune_grid(cols: usize, rows: usize, layout: &[&str]) -> Vec<Cell> {
+    assert_eq!(layout.len(), rows);
+    let mut cells = Vec::with_capacity(cols * rows);
+    for line in layout {
+        let chars: Vec<char> = line.chars().collect();
+        assert_eq!(chars.len(), cols);
+        for ch in chars {
+            let rune = match ch {
+                'F' => RuneType::Fire,
+                'I' => RuneType::Ice,
+                'W' => RuneType::Wood,
+                'S' => RuneType::Stone,
+                'G' => RuneType::Gold,
+                'A' => RuneType::Water,
+                other => panic!("unknown rune letter {other}"),
+            };
+            cells.push(Cell::playable(rune));
+        }
+    }
+    cells
+}
+
+#[test]
+fn begin_swap_step_rejects_swap_that_only_leaves_a_match_elsewhere() {
+    // Row 4 already holds a Gold triple, but swapping (0,0) and (1,0) creates no match.
+    let layout = ["FIWSG", "IFSWA", "WSFGI", "SWGAF", "GGGAW"];
+    let cells = rune_grid(5, 5, &layout);
+    let mut board = Board::from_cells(5, 5, 6, cells);
+    let before: Vec<Option<RuneType>> = (0..5)
+        .flat_map(|r| (0..5).map(move |c| (c, r)))
+        .map(|(c, r)| board.get(CellPos::new(c, r)).unwrap().rune)
+        .collect();
+    let result = board.begin_swap_step(CellPos::new(0, 0), CellPos::new(1, 0));
+    assert!(
+        result.is_none(),
+        "a swap that creates no match with either swapped cell must be rejected"
+    );
+    let after: Vec<Option<RuneType>> = (0..5)
+        .flat_map(|r| (0..5).map(move |c| (c, r)))
+        .map(|(c, r)| board.get(CellPos::new(c, r)).unwrap().rune)
+        .collect();
+    assert_eq!(before, after, "a rejected swap must leave the board intact");
+}
+
+#[test]
+fn has_valid_moves_agrees_with_begin_swap_step_on_random_boards() {
+    let mut rng = StdRng::seed_from_u64(77);
+    let mut disagreements = 0;
+    for _ in 0..300 {
+        let cells: Vec<Cell> = (0..36)
+            .map(|_| Cell::playable(RuneType::ALL[rng.gen_range(0..4)]))
+            .collect();
+        let board = Board::from_cells(6, 6, 4, cells);
+        let mut any_accepted = false;
+        for row in 0..6 {
+            for col in 0..6 {
+                for (dc, dr) in [(1usize, 0usize), (0, 1)] {
+                    let (nc, nr) = (col + dc, row + dr);
+                    if nc >= 6 || nr >= 6 {
+                        continue;
+                    }
+                    let mut clone = board.clone();
+                    if clone
+                        .begin_swap_step(CellPos::new(col, row), CellPos::new(nc, nr))
+                        .is_some()
+                    {
+                        any_accepted = true;
+                    }
+                }
+            }
+        }
+        if any_accepted != board.has_valid_moves() {
+            disagreements += 1;
+        }
+    }
+    assert_eq!(
+        disagreements, 0,
+        "has_valid_moves must match what begin_swap_step actually accepts"
+    );
+}
+
+#[test]
+fn shuffle_with_many_obstacles_is_verified_or_reports_failure() {
+    let mut layout_rng = StdRng::seed_from_u64(31);
+    for seed in 0..120u64 {
+        let mut cells: Vec<Cell> = (0..64)
+            .map(|i| {
+                let rune = RuneType::ALL[(i % 8 + i / 8 * 2) % 5];
+                let mut cell = Cell::playable(rune);
+                match layout_rng.gen_range(0..10) {
+                    0 | 1 => cell = Cell::blocked_cell(),
+                    2 | 3 => cell.chained = true,
+                    4 => {
+                        cell.crate_layers = 1;
+                        cell.rune = None;
+                    }
+                    _ => {}
+                }
+                cell
+            })
+            .collect();
+        // Guarantee a few free cells so the shuffle has something to work on.
+        for cell in cells.iter_mut().take(6) {
+            *cell = Cell::playable(RuneType::Fire);
+        }
+        let mut board = Board::from_cells(8, 8, 5, cells);
+        let snapshot: Vec<Option<RuneType>> = (0..64)
+            .map(|i| board.get(CellPos::new(i % 8, i / 8)).unwrap().rune)
+            .collect();
+        let mut rng = StdRng::seed_from_u64(seed);
+        let ok = board.shuffle_free_runes(&mut rng);
+        if ok {
+            assert!(
+                board.prepare_cascade_step().is_none(),
+                "seed {seed}: a successful shuffle must leave no pending match"
+            );
+            assert!(
+                board.has_valid_moves(),
+                "seed {seed}: a successful shuffle must leave a valid move"
+            );
+        } else {
+            let after: Vec<Option<RuneType>> = (0..64)
+                .map(|i| board.get(CellPos::new(i % 8, i / 8)).unwrap().rune)
+                .collect();
+            assert_eq!(
+                snapshot, after,
+                "seed {seed}: a failed shuffle must restore the original layout"
+            );
+        }
+    }
+}
+
+#[test]
+fn shuffle_on_an_open_board_always_succeeds() {
+    for seed in 0..40u64 {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let cells: Vec<Cell> = (0..64)
+            .map(|_| Cell::playable(RuneType::ALL[rng.gen_range(0..5)]))
+            .collect();
+        let mut board = Board::from_cells(8, 8, 5, cells);
+        assert!(board.shuffle_free_runes(&mut rng));
+        assert!(board.prepare_cascade_step().is_none());
+        assert!(board.has_valid_moves());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Boosters combos.
+// ---------------------------------------------------------------------------
+
+/// 7x7 board with no accidental match: horizontal neighbors differ, vertical neighbors differ.
+fn combo_board(a_booster: Booster, b_booster: Booster) -> Board {
+    let mut cells: Vec<Cell> = (0..49)
+        .map(|i| {
+            let (c, r) = (i % 7, i / 7);
+            Cell::playable(RuneType::ALL[(c + 2 * r) % 5])
+        })
+        .collect();
+    cells[3 * 7 + 2].booster = a_booster;
+    cells[3 * 7 + 3].booster = b_booster;
+    Board::from_cells(7, 7, 5, cells)
+}
+
+fn combo_cells(a: Booster, b: Booster) -> HashSet<(usize, usize)> {
+    let mut board = combo_board(a, b);
+    let prepared = board
+        .begin_swap_step(CellPos::new(2, 3), CellPos::new(3, 3))
+        .expect("booster swap must be accepted");
+    assert!(prepared.is_direct_blast);
+    prepared.cells.iter().map(|p| (p.col, p.row)).collect()
+}
+
+fn rect(
+    cols: std::ops::RangeInclusive<usize>,
+    rows: std::ops::RangeInclusive<usize>,
+) -> HashSet<(usize, usize)> {
+    let mut set = HashSet::new();
+    for r in rows {
+        for c in cols.clone() {
+            set.insert((c, r));
+        }
+    }
+    set
+}
+
+#[test]
+fn bomb_plus_bomb_clears_a_five_by_five_area() {
+    let cells = combo_cells(Booster::Bomb, Booster::Bomb);
+    assert_eq!(cells, rect(1..=5, 1..=5));
+}
+
+#[test]
+fn line_plus_line_clears_the_row_and_column_cross() {
+    let cells = combo_cells(Booster::LineHorizontal, Booster::LineVertical);
+    let mut expected = rect(0..=6, 3..=3);
+    expected.extend(rect(3..=3, 0..=6));
+    assert_eq!(cells.len(), 13);
+    assert_eq!(cells, expected);
+}
+
+#[test]
+fn bomb_plus_line_clears_three_rows_and_three_columns() {
+    let cells = combo_cells(Booster::Bomb, Booster::LineHorizontal);
+    let mut expected = rect(0..=6, 2..=4);
+    expected.extend(rect(2..=4, 0..=6));
+    assert_eq!(cells.len(), 33);
+    assert_eq!(cells, expected);
+}
+
+// ---------------------------------------------------------------------------
+// Boss damage, stars, rewards, energy and crafting.
+// ---------------------------------------------------------------------------
+
+fn test_boss_def(max_hp: u32, phase2_weakness: Option<RuneType>) -> BossDef {
+    BossDef {
+        id: "test_boss".to_string(),
+        name_key: "boss.test.name".to_string(),
+        title_key: "boss.test.title".to_string(),
+        desc_key: "boss.test.desc".to_string(),
+        max_hp,
+        max_moves: 20,
+        weakness: RuneType::Fire,
+        riposte_interval: 3,
+        riposte: BossRiposteKind::ChainRunes(2),
+        phase2_weakness,
+        phase2_riposte: None,
+        required_glory: 0,
+        reward_resources: ResourceBundle::default(),
+        reward_tools: ToolInventory::default(),
+        glory_reward: 0,
+    }
+}
+
+fn step_with_runes(runes: &[(RuneType, u32)], combo: u32) -> MatchStepOutcome {
+    let mut step = MatchStepOutcome {
+        valid: true,
+        max_combo: combo,
+        ..Default::default()
+    };
+    for &(rune, count) in runes {
+        step.cleared_runes.insert(rune, count);
+    }
+    step
+}
+
+#[test]
+fn boss_damage_doubles_on_weakness_and_adds_obstacle_and_score_bonus() {
+    let mut boss = BossState::new(test_boss_def(10_000, None));
+    let mut step = step_with_runes(&[(RuneType::Fire, 4), (RuneType::Ice, 2)], 1);
+    step.ice_broken = 1;
+    // Fire (weakness): 4 * 45 * 2 = 360, Ice: 2 * 45 = 90, obstacle: 85 => 535 raw.
+    // Score bonus 20%: 535 + 535 * 20 / 100 = 642.
+    let dealt = boss.apply_step_damage(&step, 20);
+    assert_eq!(dealt, 642);
+    assert_eq!(boss.hp, 10_000 - 642);
+    assert_eq!(boss.last_damage_dealt, 642);
+    assert!(!boss.is_defeated());
+}
+
+#[test]
+fn boss_damage_scales_with_combo_and_saturates_at_zero_hp() {
+    let mut boss = BossState::new(test_boss_def(10_000, None));
+    // Fire x2 = 180 raw, combo 3 => x1.7 = 306.
+    let step = step_with_runes(&[(RuneType::Fire, 2)], 3);
+    assert_eq!(boss.apply_step_damage(&step, 0), 306);
+
+    let mut weak = BossState::new(test_boss_def(100, None));
+    let big = step_with_runes(&[(RuneType::Fire, 10)], 1);
+    weak.apply_step_damage(&big, 0);
+    assert_eq!(weak.hp, 0);
+    assert!(weak.is_defeated());
+}
+
+#[test]
+fn boss_phase_two_switches_weakness_and_flags_entry_once() {
+    let mut boss = BossState::new(test_boss_def(10_000, Some(RuneType::Ice)));
+    boss.hp = 5_050;
+    // Fire is still the weakness in phase 1: 3 * 45 * 2 = 270 -> hp 4780 (< 50%).
+    let step = step_with_runes(&[(RuneType::Fire, 3)], 1);
+    assert_eq!(boss.apply_step_damage(&step, 0), 270);
+    assert_eq!(boss.hp, 4_780);
+    assert!(boss.phase2_triggered);
+    assert!(boss.just_entered_phase2);
+    assert_eq!(boss.active_weakness(), RuneType::Ice);
+
+    // In phase 2 Ice is doubled (90) and Fire is plain (45).
+    let step = step_with_runes(&[(RuneType::Ice, 1), (RuneType::Fire, 1)], 1);
+    assert_eq!(boss.apply_step_damage(&step, 0), 135);
+    assert!(!boss.just_entered_phase2);
+}
+
+fn victory_session(moves_left: u32, initial_moves: u32) -> (LevelSession, GameDataBundle) {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(5);
+    let level = data.levels[0].clone();
+    let mut session = LevelSession::start(level, &mut rng);
+    session.outcome = LevelOutcome::Victory;
+    session.initial_moves = initial_moves;
+    session.moves_left = moves_left;
+    (session, data)
+}
+
+#[test]
+fn earned_stars_follow_remaining_move_ratio() {
+    let (s3, _) = victory_session(7, 20);
+    assert_eq!(s3.earned_stars(), 3);
+    let (s2, _) = victory_session(3, 20);
+    assert_eq!(s2.earned_stars(), 2);
+    let (s1, _) = victory_session(2, 20);
+    assert_eq!(s1.earned_stars(), 1);
+    let (s0, _) = victory_session(0, 20);
+    assert_eq!(s0.earned_stars(), 1);
+
+    let (mut lost, _) = victory_session(7, 20);
+    lost.outcome = LevelOutcome::Defeat;
+    assert_eq!(lost.earned_stars(), 0);
+    lost.outcome = LevelOutcome::InProgress;
+    assert_eq!(lost.earned_stars(), 0);
+}
+
+#[test]
+fn earned_rewards_apply_move_passive_and_fury_bonuses() {
+    let (mut session, data) = victory_session(7, 20);
+    session.level.base_reward = ResourceBundle {
+        wood: 100,
+        stone: 50,
+        gold: 10,
+        mead: 3,
+    };
+    session.resource_bonus_pct = 10;
+    session.fury_resource_bonus_pct = 5;
+    // Move bonus 7 * 3 = 21, plus 10 and 5 => 36%.
+    assert_eq!(session.reward_bonus_breakdown(&data.balance), (21, 10, 5));
+    let rewards = session.earned_rewards(&data.balance);
+    assert_eq!(
+        rewards,
+        ResourceBundle {
+            wood: 136,
+            stone: 68,
+            gold: 13,
+            mead: 4,
+        }
+    );
+
+    // The move bonus is capped.
+    session.moves_left = 15;
+    assert_eq!(session.reward_bonus_breakdown(&data.balance).0, 30);
+
+    // No reward without a victory.
+    session.outcome = LevelOutcome::Defeat;
+    assert_eq!(
+        session.earned_rewards(&data.balance),
+        ResourceBundle::default()
+    );
+}
+
+#[test]
+fn offline_energy_regen_uses_interval_cap_and_ignores_zero_elapsed() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let balance = &data.balance;
+    let mut city = CityState::new(balance);
+    assert_eq!(city.compute_bonuses(balance).energy_regen_speed_pct, 0);
+    let interval = balance.energy_regen_seconds;
+
+    city.energy = 0;
+    city.apply_offline_energy_regen(0, balance);
+    assert_eq!(city.energy, 0);
+
+    city.apply_offline_energy_regen(interval - 1, balance);
+    assert_eq!(city.energy, 0, "less than one interval grants nothing");
+
+    city.apply_offline_energy_regen(interval * 10 + 1, balance);
+    assert_eq!(city.energy, 10);
+
+    city.apply_offline_energy_regen(interval * 10_000, balance);
+    assert_eq!(city.energy, city.max_energy(balance));
+}
+
+#[test]
+fn try_spend_energy_only_succeeds_when_affordable() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let balance = &data.balance;
+    let cost = balance.energy_cost_per_level;
+    let mut city = CityState::new(balance);
+
+    city.energy = cost;
+    assert!(city.try_spend_energy(balance));
+    assert_eq!(city.energy, 0);
+
+    city.energy = cost - 1;
+    assert!(!city.try_spend_energy(balance));
+    assert_eq!(
+        city.energy,
+        cost - 1,
+        "a refused spend must not change energy"
+    );
+}
+
+#[test]
+fn try_craft_tool_spends_exact_cost_or_refuses() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let recipe = data
+        .tool_shop
+        .iter()
+        .find(|r| r.tool == ActiveTool::Mjolnir)
+        .expect("Mjolnir recipe exists");
+    let mut city = CityState::new(&data.balance);
+    let owned = city.tools.count(ActiveTool::Mjolnir);
+
+    city.resources = ResourceBundle::default();
+    assert_eq!(
+        city.try_craft_tool(recipe),
+        Err("city.error.not_enough_resources")
+    );
+    assert_eq!(city.tools.count(ActiveTool::Mjolnir), owned);
+
+    let extra = ResourceBundle {
+        wood: 1,
+        stone: 2,
+        gold: 3,
+        mead: 4,
+    };
+    city.resources = ResourceBundle {
+        wood: recipe.cost.wood + extra.wood,
+        stone: recipe.cost.stone + extra.stone,
+        gold: recipe.cost.gold + extra.gold,
+        mead: recipe.cost.mead + extra.mead,
+    };
+    assert_eq!(city.try_craft_tool(recipe), Ok(owned + 1));
+    assert_eq!(city.resources, extra);
+}
+
+#[test]
+fn has_valid_moves_ignores_a_match_the_player_cannot_touch() {
+    // The Gold triple is chained, so the only swappable pair (Wood, Ice) creates nothing.
+    let mut cells = rune_grid(5, 1, &["GGGWI"]);
+    for cell in cells.iter_mut().take(3) {
+        cell.chained = true;
+    }
+    let mut board = Board::from_cells(5, 1, 6, cells);
+    assert!(
+        !board.has_valid_moves(),
+        "a match elsewhere must not count as a valid move"
+    );
+    assert!(board
+        .begin_swap_step(CellPos::new(3, 0), CellPos::new(4, 0))
+        .is_none());
 }
