@@ -26,6 +26,7 @@ pub mod i18n;
 pub mod level;
 pub mod patron;
 pub mod save;
+pub mod validate;
 
 pub use achievements::{achievement_progress, is_achievement_unlocked, AchievementDef, ClanRank};
 pub use balance::BalanceConfig;
