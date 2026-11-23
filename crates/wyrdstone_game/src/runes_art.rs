@@ -16,7 +16,7 @@
 
 //! Procedural Nordic rune stone, obstacle, and booster textures generated at startup.
 
-use crate::theme::RUNE_TEX_SIZE;
+use crate::theme::{OVERLAY_TEX_SIZE, RUNE_TEX_SIZE};
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
@@ -168,219 +168,422 @@ fn decode_rune_png(bytes: &[u8]) -> Image {
     .expect("Bundled rune PNG must decode cleanly")
 }
 
+fn new_overlay_canvas() -> Vec<u8> {
+    vec![0u8; OVERLAY_TEX_SIZE * OVERLAY_TEX_SIZE * 4]
+}
+
+fn finish_overlay_image(pixels: Vec<u8>) -> Image {
+    let mut img = Image::new(
+        Extent3d {
+            width: OVERLAY_TEX_SIZE as u32,
+            height: OVERLAY_TEX_SIZE as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.sampler = ImageSampler::linear();
+    img
+}
+
+fn blend_overlay_px(pixels: &mut [u8], x: usize, y: usize, rgba: [u8; 4]) {
+    if x >= OVERLAY_TEX_SIZE || y >= OVERLAY_TEX_SIZE {
+        return;
+    }
+    let idx = (y * OVERLAY_TEX_SIZE + x) * 4;
+    let src_a = rgba[3] as f32 / 255.0;
+    let dst_a = pixels[idx + 3] as f32 / 255.0;
+    let out_a = src_a + dst_a * (1.0 - src_a);
+    if out_a <= 0.0001 {
+        return;
+    }
+    for c in 0..3 {
+        let s = rgba[c] as f32;
+        let d = pixels[idx + c] as f32;
+        pixels[idx + c] = ((s * src_a + d * dst_a * (1.0 - src_a)) / out_a).clamp(0.0, 255.0) as u8;
+    }
+    pixels[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0) as u8;
+}
+
+type LineSeg = ((f32, f32), (f32, f32));
+
+fn dist_to_segment(px: f32, py: f32, x0: f32, y0: f32, x1: f32, y1: f32) -> f32 {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let len2 = dx * dx + dy * dy;
+    if len2 <= 0.0001 {
+        return (px - x0).hypot(py - y0);
+    }
+    let t = (((px - x0) * dx + (py - y0) * dy) / len2).clamp(0.0, 1.0);
+    (px - (x0 + dx * t)).hypot(py - (y0 + dy * t))
+}
+
+fn rounded_box_sdf(px: f32, py: f32, half: f32, inset: f32, radius: f32) -> f32 {
+    let extent = half - inset - radius;
+    let qx = (px - half).abs() - extent;
+    let qy = (py - half).abs() - extent;
+    qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius
+}
+
 fn build_cell_bg_image() -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    for y in 1..(s - 1) {
-        for x in 1..(s - 1) {
-            let border = x <= 2 || y <= 2 || x >= s - 3 || y >= s - 3;
-            let rgba = if border {
-                [56, 72, 94, 220]
+    let mut px = new_overlay_canvas();
+    let s = OVERLAY_TEX_SIZE as f32;
+    let half = s * 0.5;
+    for y in 0..OVERLAY_TEX_SIZE {
+        for x in 0..OVERLAY_TEX_SIZE {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let sdf = rounded_box_sdf(fx, fy, half, 3.0, 10.0);
+            if sdf > 1.2 {
+                continue;
+            }
+            let aa = (1.0 - (sdf + 0.2).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+            let depth = -sdf;
+            let light = (1.0 - fy / s) * 0.45 + (1.0 - fx / s) * 0.2;
+            let nx = (fx - half) / half;
+            let ny = (fy - half) / half;
+            let radial = (nx * nx + ny * ny).sqrt().clamp(0.0, 1.0);
+            let (r, g, b, a) = if depth < 3.5 {
+                // Carved stone bevel rim
+                (
+                    52.0 + light * 32.0,
+                    68.0 + light * 36.0,
+                    92.0 + light * 42.0,
+                    224.0,
+                )
+            } else if depth < 6.5 {
+                // Subtle recessed groove
+                (20.0, 28.0, 42.0, 232.0)
             } else {
-                [26, 36, 52, 235]
+                // Smooth dark slate interior with faint center illumination
+                (
+                    24.0 + (1.0 - radial) * 14.0 + light * 6.0,
+                    34.0 + (1.0 - radial) * 18.0 + light * 7.0,
+                    50.0 + (1.0 - radial) * 24.0 + light * 9.0,
+                    220.0 + radial * 18.0,
+                )
             };
-            set_px(&mut px, x, y, rgba);
+            blend_overlay_px(
+                &mut px,
+                x,
+                y,
+                [
+                    r.clamp(0.0, 255.0) as u8,
+                    g.clamp(0.0, 255.0) as u8,
+                    b.clamp(0.0, 255.0) as u8,
+                    (a * aa).clamp(0.0, 255.0) as u8,
+                ],
+            );
         }
     }
-    finish_image(px)
+    finish_overlay_image(px)
 }
 
 /// Translucent glacial ice cube drawn OVER the runestone with a clear center window
 /// so the trapped rune glyph remains 100% readable while unmistakably encased in ice.
 fn build_ice_top_frost_image(layers: u8) -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    let half = s as f32 * 0.5;
-    let wall_w: i32 = if layers >= 2 { 6 } else { 4 };
+    let mut px = new_overlay_canvas();
+    let s = OVERLAY_TEX_SIZE as f32;
+    let half = s * 0.5;
+    let wall_w: f32 = if layers >= 2 { 13.0 } else { 8.5 };
+    let clear_radius: f32 = if layers >= 2 { 32.0 } else { 38.0 };
+    let outer_radius: f32 = 58.0;
 
-    for y in 1..(s - 1) {
-        for x in 1..(s - 1) {
-            let left = x;
-            let right = s - 1 - x;
-            let top = y;
-            let bottom = s - 1 - y;
-            let edge = left.min(right).min(top).min(bottom);
+    let cracks: &[LineSeg] = if layers >= 2 {
+        &[
+            ((14.0, 22.0), (36.0, 34.0)),
+            ((36.0, 34.0), (48.0, 18.0)),
+            ((114.0, 102.0), (88.0, 88.0)),
+            ((88.0, 88.0), (80.0, 112.0)),
+            ((112.0, 26.0), (88.0, 44.0)),
+            ((18.0, 104.0), (40.0, 84.0)),
+        ]
+    } else {
+        &[]
+    };
 
-            // Outer frost rim for crisp ice-block silhouette.
-            if edge == 1 {
-                set_px(&mut px, x, y, [72, 174, 224, 245]);
+    for y in 0..OVERLAY_TEX_SIZE {
+        for x in 0..OVERLAY_TEX_SIZE {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let sdf = rounded_box_sdf(fx, fy, half, 2.0, 12.0);
+            if sdf > 1.2 {
+                continue;
+            }
+            let aa = (1.0 - (sdf + 0.2).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+            let depth = -sdf;
+            let dist = (fx - half).hypot(fy - half);
+
+            if depth < 2.2 {
+                blend_overlay_px(&mut px, x, y, [78, 186, 238, (245.0 * aa) as u8]);
                 continue;
             }
 
-            // Thick 3D beveled ice walls around all four sides.
-            if edge <= wall_w {
-                let top_left = left <= wall_w || top <= wall_w;
-                let rgba = if top_left {
+            if depth <= wall_w {
+                let top_left = (fx + fy) < s;
+                let bevel = 1.0 - (depth / wall_w);
+                let (r, g, b, a) = if top_left {
                     if layers >= 2 {
-                        [240, 253, 255, 248]
+                        (232.0 + bevel * 23.0, 250.0 + bevel * 5.0, 255.0, 238.0)
                     } else {
-                        [218, 248, 255, 225]
+                        (212.0 + bevel * 28.0, 245.0 + bevel * 10.0, 255.0, 212.0)
                     }
                 } else if layers >= 2 {
-                    [96, 198, 242, 238]
+                    (88.0 + bevel * 36.0, 194.0 + bevel * 26.0, 244.0, 230.0)
                 } else {
-                    [88, 186, 230, 205]
+                    (82.0 + bevel * 28.0, 184.0 + bevel * 22.0, 234.0, 198.0)
                 };
-                set_px(&mut px, x, y, rgba);
+                blend_overlay_px(&mut px, x, y, [r as u8, g as u8, b as u8, (a * aa) as u8]);
                 continue;
             }
 
-            // Radial clear window in the center so the carved rune glyph shines through clearly!
-            let dx = x as f32 - half;
-            let dy = y as f32 - half;
-            let dist = (dx * dx + dy * dy).sqrt();
-            let clear_radius = if layers >= 2 { 16.0 } else { 19.0 };
-            let outer_radius = 29.0;
             let frost_ring =
                 ((dist - clear_radius) / (outer_radius - clear_radius)).clamp(0.0, 1.0);
+            let center_tint = if layers >= 2 { 24.0 } else { 10.0 };
+            let ring_alpha = frost_ring.powf(1.35) * if layers >= 2 { 190.0 } else { 138.0 };
 
-            let center_tint = if layers >= 2 { 26.0 } else { 12.0 };
-            let ring_alpha = frost_ring.powf(1.3) * if layers >= 2 { 195.0 } else { 145.0 };
-
-            // Subtle diagonal specular ice sheen (only outside the very center).
-            let diag = x + y;
-            let glare = if dist > clear_radius * 0.75
-                && ((diag - 34).abs() <= 3 || (diag - 48).abs() <= 2)
-            {
-                55.0
+            let diag = (fx + fy) - 70.0;
+            let glare1 = (-diag * diag / 48.0).exp();
+            let diag2 = (fx + fy) - 102.0;
+            let glare2 = (-diag2 * diag2 / 26.0).exp() * 0.7;
+            let glare = if dist > clear_radius * 0.72 {
+                (glare1 + glare2) * 72.0
             } else {
                 0.0
             };
 
-            let alpha = (center_tint + ring_alpha + glare).clamp(0.0, 235.0) as u8;
-            let r = (175.0 + frost_ring * 65.0 + glare).clamp(0.0, 255.0) as u8;
-            let g = (236.0 + frost_ring * 18.0 + glare * 0.3).clamp(0.0, 255.0) as u8;
-            let b = 255u8;
-            set_px(&mut px, x, y, [r, g, b, alpha]);
+            let alpha = (center_tint + ring_alpha + glare).clamp(0.0, 235.0) * aa;
+            let r = (176.0 + frost_ring * 66.0 + glare).clamp(0.0, 255.0) as u8;
+            let g = (236.0 + frost_ring * 18.0 + glare * 0.35).clamp(0.0, 255.0) as u8;
+            blend_overlay_px(&mut px, x, y, [r, g, 255, alpha as u8]);
+
+            // Specular highlight along top-left inner bevel
+            let glint_h = dist_to_segment(fx, fy, 16.0, 16.0, 52.0, 16.0);
+            let glint_v = dist_to_segment(fx, fy, 16.0, 16.0, 16.0, 48.0);
+            let glint = (-glint_h.min(glint_v).powi(2) / 5.5).exp();
+            if glint > 0.05 {
+                blend_overlay_px(&mut px, x, y, [255, 255, 255, (glint * 225.0) as u8]);
+            }
+
+            for &((x0, y0), (x1, y1)) in cracks {
+                let d_lo = dist_to_segment(fx, fy, x0, y0, x1, y1);
+                let d_hi = dist_to_segment(fx, fy + 1.5, x0, y0, x1, y1);
+                if d_lo < 2.8 {
+                    let c_a = (1.0 - d_lo / 2.8).powf(1.5) * 225.0;
+                    blend_overlay_px(&mut px, x, y, [68, 168, 224, c_a as u8]);
+                }
+                if d_hi < 1.6 {
+                    let h_a = (1.0 - d_hi / 1.6).powf(1.3) * 245.0;
+                    blend_overlay_px(&mut px, x, y, [248, 254, 255, h_a as u8]);
+                }
+            }
         }
     }
 
-    // Crisp white specular glint on top-left ice bevel.
-    draw_thick_line(&mut px, 8, 8, 26, 8, 1, [255, 255, 255, 240]);
-    draw_thick_line(&mut px, 8, 8, 8, 24, 1, [255, 255, 255, 240]);
-
-    // Layer 2 (Thick Glacial Ice): jagged frost fractures around the rim & corners (leaving the center rune clear).
-    if layers >= 2 {
-        let crack_hi = [248, 254, 255, 245];
-        let crack_lo = [76, 175, 224, 220];
-        // Top-left to top-center crack
-        draw_thick_line(&mut px, 8, 12, 18, 18, 1, crack_lo);
-        draw_thick_line(&mut px, 18, 18, 24, 10, 1, crack_lo);
-        draw_thick_line(&mut px, 8, 11, 18, 17, 0, crack_hi);
-        // Bottom-right crack
-        draw_thick_line(&mut px, 56, 50, 44, 44, 1, crack_lo);
-        draw_thick_line(&mut px, 44, 44, 40, 55, 1, crack_lo);
-        draw_thick_line(&mut px, 56, 49, 44, 43, 0, crack_hi);
-        // Top-right crack
-        draw_thick_line(&mut px, 55, 14, 44, 22, 1, crack_lo);
-        draw_thick_line(&mut px, 55, 13, 44, 21, 0, crack_hi);
-        // Bottom-left crack
-        draw_thick_line(&mut px, 10, 52, 20, 42, 1, crack_lo);
-        draw_thick_line(&mut px, 10, 51, 20, 41, 0, crack_hi);
-    }
-
-    finish_image(px)
+    finish_overlay_image(px)
 }
 
+/// Sculpted crossed iron chains with dark drop-shadow and metallic link highlights.
 fn build_chain_image() -> Image {
-    let mut px = new_canvas();
-    let iron = [185, 194, 208, 235];
-    let shadow = [62, 68, 78, 235];
-    draw_thick_line(&mut px, 8, 8, 56, 56, 3, shadow);
-    draw_thick_line(&mut px, 56, 8, 8, 56, 3, shadow);
-    draw_thick_line(&mut px, 8, 8, 56, 56, 2, iron);
-    draw_thick_line(&mut px, 56, 8, 8, 56, 2, iron);
-    finish_image(px)
+    let mut px = new_overlay_canvas();
+    let s = OVERLAY_TEX_SIZE as f32;
+    let margin = 12.0;
+
+    for y in 0..OVERLAY_TEX_SIZE {
+        for x in 0..OVERLAY_TEX_SIZE {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let d1 = dist_to_segment(fx, fy, margin, margin, s - margin, s - margin);
+            let d2 = dist_to_segment(fx, fy, s - margin, margin, margin, s - margin);
+            let d1_sh = dist_to_segment(fx, fy - 3.0, margin, margin, s - margin, s - margin);
+            let d2_sh = dist_to_segment(fx, fy - 3.0, s - margin, margin, margin, s - margin);
+
+            let d_sh = d1_sh.min(d2_sh);
+            if d_sh < 8.5 {
+                let sh_a = (1.0 - d_sh / 8.5).powf(1.5) * 165.0;
+                blend_overlay_px(&mut px, x, y, [10, 14, 20, sh_a as u8]);
+            }
+
+            let (d, along) = if d1 < d2 {
+                (d1, (fx + fy) * std::f32::consts::FRAC_1_SQRT_2)
+            } else {
+                (d2, (fx - fy + s) * std::f32::consts::FRAC_1_SQRT_2)
+            };
+
+            if d < 6.8 {
+                let link_wave = ((along * 0.34).sin()).abs();
+                let profile = (1.0 - (d / 6.8).powi(2)).clamp(0.0, 1.0);
+                let rim = if d > 4.4 { 0.45 } else { 1.0 };
+                let metallic = (0.42 + profile * 0.58 * (0.72 + link_wave * 0.28)) * rim;
+                let spec = (-((d - 1.4).powi(2)) / 2.2).exp() * link_wave;
+                let r = (68.0 + metallic * 128.0 + spec * 72.0).clamp(0.0, 255.0) as u8;
+                let g = (76.0 + metallic * 136.0 + spec * 74.0).clamp(0.0, 255.0) as u8;
+                let b = (90.0 + metallic * 144.0 + spec * 80.0).clamp(0.0, 255.0) as u8;
+                let aa = ((6.8 - d) / 1.4).clamp(0.0, 1.0);
+                blend_overlay_px(&mut px, x, y, [r, g, b, (242.0 * aa) as u8]);
+            }
+        }
+    }
+    finish_overlay_image(px)
 }
 
+/// Radiant golden energy arrows with soft outer glow for Line Horizontal/Vertical boosters.
 fn build_line_booster_image(horizontal: bool) -> Image {
-    let mut px = new_canvas();
-    let glow = [255, 244, 150, 245];
-    if horizontal {
-        draw_thick_line(&mut px, 6, 32, 58, 32, 3, glow);
-        draw_thick_line(&mut px, 14, 24, 6, 32, 2, glow);
-        draw_thick_line(&mut px, 14, 40, 6, 32, 2, glow);
-        draw_thick_line(&mut px, 50, 24, 58, 32, 2, glow);
-        draw_thick_line(&mut px, 50, 40, 58, 32, 2, glow);
+    let mut px = new_overlay_canvas();
+    let s = OVERLAY_TEX_SIZE as f32;
+    let c = s * 0.5;
+    let segments: &[LineSeg] = if horizontal {
+        &[
+            ((12.0, c), (s - 12.0, c)),
+            ((28.0, c - 16.0), (12.0, c)),
+            ((28.0, c + 16.0), (12.0, c)),
+            ((s - 28.0, c - 16.0), (s - 12.0, c)),
+            ((s - 28.0, c + 16.0), (s - 12.0, c)),
+        ]
     } else {
-        draw_thick_line(&mut px, 32, 6, 32, 58, 3, glow);
-        draw_thick_line(&mut px, 24, 14, 32, 6, 2, glow);
-        draw_thick_line(&mut px, 40, 14, 32, 6, 2, glow);
-        draw_thick_line(&mut px, 24, 50, 32, 58, 2, glow);
-        draw_thick_line(&mut px, 40, 50, 32, 58, 2, glow);
+        &[
+            ((c, 12.0), (c, s - 12.0)),
+            ((c - 16.0, 28.0), (c, 12.0)),
+            ((c + 16.0, 28.0), (c, 12.0)),
+            ((c - 16.0, s - 28.0), (c, s - 12.0)),
+            ((c + 16.0, s - 28.0), (c, s - 12.0)),
+        ]
+    };
+
+    for y in 0..OVERLAY_TEX_SIZE {
+        for x in 0..OVERLAY_TEX_SIZE {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let mut min_d = f32::MAX;
+            for &((x0, y0), (x1, y1)) in segments {
+                min_d = min_d.min(dist_to_segment(fx, fy, x0, y0, x1, y1));
+            }
+            let halo = (-min_d * min_d / 64.0).exp() * 0.72;
+            let core = (-min_d * min_d / 11.0).exp();
+            let alpha = (halo + core).clamp(0.0, 1.0);
+            if alpha > 0.01 {
+                let r = (235.0 + core * 20.0).clamp(0.0, 255.0) as u8;
+                let g = (176.0 + core * 79.0).clamp(0.0, 255.0) as u8;
+                let b = (56.0 + core * 185.0).clamp(0.0, 255.0) as u8;
+                blend_overlay_px(&mut px, x, y, [r, g, b, (alpha * 255.0) as u8]);
+            }
+        }
     }
-    finish_image(px)
+    finish_overlay_image(px)
 }
 
+/// Glowing molten solar ring with fiery aura for Bomb boosters.
 fn build_bomb_booster_image() -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    let c = s / 2;
-    for y in 0..s {
-        for x in 0..s {
-            let d2 = (x - c) * (x - c) + (y - c) * (y - c);
-            if (17 * 17..=23 * 23).contains(&d2) {
-                set_px(&mut px, x, y, [255, 165, 48, 245]);
+    let mut px = new_overlay_canvas();
+    let half = OVERLAY_TEX_SIZE as f32 * 0.5;
+    for y in 0..OVERLAY_TEX_SIZE {
+        for x in 0..OVERLAY_TEX_SIZE {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let dist = (fx - half).hypot(fy - half);
+            let ring_d = (dist - 40.0).abs();
+            let ring_core = (-ring_d * ring_d / 18.0).exp();
+            let ring_halo = (-ring_d * ring_d / 110.0).exp() * 0.65;
+            let inner_ember = (-dist * dist / 950.0).exp() * 0.25;
+            let alpha = (ring_core + ring_halo + inner_ember).clamp(0.0, 1.0);
+            if alpha > 0.01 {
+                let r = 255u8;
+                let g = (118.0 + ring_core * 124.0).clamp(0.0, 255.0) as u8;
+                let b = (24.0 + ring_core * 140.0).clamp(0.0, 255.0) as u8;
+                blend_overlay_px(&mut px, x, y, [r, g, b, (alpha * 255.0) as u8]);
             }
         }
     }
-    finish_image(px)
+    finish_overlay_image(px)
 }
 
+/// Smooth rounded golden selection ring with luminous corner brackets.
 fn build_selection_ring_image() -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    for y in 1..(s - 1) {
-        for x in 1..(s - 1) {
-            let border = x <= 4 || y <= 4 || x >= s - 5 || y >= s - 5;
-            if border {
-                set_px(&mut px, x, y, [255, 224, 102, 255]);
+    let mut px = new_overlay_canvas();
+    let half = OVERLAY_TEX_SIZE as f32 * 0.5;
+    for y in 0..OVERLAY_TEX_SIZE {
+        for x in 0..OVERLAY_TEX_SIZE {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let sdf = rounded_box_sdf(fx, fy, half, 5.0, 14.0);
+            let band = sdf.abs();
+            let core = (-band * band / 7.5).exp();
+            let halo = (-band * band / 42.0).exp() * 0.6;
+            let alpha = (core + halo).clamp(0.0, 1.0);
+            if alpha > 0.01 {
+                let r = 255u8;
+                let g = (205.0 + core * 48.0).clamp(0.0, 255.0) as u8;
+                let b = (78.0 + core * 130.0).clamp(0.0, 255.0) as u8;
+                blend_overlay_px(&mut px, x, y, [r, g, b, (alpha * 255.0) as u8]);
             }
         }
     }
-    finish_image(px)
+    finish_overlay_image(px)
 }
 
+/// Smooth dual-ring arcane Bifrost portal vortex.
 fn build_portal_ring_image() -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    let c = s / 2;
-    for y in 0..s {
-        for x in 0..s {
-            let d2 = (x - c) * (x - c) + (y - c) * (y - c);
-            if (24 * 24..=30 * 30).contains(&d2) {
-                set_px(&mut px, x, y, [175, 112, 255, 235]);
-            } else if (21 * 21..24 * 24).contains(&d2) {
-                set_px(&mut px, x, y, [92, 232, 255, 210]);
+    let mut px = new_overlay_canvas();
+    let half = OVERLAY_TEX_SIZE as f32 * 0.5;
+    for y in 0..OVERLAY_TEX_SIZE {
+        for x in 0..OVERLAY_TEX_SIZE {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let dx = fx - half;
+            let dy = fy - half;
+            let dist = dx.hypot(dy);
+            let angle = dy.atan2(dx);
+            let swirl = 0.8 + 0.2 * (angle * 6.0 + dist * 0.12).sin();
+
+            let outer = (-(dist - 52.0).powi(2) / 26.0).exp() * swirl;
+            let inner = (-(dist - 43.0).powi(2) / 22.0).exp();
+            let aura = (-(dist - 48.0).powi(2) / 140.0).exp() * 0.45;
+            let alpha = (outer + inner + aura).clamp(0.0, 1.0);
+            if alpha > 0.01 {
+                let r = (102.0 + outer * 95.0).clamp(0.0, 255.0) as u8;
+                let g = (118.0 + inner * 124.0).clamp(0.0, 255.0) as u8;
+                let b = 255u8;
+                blend_overlay_px(&mut px, x, y, [r, g, b, (alpha * 245.0) as u8]);
             }
         }
     }
-    finish_image(px)
+    finish_overlay_image(px)
 }
 
 /// Dense swirling Niflheim Fog of War cloud that conceals a tile until an adjacent match dispels it.
 fn build_fog_overlay_image() -> Image {
-    let mut px = new_canvas();
-    let s = RUNE_TEX_SIZE as i32;
-    let half = s as f32 * 0.5;
-    for y in 0..s {
-        for x in 0..s {
-            let dx = x as f32 - half;
-            let dy = y as f32 - half;
-            let wave = ((x as f32 * 0.18).sin() + (y as f32 * 0.16).cos()) * 14.0;
-            let edge = x.min(y).min(s - 1 - x).min(s - 1 - y);
-            let alpha = if edge <= 2 { 215 } else { 244 };
-            let r = (36.0 + wave * 0.6).clamp(18.0, 90.0) as u8;
-            let g = (48.0 + wave * 0.9).clamp(24.0, 115.0) as u8;
-            let b =
-                (68.0 + wave * 1.1 + (dx * dx + dy * dy).sqrt() * 0.25).clamp(40.0, 150.0) as u8;
-            set_px(&mut px, x, y, [r, g, b, alpha]);
+    let mut px = new_overlay_canvas();
+    let s = OVERLAY_TEX_SIZE as f32;
+    let half = s * 0.5;
+    for y in 0..OVERLAY_TEX_SIZE {
+        for x in 0..OVERLAY_TEX_SIZE {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let sdf = rounded_box_sdf(fx, fy, half, 2.5, 14.0);
+            if sdf > 2.0 {
+                continue;
+            }
+            let edge_aa = (1.0 - ((sdf + 1.0) / 3.0).clamp(0.0, 1.0)).powf(1.3);
+            let nx = (fx - half) / half;
+            let ny = (fy - half) / half;
+            let wave1 = ((fx * 0.085).sin() + (fy * 0.075).cos()) * 0.5;
+            let wave2 = ((fx * 0.14 - fy * 0.11).sin()) * 0.5;
+            let swirl = (wave1 * 0.6 + wave2 * 0.4) * 28.0;
+            let dist = nx.hypot(ny);
+
+            let mist_wisp = (-(ny - 0.18 + (nx * 3.0).sin() * 0.12).powi(2) * 18.0).exp()
+                + (-(ny + 0.22 - (nx * 2.5).cos() * 0.10).powi(2) * 18.0).exp();
+
+            let r = (34.0 + swirl * 0.7 + mist_wisp * 68.0).clamp(18.0, 195.0) as u8;
+            let g = (48.0 + swirl * 0.9 + mist_wisp * 82.0).clamp(24.0, 215.0) as u8;
+            let b = (72.0 + swirl * 1.1 + dist * 16.0 + mist_wisp * 90.0).clamp(40.0, 240.0) as u8;
+            let alpha = ((236.0 + mist_wisp * 15.0).clamp(0.0, 250.0) * edge_aa) as u8;
+            blend_overlay_px(&mut px, x, y, [r, g, b, alpha]);
         }
     }
-    // Subtle silver mist swirl accent
-    draw_thick_line(&mut px, 14, 24, 48, 22, 2, [175, 205, 228, 120]);
-    draw_thick_line(&mut px, 18, 42, 50, 38, 2, [160, 195, 220, 110]);
-    finish_image(px)
+    finish_overlay_image(px)
 }
 
 /// High-contrast geometric corner badge per rune type for colorblind accessibility.

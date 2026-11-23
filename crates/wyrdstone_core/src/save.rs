@@ -146,6 +146,8 @@ pub struct SaveData {
     #[serde(default)]
     pub fast_animations: bool,
     #[serde(default)]
+    pub reduced_motion: bool,
+    #[serde(default)]
     pub tutorial_step: u8,
     #[serde(default)]
     pub active_expedition: Option<ExpeditionRun>,
@@ -164,6 +166,7 @@ impl SaveData {
             sfx_volume: DEFAULT_SFX_VOLUME,
             colorblind_mode: false,
             fast_animations: false,
+            reduced_motion: false,
             tutorial_step: 0,
             active_expedition: None,
             city: CityState::new(balance),

@@ -293,6 +293,12 @@ pub struct CityState {
     pub defeated_bosses: HashSet<String>,
     #[serde(default)]
     pub claimed_achievements: HashSet<String>,
+    #[serde(default)]
+    pub login_streak_day: u8,
+    #[serde(default)]
+    pub last_login_claim_day: Option<u64>,
+    #[serde(default)]
+    pub seen_chapters: HashSet<String>,
 }
 
 impl CityState {
@@ -330,7 +336,119 @@ impl CityState {
             selected_patron: PatronGod::default(),
             defeated_bosses: HashSet::new(),
             claimed_achievements: HashSet::new(),
+            login_streak_day: 0,
+            last_login_claim_day: None,
+            seen_chapters: HashSet::new(),
         }
+    }
+
+    /// Returns true if the 7-day Fjord Login Tribute has not yet been claimed today.
+    pub fn is_login_tribute_available(&self, today_day_index: u64) -> bool {
+        self.last_login_claim_day != Some(today_day_index)
+    }
+
+    /// Returns which day (1..=7) of the 7-day Fjord Login Tribute is next to claim.
+    pub fn next_login_tribute_day(&self, today_day_index: u64) -> u8 {
+        match self.last_login_claim_day {
+            Some(prev) if prev == today_day_index => self.login_streak_day.clamp(1, 7),
+            Some(prev) if prev + 1 == today_day_index => (self.login_streak_day % 7) + 1,
+            _ => 1,
+        }
+    }
+
+    /// Returns the escalating reward bundle and optional Runic Tool for a given login day (1..=7).
+    pub fn login_tribute_reward(day: u8) -> (ResourceBundle, Option<ActiveTool>) {
+        match day {
+            1 => (
+                ResourceBundle {
+                    wood: 35,
+                    stone: 20,
+                    gold: 30,
+                    mead: 0,
+                },
+                None,
+            ),
+            2 => (
+                ResourceBundle {
+                    wood: 25,
+                    stone: 40,
+                    gold: 35,
+                    mead: 10,
+                },
+                None,
+            ),
+            3 => (
+                ResourceBundle {
+                    wood: 30,
+                    stone: 30,
+                    gold: 50,
+                    mead: 10,
+                },
+                Some(ActiveTool::Mjolnir),
+            ),
+            4 => (
+                ResourceBundle {
+                    wood: 60,
+                    stone: 55,
+                    gold: 60,
+                    mead: 15,
+                },
+                None,
+            ),
+            5 => (
+                ResourceBundle {
+                    wood: 50,
+                    stone: 50,
+                    gold: 75,
+                    mead: 15,
+                },
+                Some(ActiveTool::ThorBolt),
+            ),
+            6 => (
+                ResourceBundle {
+                    wood: 75,
+                    stone: 75,
+                    gold: 95,
+                    mead: 25,
+                },
+                None,
+            ),
+            _ => (
+                ResourceBundle {
+                    wood: 100,
+                    stone: 100,
+                    gold: 140,
+                    mead: 35,
+                },
+                Some(ActiveTool::BifrostPrism),
+            ),
+        }
+    }
+
+    /// Claims today's 7-day Fjord Login Tribute if available, granting resources and optional tool.
+    pub fn try_claim_login_tribute(
+        &mut self,
+        today_day_index: u64,
+    ) -> Option<(u8, ResourceBundle, Option<ActiveTool>)> {
+        if !self.is_login_tribute_available(today_day_index) {
+            return None;
+        }
+        let day = self.next_login_tribute_day(today_day_index);
+        let (res, tool) = Self::login_tribute_reward(day);
+        self.resources.add(&res);
+        if let Some(t) = tool {
+            match t {
+                ActiveTool::Mjolnir => self.tools.mjolnir += 1,
+                ActiveTool::SurtrEmber => self.tools.surtr_ember += 1,
+                ActiveTool::LokiShuffle => self.tools.loki_shuffle += 1,
+                ActiveTool::ThorBolt => self.tools.thor_bolt += 1,
+                ActiveTool::BifrostPrism => self.tools.bifrost_prism += 1,
+                ActiveTool::DrakkarCharge => self.tools.drakkar_charge += 1,
+            }
+        }
+        self.login_streak_day = day;
+        self.last_login_claim_day = Some(today_day_index);
+        Some((day, res, tool))
     }
 
     /// Returns the player's current Viking Clan Rank based on total Glory.
@@ -424,6 +542,25 @@ impl CityState {
         }
     }
 
+    /// Returns remaining seconds until a rebuilt building's next passive harvest (`Some(0)` when ready, `None` if ruined).
+    pub fn harvest_remaining_secs(
+        &self,
+        building_id: &str,
+        now_secs: u64,
+        balance: &BalanceConfig,
+    ) -> Option<u64> {
+        if self.building_tier(building_id) == 0 || balance.harvest_interval_seconds == 0 {
+            return None;
+        }
+        let last = self
+            .last_harvest_unix_secs
+            .get(building_id)
+            .copied()
+            .unwrap_or(0);
+        let elapsed = now_secs.saturating_sub(last);
+        Some(balance.harvest_interval_seconds.saturating_sub(elapsed))
+    }
+
     /// Returns true when a rebuilt building has a passive resource harvest ready to collect.
     pub fn is_harvest_ready(
         &self,
@@ -431,15 +568,7 @@ impl CityState {
         now_secs: u64,
         balance: &BalanceConfig,
     ) -> bool {
-        if self.building_tier(building_id) == 0 || balance.harvest_interval_seconds == 0 {
-            return false;
-        }
-        let last = self
-            .last_harvest_unix_secs
-            .get(building_id)
-            .copied()
-            .unwrap_or(0);
-        now_secs.saturating_sub(last) >= balance.harvest_interval_seconds
+        self.harvest_remaining_secs(building_id, now_secs, balance) == Some(0)
     }
 
     /// Collects a building's ready passive resource harvest and resets its timer.
@@ -598,10 +727,9 @@ impl CityState {
         }
     }
 
-    /// Scales an amulet's base effect by its current tier (`1..=3`).
-    pub fn scaled_amulet_effect(&self, def: &AmuletDef) -> AmuletEffect {
-        let tier = self.amulet_tier(&def.id).max(1) as u32;
-        let extra_tiers = tier.saturating_sub(1);
+    /// Scales an amulet's base effect to an explicit tier (`1..=3`).
+    pub fn scaled_amulet_effect_for_tier(def: &AmuletDef, tier: u8) -> AmuletEffect {
+        let extra_tiers = tier.max(1).saturating_sub(1) as u32;
         match def.effect {
             AmuletEffect::ResourceBonusPct(base) => {
                 AmuletEffect::ResourceBonusPct(base + extra_tiers * 12)
@@ -615,6 +743,11 @@ impl CityState {
                 AmuletEffect::StartingBoosters(base + extra_tiers)
             }
         }
+    }
+
+    /// Scales an amulet's base effect by its current tier (`1..=3`).
+    pub fn scaled_amulet_effect(&self, def: &AmuletDef) -> AmuletEffect {
+        Self::scaled_amulet_effect_for_tier(def, self.amulet_tier(&def.id).max(1))
     }
 
     /// Returns the passive effect of the currently equipped amulet, scaled by its tier (1..=3).
@@ -853,9 +986,17 @@ impl CityState {
             && self.collection_found_count(col) == col.relic_ids.len()
     }
 
+    /// Returns the number of collection chests ready to claim.
+    pub fn claimable_collection_count(&self, collections: &[CollectionDef]) -> usize {
+        collections
+            .iter()
+            .filter(|c| self.is_collection_ready(c))
+            .count()
+    }
+
     /// Returns true if at least one collection chest is ready to claim.
     pub fn has_any_claimable_collection(&self, collections: &[CollectionDef]) -> bool {
-        collections.iter().any(|c| self.is_collection_ready(c))
+        self.claimable_collection_count(collections) > 0
     }
 
     /// Claims a completed Nine Realms collection chest (resources + active tools + glory).
@@ -918,6 +1059,22 @@ impl CityState {
         self.glory += balance.victory_glory + wave * 5;
     }
 
+    /// Returns the number of unlocked Skalds' Feats ready to claim.
+    pub fn claimable_achievement_count(
+        &self,
+        achievements: &[AchievementDef],
+        buildings: &[BuildingDef],
+        total_bosses: usize,
+    ) -> usize {
+        achievements
+            .iter()
+            .filter(|ach| {
+                !self.claimed_achievements.contains(&ach.id)
+                    && is_achievement_unlocked(&ach.id, self, buildings, total_bosses)
+            })
+            .count()
+    }
+
     /// Returns true if at least one Skald's Feat is unlocked and ready to claim.
     pub fn has_any_claimable_achievement(
         &self,
@@ -925,10 +1082,7 @@ impl CityState {
         buildings: &[BuildingDef],
         total_bosses: usize,
     ) -> bool {
-        achievements.iter().any(|ach| {
-            !self.claimed_achievements.contains(&ach.id)
-                && is_achievement_unlocked(&ach.id, self, buildings, total_bosses)
-        })
+        self.claimable_achievement_count(achievements, buildings, total_bosses) > 0
     }
 
     /// Claims a completed Skald's Feat reward.

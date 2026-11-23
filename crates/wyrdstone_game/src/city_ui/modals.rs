@@ -19,16 +19,69 @@
 use super::{spawn_resource_pill, spawn_small_button, spawn_small_button_colored, CityAction};
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
-use crate::scroll::{ScrollPanelKind, ScrollablePanel};
-use crate::state::{ActiveModal, GameContext};
+use crate::scroll::{spawn_scrollbar_track, ScrollMoreHint, ScrollPanelKind, ScrollablePanel};
+use crate::state::{today_day_index, ActiveModal, GameContext};
 use crate::theme::*;
+use crate::ui_style::{display_font, modal_shadow, sliced_panel_image, NoButtonScale};
+use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
-use bevy::ui::RelativeCursorPosition;
-use wyrdstone_core::{achievement_progress, AmuletEffect, PatronGod};
+use bevy::ui::{FocusPolicy, RelativeCursorPosition};
+use wyrdstone_core::{
+    achievement_progress, AmuletEffect, CityState, I18nCatalog, PatronGod, ResourceBundle,
+};
+
+pub(super) fn format_reward_summary(i18n: &I18nCatalog, res: ResourceBundle, glory: u32) -> String {
+    let mut parts = Vec::new();
+    if glory > 0 {
+        parts.push(i18n.t_fmt("city.panel.reward.glory", &[("glory", glory.to_string())]));
+    }
+    if res.wood > 0 {
+        parts.push(format!("+{} {}", res.wood, i18n.t("resources.label.wood")));
+    }
+    if res.stone > 0 {
+        parts.push(format!(
+            "+{} {}",
+            res.stone,
+            i18n.t("resources.label.stone")
+        ));
+    }
+    if res.gold > 0 {
+        parts.push(format!("+{} {}", res.gold, i18n.t("resources.label.gold")));
+    }
+    if res.mead > 0 {
+        parts.push(format!("+{} {}", res.mead, i18n.t("resources.label.mead")));
+    }
+    i18n.t_fmt("city.panel.reward.prefix", &[("items", parts.join(", "))])
+}
+
+fn format_amulet_effect(i18n: &I18nCatalog, effect: AmuletEffect) -> String {
+    match effect {
+        AmuletEffect::ResourceBonusPct(v) => i18n.t_fmt(
+            "city.panel.amulets.effect.resources",
+            &[("val", v.to_string())],
+        ),
+        AmuletEffect::ExtraMoves(v) => {
+            i18n.t_fmt("city.panel.amulets.effect.moves", &[("val", v.to_string())])
+        }
+        AmuletEffect::ScoreBonusPct(v) => {
+            i18n.t_fmt("city.panel.amulets.effect.score", &[("val", v.to_string())])
+        }
+        AmuletEffect::StartingBoosters(v) => i18n.t_fmt(
+            "city.panel.amulets.effect.boosters",
+            &[("val", v.to_string())],
+        ),
+        AmuletEffect::ExtraTimePct(v) => {
+            i18n.t_fmt("city.panel.amulets.effect.time", &[("val", v.to_string())])
+        }
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_modal_shell<F>(
     root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     width_px: f32,
     title: &str,
     close_label: &str,
@@ -38,7 +91,12 @@ fn spawn_modal_shell<F>(
 ) where
     F: FnOnce(&mut ChildBuilder),
 {
+    let i18n = &ctx.data.i18n;
     root.spawn((
+        Button,
+        NoButtonScale,
+        CityAction::CloseModal,
+        FocusPolicy::Block,
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(0.0),
@@ -51,53 +109,157 @@ fn spawn_modal_shell<F>(
             ..default()
         },
         BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),
+        ZIndex(100),
     ))
     .with_children(|backdrop| {
         backdrop
             .spawn((
-                ScrollablePanel {
-                    kind: ScrollPanelKind::Modal,
-                },
-                ScrollPosition {
-                    offset_x: 0.0,
-                    offset_y: scroll_offset_y,
-                },
-                RelativeCursorPosition::default(),
+                FocusPolicy::Block,
+                Interaction::default(),
+                sliced_panel_image(vfx),
                 Node {
                     width: Val::Px(width_px),
                     max_width: Val::Percent(94.0),
                     max_height: Val::Percent(90.0),
                     flex_direction: FlexDirection::Column,
-                    padding: UiRect::all(Val::Px(20.0)),
+                    padding: UiRect::all(Val::Px(22.0)),
                     row_gap: Val::Px(10.0),
-                    border: UiRect::all(Val::Px(2.0)),
-                    overflow: Overflow::scroll_y(),
+                    overflow: Overflow::clip(),
                     ..default()
                 },
-                BackgroundColor(COLOR_PANEL_DARK),
-                BorderColor(COLOR_ACCENT_GOLD),
-                BorderRadius::all(Val::Px(14.0)),
+                modal_shadow(),
             ))
             .with_children(|modal| {
+                // Sticky modal header (never scrolls out of view)
                 modal
-                    .spawn(Node {
-                        justify_content: JustifyContent::SpaceBetween,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    })
+                    .spawn((
+                        Node {
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            flex_shrink: 0.0,
+                            padding: UiRect::bottom(Val::Px(8.0)),
+                            border: UiRect::bottom(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.35)),
+                    ))
                     .with_children(|hdr| {
                         hdr.spawn((
                             Text::new(title),
-                            TextFont {
-                                font_size: FONT_HEADING,
-                                ..default()
-                            },
+                            display_font(fjord_art, FONT_HEADING),
                             TextColor(COLOR_ACCENT_GOLD),
                         ));
                         spawn_small_button(hdr, close_label, close_action, COLOR_ACCENT_CRIMSON);
                     });
 
-                body_fn(modal);
+                // Inline status/error banner so feedback triggered inside modals is immediately visible
+                if let Some(notice_key) = &ctx.status_notice_key {
+                    modal
+                        .spawn((
+                            Node {
+                                flex_shrink: 0.0,
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.32, 0.10, 0.12, 0.92)),
+                            BorderColor(COLOR_ACCENT_CRIMSON),
+                            BorderRadius::all(Val::Px(6.0)),
+                        ))
+                        .with_children(|banner| {
+                            banner.spawn((
+                                Text::new(i18n.t(notice_key)),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                        });
+                } else if let Some(msg) = &ctx.celebration_message {
+                    modal
+                        .spawn((
+                            Node {
+                                flex_shrink: 0.0,
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.12, 0.34, 0.22, 0.94)),
+                            BorderColor(COLOR_ACCENT_GREEN),
+                            BorderRadius::all(Val::Px(6.0)),
+                        ))
+                        .with_children(|banner| {
+                            banner.spawn((
+                                Text::new(msg.clone()),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                        });
+                }
+
+                // Scrollable modal body with visual proportional scrollbar
+                modal
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        flex_grow: 1.0,
+                        flex_shrink: 1.0,
+                        min_height: Val::Px(0.0),
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    })
+                    .with_children(|scroll_row| {
+                        scroll_row
+                            .spawn((
+                                ScrollablePanel {
+                                    kind: ScrollPanelKind::Modal,
+                                },
+                                ScrollPosition {
+                                    offset_x: 0.0,
+                                    offset_y: scroll_offset_y,
+                                },
+                                RelativeCursorPosition::default(),
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    flex_grow: 1.0,
+                                    flex_shrink: 1.0,
+                                    min_height: Val::Px(0.0),
+                                    row_gap: Val::Px(10.0),
+                                    overflow: Overflow::scroll_y(),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(body_fn);
+                        spawn_scrollbar_track(scroll_row, ScrollPanelKind::Modal);
+                    });
+
+                // Auto-hiding scroll indicator when body overflows vertically
+                modal
+                    .spawn((
+                        ScrollMoreHint {
+                            kind: ScrollPanelKind::Modal,
+                        },
+                        Node {
+                            display: Display::None,
+                            flex_shrink: 0.0,
+                            justify_content: JustifyContent::Center,
+                            padding: UiRect::top(Val::Px(2.0)),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|hint| {
+                        hint.spawn((
+                            Text::new(i18n.t("city.panel.scroll_hint")),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_MUTED),
+                        ));
+                    });
             });
     });
 }
@@ -106,11 +268,15 @@ pub(super) fn spawn_amulets_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         600.0,
         i18n.t("city.panel.amulets.title"),
         i18n.t("city.panel.amulets.close"),
@@ -213,28 +379,10 @@ pub(super) fn spawn_amulets_modal(
                                     },
                                     TextColor(COLOR_ACCENT_GOLD),
                                 ));
-                                let effect_desc = match ctx.city.scaled_amulet_effect(amulet) {
-                                    AmuletEffect::ResourceBonusPct(v) => i18n.t_fmt(
-                                        "city.panel.amulets.effect.resources",
-                                        &[("val", v.to_string())],
-                                    ),
-                                    AmuletEffect::ExtraMoves(v) => i18n.t_fmt(
-                                        "city.panel.amulets.effect.moves",
-                                        &[("val", v.to_string())],
-                                    ),
-                                    AmuletEffect::ScoreBonusPct(v) => i18n.t_fmt(
-                                        "city.panel.amulets.effect.score",
-                                        &[("val", v.to_string())],
-                                    ),
-                                    AmuletEffect::StartingBoosters(v) => i18n.t_fmt(
-                                        "city.panel.amulets.effect.boosters",
-                                        &[("val", v.to_string())],
-                                    ),
-                                    AmuletEffect::ExtraTimePct(v) => i18n.t_fmt(
-                                        "city.panel.amulets.effect.time",
-                                        &[("val", v.to_string())],
-                                    ),
-                                };
+                                let effect_desc = format_amulet_effect(
+                                    i18n,
+                                    ctx.city.scaled_amulet_effect(amulet),
+                                );
                                 info.spawn((
                                     Text::new(effect_desc),
                                     TextFont {
@@ -243,6 +391,23 @@ pub(super) fn spawn_amulets_modal(
                                     },
                                     TextColor(COLOR_TEXT_PRIMARY),
                                 ));
+                                if crafted && next_cost.is_some() {
+                                    let next_eff = format_amulet_effect(
+                                        i18n,
+                                        CityState::scaled_amulet_effect_for_tier(amulet, tier + 1),
+                                    );
+                                    info.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            "city.panel.amulets.next_tier",
+                                            &[("effect", next_eff)],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_TEAL),
+                                    ));
+                                }
                                 if let Some(c) = next_cost {
                                     info.spawn((
                                         Text::new(i18n.t_fmt(
@@ -255,7 +420,7 @@ pub(super) fn spawn_amulets_modal(
                                             ],
                                         )),
                                         TextFont {
-                                            font_size: 12.0,
+                                            font_size: FONT_SMALL,
                                             ..default()
                                         },
                                         TextColor(COLOR_TEXT_MUTED),
@@ -300,18 +465,51 @@ pub(super) fn spawn_collections_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         610.0,
         i18n.t("city.panel.collections.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Collections),
         scroll_offset_y,
         |modal| {
-            for col in &ctx.data.collections {
+            let claimable_cols = ctx.city.claimable_collection_count(&ctx.data.collections);
+            if claimable_cols >= 2 {
+                modal
+                    .spawn(Node {
+                        justify_content: JustifyContent::FlexEnd,
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        spawn_small_button(
+                            row,
+                            &i18n.t_fmt(
+                                "city.panel.claim_all",
+                                &[("count", claimable_cols.to_string())],
+                            ),
+                            CityAction::ClaimAllCollections,
+                            COLOR_ACCENT_GREEN,
+                        );
+                    });
+            }
+            let mut sorted_cols: Vec<_> = ctx.data.collections.iter().collect();
+            sorted_cols.sort_by_key(|col| {
+                if ctx.city.is_collection_ready(col) {
+                    0u8
+                } else if ctx.city.claimed_collections.contains(&col.id) {
+                    2u8
+                } else {
+                    1u8
+                }
+            });
+            for col in sorted_cols {
                 let found = ctx.city.collection_found_count(col);
                 let total = col.relic_ids.len();
                 let ready = ctx.city.is_collection_ready(col);
@@ -428,6 +626,15 @@ pub(super) fn spawn_collections_modal(
                                 );
                             }
                         });
+
+                        card.spawn((
+                            Text::new(format_reward_summary(i18n, col.reward_resources, 0)),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GREEN),
+                        ));
                     });
             }
         },
@@ -438,11 +645,15 @@ pub(super) fn spawn_tool_shop_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         620.0,
         i18n.t("city.panel.shop.title"),
         i18n.t("city.panel.amulets.close"),
@@ -523,7 +734,7 @@ pub(super) fn spawn_tool_shop_modal(
                                 info.spawn((
                                     Text::new(i18n.t(&recipe.desc_key)),
                                     TextFont {
-                                        font_size: 12.0,
+                                        font_size: FONT_SMALL,
                                         ..default()
                                     },
                                     TextColor(COLOR_TEXT_PRIMARY),
@@ -531,7 +742,7 @@ pub(super) fn spawn_tool_shop_modal(
                                 info.spawn((
                                     Text::new(cost_parts.join("  |  ")),
                                     TextFont {
-                                        font_size: 12.0,
+                                        font_size: FONT_SMALL,
                                         ..default()
                                     },
                                     TextColor(COLOR_TEXT_MUTED),
@@ -558,13 +769,17 @@ pub(super) fn spawn_tool_shop_modal(
 pub(super) fn spawn_stats_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
-    sound_bank: &SoundBank,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     let st = ctx.city.stats;
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         460.0,
         i18n.t("city.panel.stats.title"),
         i18n.t("city.panel.amulets.close"),
@@ -622,31 +837,78 @@ pub(super) fn spawn_stats_modal(
                     TextColor(COLOR_TEXT_PRIMARY),
                 ));
             }
+        },
+    );
+}
 
-            // Persisted Audio Volume Controls
+pub(super) fn spawn_settings_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    sound_bank: &SoundBank,
+    scroll_offset_y: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    spawn_modal_shell(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        520.0,
+        i18n.t("city.panel.settings.title"),
+        i18n.t("city.panel.amulets.close"),
+        CityAction::ToggleModal(ActiveModal::Settings),
+        scroll_offset_y,
+        |card| {
+            let sound_label = if sound_bank.muted {
+                i18n.t("app.audio.off")
+            } else {
+                i18n.t("app.audio.on")
+            };
+            let bgm_pct = (sound_bank.bgm_volume * 200.0).round() as u32;
+            let sfx_pct = (sound_bank.sfx_volume * 100.0).round() as u32;
+
+            // Audio & Language Controls
             card.spawn(Node {
                 column_gap: Val::Px(10.0),
-                margin: UiRect::top(Val::Px(8.0)),
+                row_gap: Val::Px(8.0),
                 flex_wrap: FlexWrap::Wrap,
                 ..default()
             })
-            .with_children(|audio_row| {
-                let bgm_pct = (sound_bank.bgm_volume * 200.0).round() as u32;
-                let sfx_pct = (sound_bank.sfx_volume * 100.0).round() as u32;
+            .with_children(|row| {
+                spawn_small_button(row, sound_label, CityAction::ToggleAudio, COLOR_PANEL_CARD);
                 spawn_small_button(
-                    audio_row,
+                    row,
                     &i18n.t_fmt("city.panel.audio.bgm", &[("pct", bgm_pct.to_string())]),
                     CityAction::CycleBgmVolume,
                     COLOR_PANEL_CARD,
                 );
                 spawn_small_button(
-                    audio_row,
+                    row,
                     &i18n.t_fmt("city.panel.audio.sfx", &[("pct", sfx_pct.to_string())]),
                     CityAction::CycleSfxVolume,
                     COLOR_PANEL_CARD,
                 );
                 spawn_small_button(
-                    audio_row,
+                    row,
+                    i18n.t("app.title.button.language"),
+                    CityAction::ToggleLanguage,
+                    COLOR_PANEL_CARD,
+                );
+            });
+
+            // Accessibility & Gameplay Speed Controls
+            card.spawn(Node {
+                column_gap: Val::Px(10.0),
+                row_gap: Val::Px(8.0),
+                margin: UiRect::top(Val::Px(6.0)),
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            })
+            .with_children(|acc_row| {
+                spawn_small_button(
+                    acc_row,
                     if ctx.colorblind_mode {
                         i18n.t("city.panel.colorblind.on")
                     } else {
@@ -660,7 +922,7 @@ pub(super) fn spawn_stats_modal(
                     },
                 );
                 spawn_small_button(
-                    audio_row,
+                    acc_row,
                     if ctx.fast_animations {
                         i18n.t("city.panel.fast_anim.on")
                     } else {
@@ -673,11 +935,26 @@ pub(super) fn spawn_stats_modal(
                         COLOR_PANEL_CARD
                     },
                 );
+                spawn_small_button(
+                    acc_row,
+                    if ctx.reduced_motion {
+                        i18n.t("city.panel.reduced_motion.on")
+                    } else {
+                        i18n.t("city.panel.reduced_motion.off")
+                    },
+                    CityAction::ToggleReducedMotion,
+                    if ctx.reduced_motion {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        COLOR_PANEL_CARD
+                    },
+                );
             });
 
-            // Save JSON Backup Export / Import Controls
+            // Save JSON Backup Export / Import Controls (2-click confirmation on Import)
             card.spawn(Node {
                 column_gap: Val::Px(10.0),
+                row_gap: Val::Px(8.0),
                 margin: UiRect::top(Val::Px(6.0)),
                 flex_wrap: FlexWrap::Wrap,
                 ..default()
@@ -691,8 +968,22 @@ pub(super) fn spawn_stats_modal(
                 );
                 spawn_small_button(
                     backup_row,
-                    i18n.t("city.panel.backup.import"),
+                    if ctx.confirm_import_backup {
+                        i18n.t("city.panel.backup.confirm_import")
+                    } else {
+                        i18n.t("city.panel.backup.import")
+                    },
                     CityAction::ImportBackup,
+                    if ctx.confirm_import_backup {
+                        COLOR_ACCENT_CRIMSON
+                    } else {
+                        COLOR_PANEL_CARD
+                    },
+                );
+                spawn_small_button(
+                    backup_row,
+                    i18n.t("city.button.title"),
+                    CityAction::BackToTitle,
                     COLOR_PANEL_CARD,
                 );
             });
@@ -700,10 +991,19 @@ pub(super) fn spawn_stats_modal(
     );
 }
 
-pub(super) fn spawn_help_modal(root: &mut ChildBuilder, ctx: &GameContext, scroll_offset_y: f32) {
+pub(super) fn spawn_help_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    scroll_offset_y: f32,
+) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         560.0,
         i18n.t("city.panel.help.title"),
         i18n.t("city.panel.amulets.close"),
@@ -712,12 +1012,20 @@ pub(super) fn spawn_help_modal(root: &mut ChildBuilder, ctx: &GameContext, scrol
         |card| {
             for (t_key, b_key) in [
                 (
+                    "city.panel.help.controls_title",
+                    "city.panel.help.controls_body",
+                ),
+                (
                     "city.panel.help.boosters_title",
                     "city.panel.help.boosters_body",
                 ),
                 (
                     "city.panel.help.obstacles_title",
                     "city.panel.help.obstacles_body",
+                ),
+                (
+                    "city.panel.help.fog_curse_title",
+                    "city.panel.help.fog_curse_body",
                 ),
                 (
                     "city.panel.help.village_title",
@@ -749,11 +1057,15 @@ pub(super) fn spawn_patrons_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         620.0,
         i18n.t("city.panel.patrons.title"),
         i18n.t("city.panel.amulets.close"),
@@ -860,11 +1172,17 @@ pub(super) fn spawn_raids_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
+    let energy_cost = ctx.data.balance.energy_cost_per_level;
+    let has_energy = ctx.city.energy >= energy_cost;
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         650.0,
         i18n.t("city.panel.raids.title"),
         i18n.t("city.panel.amulets.close"),
@@ -966,20 +1284,40 @@ pub(super) fn spawn_raids_modal(
                                         ],
                                     )),
                                     TextFont {
-                                        font_size: 12.0,
+                                        font_size: FONT_SMALL,
                                         ..default()
                                     },
                                     TextColor(COLOR_ACCENT_TEAL),
+                                ));
+                                info.spawn((
+                                    Text::new(format_reward_summary(
+                                        i18n,
+                                        boss.reward_resources,
+                                        boss.glory_reward,
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GREEN),
                                 ));
                             });
                         });
 
                         if unlocked {
+                            let fight_lbl = i18n.t_fmt(
+                                "city.panel.raids.fight_cost",
+                                &[("cost", energy_cost.to_string())],
+                            );
                             spawn_small_button(
                                 row,
-                                i18n.t("city.panel.raids.fight"),
+                                &fight_lbl,
                                 CityAction::FightBoss(boss.id.clone()),
-                                COLOR_ACCENT_CRIMSON,
+                                if has_energy {
+                                    COLOR_ACCENT_CRIMSON
+                                } else {
+                                    COLOR_BUTTON_DISABLED
+                                },
                             );
                         } else {
                             spawn_resource_pill(
@@ -1000,18 +1338,64 @@ pub(super) fn spawn_raids_modal(
 pub(super) fn spawn_achievements_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         620.0,
         i18n.t("city.panel.feats.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Achievements),
         scroll_offset_y,
         |modal| {
-            for ach in &ctx.data.achievements {
+            let claimable_feats = ctx.city.claimable_achievement_count(
+                &ctx.data.achievements,
+                &ctx.data.buildings,
+                ctx.data.bosses.len(),
+            );
+            if claimable_feats >= 2 {
+                modal
+                    .spawn(Node {
+                        justify_content: JustifyContent::FlexEnd,
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        spawn_small_button(
+                            row,
+                            &i18n.t_fmt(
+                                "city.panel.claim_all",
+                                &[("count", claimable_feats.to_string())],
+                            ),
+                            CityAction::ClaimAllAchievements,
+                            COLOR_ACCENT_GREEN,
+                        );
+                    });
+            }
+            let mut sorted_achs: Vec<_> = ctx.data.achievements.iter().collect();
+            sorted_achs.sort_by_key(|ach| {
+                let claimed = ctx.city.claimed_achievements.contains(&ach.id);
+                let (done, target) = achievement_progress(
+                    &ach.id,
+                    &ctx.city,
+                    &ctx.data.buildings,
+                    ctx.data.bosses.len(),
+                );
+                let unlocked = target > 0 && done >= target;
+                if unlocked && !claimed {
+                    0u8
+                } else if claimed {
+                    2u8
+                } else {
+                    1u8
+                }
+            });
+            for ach in sorted_achs {
                 let claimed = ctx.city.claimed_achievements.contains(&ach.id);
                 let (done, target) = achievement_progress(
                     &ach.id,
@@ -1021,6 +1405,11 @@ pub(super) fn spawn_achievements_modal(
                 );
                 let unlocked = target > 0 && done >= target;
                 let ready = unlocked && !claimed;
+                let pct = if target > 0 {
+                    (done.min(target) as f32 / target as f32 * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                };
 
                 modal
                     .spawn((
@@ -1065,11 +1454,43 @@ pub(super) fn spawn_achievements_modal(
                             info.spawn((
                                 Text::new(i18n.t(&ach.desc_key)),
                                 TextFont {
-                                    font_size: 12.0,
+                                    font_size: FONT_SMALL,
                                     ..default()
                                 },
                                 TextColor(COLOR_TEXT_PRIMARY),
                             ));
+                            info.spawn((
+                                Text::new(format_reward_summary(i18n, ach.reward, ach.glory)),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GREEN),
+                            ));
+                            if !unlocked && target > 0 {
+                                info.spawn((
+                                    Node {
+                                        width: Val::Px(220.0),
+                                        max_width: Val::Percent(100.0),
+                                        height: Val::Px(6.0),
+                                        margin: UiRect::top(Val::Px(3.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(COLOR_PANEL_DARK),
+                                    BorderRadius::all(Val::Px(3.0)),
+                                ))
+                                .with_children(|track| {
+                                    track.spawn((
+                                        Node {
+                                            width: Val::Percent(pct),
+                                            height: Val::Percent(100.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(COLOR_ACCENT_TEAL),
+                                        BorderRadius::all(Val::Px(3.0)),
+                                    ));
+                                });
+                            }
                         });
 
                         if ready {
@@ -1101,6 +1522,8 @@ pub(super) fn spawn_achievements_modal(
 pub(super) fn spawn_expedition_boons_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -1113,10 +1536,13 @@ pub(super) fn spawn_expedition_boons_modal(
     );
     spawn_modal_shell(
         root,
+        ctx,
+        fjord_art,
+        vfx,
         580.0,
         &title,
-        i18n.t("city.panel.expedition.cashout"),
-        CityAction::EndExpedition,
+        i18n.t("city.panel.expedition.later"),
+        CityAction::CloseModal,
         scroll_offset_y,
         |modal| {
             for (idx, boon) in run.pending_boons.iter().enumerate() {
@@ -1164,9 +1590,306 @@ pub(super) fn spawn_expedition_boons_modal(
                 .with_children(|row| {
                     spawn_small_button(
                         row,
-                        i18n.t("city.panel.expedition.cashout"),
+                        if ctx.confirm_end_expedition {
+                            i18n.t("city.panel.expedition.confirm_cashout")
+                        } else {
+                            i18n.t("city.panel.expedition.cashout")
+                        },
                         CityAction::EndExpedition,
-                        COLOR_ACCENT_CRIMSON,
+                        if ctx.confirm_end_expedition {
+                            COLOR_ACCENT_CRIMSON
+                        } else {
+                            Color::srgba(0.32, 0.14, 0.16, 0.95)
+                        },
+                    );
+                });
+        },
+    );
+}
+
+pub(super) fn spawn_login_calendar_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    scroll_offset_y: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    let today = today_day_index();
+    let available = ctx.city.is_login_tribute_available(today);
+    let current_day = ctx.city.next_login_tribute_day(today);
+
+    spawn_modal_shell(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        640.0,
+        i18n.t("city.panel.tribute.title"),
+        i18n.t("city.panel.amulets.close"),
+        CityAction::CloseModal,
+        scroll_offset_y,
+        |modal| {
+            modal.spawn((
+                Text::new(if available {
+                    i18n.t("city.panel.tribute.subtitle")
+                } else {
+                    i18n.t("city.panel.tribute.done_today")
+                }),
+                TextFont {
+                    font_size: FONT_BODY,
+                    ..default()
+                },
+                TextColor(if available {
+                    COLOR_ACCENT_GOLD
+                } else {
+                    COLOR_ACCENT_GREEN
+                }),
+            ));
+
+            modal
+                .spawn(Node {
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(8.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                })
+                .with_children(|grid| {
+                    for day in 1..=7u8 {
+                        let (res, tool) = CityState::login_tribute_reward(day);
+                        let is_claimed = if available {
+                            day < current_day
+                        } else {
+                            day <= current_day
+                        };
+                        let is_today = available && day == current_day;
+
+                        let border_col = if is_today {
+                            COLOR_ACCENT_GOLD
+                        } else if is_claimed {
+                            COLOR_ACCENT_GREEN
+                        } else {
+                            COLOR_PANEL_BORDER
+                        };
+
+                        grid.spawn((
+                            Node {
+                                width: Val::Px(134.0),
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::all(Val::Px(9.0)),
+                                row_gap: Val::Px(4.0),
+                                border: UiRect::all(Val::Px(if is_today { 2.0 } else { 1.5 })),
+                                ..default()
+                            },
+                            BackgroundColor(if is_today {
+                                Color::srgba(0.18, 0.24, 0.34, 0.96)
+                            } else {
+                                COLOR_PANEL_CARD
+                            }),
+                            BorderColor(border_col),
+                            BorderRadius::all(Val::Px(10.0)),
+                        ))
+                        .with_children(|card| {
+                            card.spawn((
+                                Text::new(
+                                    i18n.t_fmt(
+                                        "city.panel.tribute.day",
+                                        &[("day", day.to_string())],
+                                    ),
+                                ),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(if is_today {
+                                    COLOR_ACCENT_GOLD
+                                } else if is_claimed {
+                                    COLOR_ACCENT_GREEN
+                                } else {
+                                    COLOR_TEXT_PRIMARY
+                                }),
+                            ));
+                            if let Some(t) = tool {
+                                if let Some(icon) = fjord_art.tool_icon(t) {
+                                    card.spawn((
+                                        ImageNode::new(icon),
+                                        Node {
+                                            width: Val::Px(32.0),
+                                            height: Val::Px(32.0),
+                                            ..default()
+                                        },
+                                        BorderRadius::all(Val::Px(6.0)),
+                                    ));
+                                }
+                            }
+                            let mut lines = Vec::new();
+                            if res.wood > 0 {
+                                lines.push(format!(
+                                    "+{} {}",
+                                    res.wood,
+                                    i18n.t("resources.label.wood")
+                                ));
+                            }
+                            if res.stone > 0 {
+                                lines.push(format!(
+                                    "+{} {}",
+                                    res.stone,
+                                    i18n.t("resources.label.stone")
+                                ));
+                            }
+                            if res.gold > 0 {
+                                lines.push(format!(
+                                    "+{} {}",
+                                    res.gold,
+                                    i18n.t("resources.label.gold")
+                                ));
+                            }
+                            if res.mead > 0 {
+                                lines.push(format!(
+                                    "+{} {}",
+                                    res.mead,
+                                    i18n.t("resources.label.mead")
+                                ));
+                            }
+                            card.spawn((
+                                Text::new(lines.join("\n")),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                            if is_claimed {
+                                card.spawn((
+                                    Text::new(i18n.t("city.panel.tribute.claimed")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GREEN),
+                                ));
+                            } else if is_today {
+                                card.spawn((
+                                    Text::new(i18n.t("city.panel.tribute.today")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            }
+                        });
+                    }
+                });
+
+            if available {
+                modal
+                    .spawn(Node {
+                        justify_content: JustifyContent::Center,
+                        margin: UiRect::top(Val::Px(6.0)),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        spawn_small_button_colored(
+                            row,
+                            &i18n.t_fmt(
+                                "city.panel.tribute.claim",
+                                &[("day", current_day.to_string())],
+                            ),
+                            CityAction::ClaimLoginTribute,
+                            COLOR_ACCENT_GOLD,
+                            COLOR_TEXT_DARK,
+                        );
+                    });
+            }
+        },
+    );
+}
+
+pub(super) fn spawn_chapter_dialogue_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    scroll_offset_y: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    let Some(dlg) = &ctx.pending_dialogue else {
+        return;
+    };
+    spawn_modal_shell(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        580.0,
+        i18n.t(&dlg.title_key),
+        i18n.t("city.chapter.continue"),
+        CityAction::CloseModal,
+        scroll_offset_y,
+        |modal| {
+            modal
+                .spawn(Node {
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(16.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    if let Some(portrait) = fjord_art.portrait(&dlg.speaker) {
+                        row.spawn((
+                            ImageNode::new(portrait),
+                            Node {
+                                width: Val::Px(88.0),
+                                height: Val::Px(88.0),
+                                flex_shrink: 0.0,
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BorderColor(COLOR_ACCENT_GOLD),
+                            BorderRadius::all(Val::Px(12.0)),
+                        ));
+                    }
+                    row.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        flex_shrink: 1.0,
+                        row_gap: Val::Px(8.0),
+                        ..default()
+                    })
+                    .with_children(|col| {
+                        col.spawn((
+                            Text::new(i18n.t(&dlg.line1_key)),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_PRIMARY),
+                        ));
+                        col.spawn((
+                            Text::new(i18n.t(&dlg.line2_key)),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_MUTED),
+                        ));
+                    });
+                });
+
+            modal
+                .spawn(Node {
+                    justify_content: JustifyContent::Center,
+                    margin: UiRect::top(Val::Px(8.0)),
+                    ..default()
+                })
+                .with_children(|row| {
+                    spawn_small_button_colored(
+                        row,
+                        i18n.t("city.chapter.continue"),
+                        CityAction::CloseModal,
+                        COLOR_ACCENT_GOLD,
+                        COLOR_TEXT_DARK,
                     );
                 });
         },

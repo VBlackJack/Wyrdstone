@@ -355,6 +355,7 @@ fn city_upgrades_quests_and_save_roundtrip() {
         sfx_volume: DEFAULT_SFX_VOLUME,
         colorblind_mode: true,
         fast_animations: true,
+        reduced_motion: true,
         tutorial_step: 3,
         active_expedition: None,
         city,
@@ -1010,4 +1011,62 @@ fn hel_boss_daily_blessing_and_fast_anim_save_work() {
     assert_eq!(hel_session.initial_moves, base_moves + 1);
     hel_session.apply_daily_blessing(DailyBlessing::FenrirEclipse);
     assert_eq!(hel_session.boss_damage_bonus_pct, 25);
+}
+
+#[test]
+fn victory_remaining_boosters_detonate_and_award_points() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("bundled data must load");
+    let mut cells = Vec::with_capacity(36);
+    for r in 0..6 {
+        for c in 0..6 {
+            cells.push(Cell::playable(RuneType::ALL[(r + c) % RuneType::ALL.len()]));
+        }
+    }
+    let mut board = Board::from_cells(6, 6, RuneType::ALL.len(), cells);
+    let pos = CellPos::new(2, 2);
+    board.get_mut(pos).unwrap().booster = Booster::Bomb;
+
+    let boosters = board.find_remaining_boosters();
+    assert_eq!(boosters, vec![(pos, Booster::Bomb)]);
+
+    let prep = board
+        .prepare_booster_detonation(pos)
+        .expect("booster detonation must prepare");
+    let step = board.commit_clear_step(&prep, 1, &data.balance);
+    assert!(step.score_gained > data.balance.booster_activation_bonus);
+    assert!(board.find_remaining_boosters().is_empty());
+}
+
+#[test]
+fn login_tribute_calendar_tracks_7_day_cycle_and_resets_on_gap() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut city = CityState::new(&data.balance);
+
+    assert!(city.is_login_tribute_available(100));
+    assert_eq!(city.next_login_tribute_day(100), 1);
+
+    let (day1, res1, tool1) = city.try_claim_login_tribute(100).expect("day 1 claim");
+    assert_eq!(day1, 1);
+    assert!(res1.wood > 0 && res1.gold > 0);
+    assert!(tool1.is_none());
+    assert!(!city.is_login_tribute_available(100));
+    assert!(city.try_claim_login_tribute(100).is_none());
+
+    // Consecutive days 2..=7 escalate and grant tools on days 3, 5, 7.
+    let mut tools_won = 0;
+    for offset in 1..=6u64 {
+        let today = 100 + offset;
+        let expected_day = (offset + 1) as u8;
+        assert_eq!(city.next_login_tribute_day(today), expected_day);
+        let (claimed_day, _, tool) = city.try_claim_login_tribute(today).expect("streak claim");
+        assert_eq!(claimed_day, expected_day);
+        if tool.is_some() {
+            tools_won += 1;
+        }
+    }
+    assert_eq!(tools_won, 3);
+
+    // Day 8 wraps cleanly back to Day 1; missing a day also resets to Day 1.
+    assert_eq!(city.next_login_tribute_day(107), 1);
+    assert_eq!(city.next_login_tribute_day(115), 1);
 }

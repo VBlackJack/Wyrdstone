@@ -47,11 +47,23 @@ pub enum ActiveModal {
     Collections,
     Shop,
     Stats,
+    Settings,
     Help,
     Raids,
     Patrons,
     Achievements,
     ExpeditionBoons,
+    LoginCalendar,
+    ChapterDialogue,
+}
+
+/// Illustrated Saga chapter milestone dialogue shown when rebuilding key Fjord landmarks.
+#[derive(Debug, Clone)]
+pub struct ChapterDialogue {
+    pub speaker: String,
+    pub title_key: String,
+    pub line1_key: String,
+    pub line2_key: String,
 }
 
 /// Shared mutable state across all Wyrdstone scenes.
@@ -64,11 +76,14 @@ pub struct GameContext {
     pub selected_difficulty: u8,
     pub active_modal: ActiveModal,
     pub confirm_reset: bool,
+    pub confirm_import_backup: bool,
+    pub confirm_end_expedition: bool,
     pub audio_muted: bool,
     pub bgm_volume: f32,
     pub sfx_volume: f32,
     pub colorblind_mode: bool,
     pub fast_animations: bool,
+    pub reduced_motion: bool,
     pub tutorial_step: u8,
     pub active_session: Option<LevelSession>,
     pub active_level_id: Option<String>,
@@ -83,6 +98,7 @@ pub struct GameContext {
     pub status_notice_key: Option<String>,
     pub celebration_message: Option<String>,
     pub celebration_timer_secs: f32,
+    pub pending_dialogue: Option<ChapterDialogue>,
     pub energy_regen_timer: Timer,
     pub save_path: Option<PathBuf>,
     pub rng: StdRng,
@@ -100,6 +116,7 @@ impl GameContext {
         let mut sfx_volume = DEFAULT_SFX_VOLUME;
         let mut colorblind_mode = false;
         let mut fast_animations = false;
+        let mut reduced_motion = false;
         let mut tutorial_step = 0u8;
         let mut active_expedition = None;
 
@@ -121,6 +138,7 @@ impl GameContext {
                 sfx_volume = saved.sfx_volume.clamp(0.0, 1.0);
                 colorblind_mode = saved.colorblind_mode;
                 fast_animations = saved.fast_animations;
+                reduced_motion = saved.reduced_motion;
                 active_expedition = saved.active_expedition;
                 tutorial_step = if saved.city.stats.total_victories > 0 && saved.tutorial_step == 0
                 {
@@ -160,11 +178,14 @@ impl GameContext {
             selected_difficulty: 0,
             active_modal: ActiveModal::None,
             confirm_reset: false,
+            confirm_import_backup: false,
+            confirm_end_expedition: false,
             audio_muted,
             bgm_volume,
             sfx_volume,
             colorblind_mode,
             fast_animations,
+            reduced_motion,
             tutorial_step,
             active_session: None,
             active_level_id: None,
@@ -179,19 +200,23 @@ impl GameContext {
             status_notice_key: None,
             celebration_message: None,
             celebration_timer_secs: 0.0,
+            pending_dialogue: None,
             energy_regen_timer: Timer::from_seconds(regen_secs, TimerMode::Repeating),
             save_path,
             rng: StdRng::from_entropy(),
         }
     }
 
-    /// Toggles an exclusive modal overlay.
+    /// Toggles an exclusive modal overlay and clears transient confirmation flags.
     pub fn toggle_modal(&mut self, modal: ActiveModal) {
         self.active_modal = if self.active_modal == modal {
             ActiveModal::None
         } else {
             modal
         };
+        self.confirm_import_backup = false;
+        self.confirm_end_expedition = false;
+        self.status_notice_key = None;
     }
 
     /// Persists current progression and audio settings to disk atomically.
@@ -215,14 +240,16 @@ impl GameContext {
             sfx_volume: self.sfx_volume,
             colorblind_mode: self.colorblind_mode,
             fast_animations: self.fast_animations,
+            reduced_motion: self.reduced_motion,
             tutorial_step: self.tutorial_step,
             active_expedition: self.active_expedition.clone(),
             city: self.city.clone(),
         }
     }
 
-    /// Exports an atomic JSON backup to `wyrdstone_backup.json` next to the primary save file.
-    pub fn export_backup(&self) -> Result<(), &'static str> {
+    /// Exports an atomic JSON backup to `wyrdstone_backup.json` next to the primary save file
+    /// and returns the destination path string on success.
+    pub fn export_backup(&self) -> Result<String, &'static str> {
         let Some(backup_path) = self
             .save_path
             .as_ref()
@@ -233,7 +260,8 @@ impl GameContext {
         let snapshot = self.build_save_snapshot();
         snapshot
             .save_to_path(&backup_path)
-            .map_err(|_| "city.panel.backup.error")
+            .map_err(|_| "city.panel.backup.error")?;
+        Ok(backup_path.display().to_string())
     }
 
     /// Imports `wyrdstone_backup.json`, restoring full player state and persisting to primary save.
@@ -267,6 +295,7 @@ impl GameContext {
         };
         self.colorblind_mode = saved.colorblind_mode;
         self.fast_animations = saved.fast_animations;
+        self.reduced_motion = saved.reduced_motion;
         self.tutorial_step = saved.tutorial_step;
         self.active_expedition = saved.active_expedition;
         self.city = saved.city;
@@ -311,6 +340,7 @@ impl GameContext {
         self.status_notice_key = None;
         self.celebration_message = None;
         self.celebration_timer_secs = 0.0;
+        self.pending_dialogue = None;
         self.persist();
     }
 
@@ -329,7 +359,6 @@ impl GameContext {
             &mut self.rng,
         );
         session.apply_daily_blessing(DailyBlessing::for_day(day_idx));
-        self.active_expedition = None;
         self.active_level_id = Some(format!("daily_{day_idx}"));
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -357,7 +386,6 @@ impl GameContext {
             &mut self.rng,
         );
         session.apply_daily_blessing(self.today_blessing());
-        self.active_expedition = None;
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -388,7 +416,6 @@ impl GameContext {
             &mut self.rng,
         );
         session.apply_daily_blessing(self.today_blessing());
-        self.active_expedition = None;
         self.active_level_id = Some(boss_id.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;

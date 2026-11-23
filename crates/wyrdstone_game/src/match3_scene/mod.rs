@@ -29,15 +29,18 @@ use crate::runes_art::RuneTextures;
 use crate::scroll::UiScrollMemory;
 use crate::state::{ActiveModal, AppState, GameContext};
 use crate::theme::*;
+use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
 use wyrdstone_core::{ActiveTool, Booster, CellPos, LevelOutcome, LevelSession, PreparedClear};
 
-pub(super) const PARTICLES_PER_CLEARED_TILE: usize = 6;
-pub(super) const PARTICLE_LIFETIME_SECS: f32 = 0.34;
-pub(super) const PARTICLE_SPEED_PX: f32 = 155.0;
-pub(super) const PARTICLE_SIZE_PX: f32 = 7.0;
+pub(super) const PARTICLES_PER_CLEARED_TILE: usize = 9;
+pub(super) const PARTICLE_LIFETIME_SECS: f32 = 0.44;
+pub(super) const PARTICLE_SPEED_PX: f32 = 170.0;
+pub(super) const PARTICLE_SIZE_PX: f32 = 18.0;
+pub(super) const PARTICLE_GRAVITY_PX: f32 = 220.0;
+pub(super) const SANCTUARY_EMBER_COUNT: usize = 16;
 pub(super) const HINT_IDLE_SECS: f32 = 5.0;
 pub(super) const FLOATING_TEXT_LIFETIME_SECS: f32 = 0.85;
 pub(super) const FLOATING_TEXT_RISE_SPEED_PX: f32 = 58.0;
@@ -65,6 +68,21 @@ pub struct Match3HudRoot;
 #[derive(Component)]
 pub struct Match3TimerText;
 
+/// Marker on the bottom HUD tooltip/hint text so hovering tools/Fury updates in-place.
+#[derive(Component)]
+pub struct Match3TooltipText;
+
+pub(super) fn tool_hint_key(tool: ActiveTool) -> &'static str {
+    match tool {
+        ActiveTool::Mjolnir => "match3.tool.hint.mjolnir",
+        ActiveTool::SurtrEmber => "match3.tool.hint.surtr_ember",
+        ActiveTool::LokiShuffle => "match3.tool.hint.loki_shuffle",
+        ActiveTool::ThorBolt => "match3.tool.hint.thor_bolt",
+        ActiveTool::BifrostPrism => "match3.tool.hint.bifrost_prism",
+        ActiveTool::DrakkarCharge => "match3.tool.hint.drakkar_charge",
+    }
+}
+
 /// Marks a movable rune/booster sprite bound to a logical grid cell.
 #[derive(Component)]
 pub struct BoardTileVisual {
@@ -88,6 +106,7 @@ pub struct BurstParticle {
     pub velocity: Vec2,
     pub elapsed: f32,
     pub lifetime: f32,
+    pub spin: f32,
 }
 
 /// Floating "+score" or "Combo xN!" text rising above cleared matches.
@@ -97,13 +116,58 @@ pub struct FloatingScore {
     pub lifetime: f32,
 }
 
-/// Expanding lightning beam or fiery shockwave VFX for boosters and active tools.
+/// Expanding lightning beam, shockwave ring, or runic mandala VFX for boosters and active tools.
 #[derive(Component)]
 pub struct BlastBeam {
     pub elapsed: f32,
     pub lifetime: f32,
     pub rotation_speed: f32,
+    pub start_scale: f32,
+    pub end_scale: f32,
 }
+
+/// Flickering warm light halo aligned to the wall torches in `match3_bg.png`.
+#[derive(Component)]
+pub struct SanctuaryTorchGlow {
+    pub norm_x: f32,
+    pub norm_y: f32,
+    pub phase: f32,
+    pub base_size: f32,
+}
+
+/// Slow rising runic ember/dust mote drifting across the Match-3 sanctuary backdrop.
+#[derive(Component)]
+pub struct SanctuaryEmber {
+    pub base_x: f32,
+    pub y: f32,
+    pub speed_y: f32,
+    pub phase: f32,
+    pub half_h: f32,
+}
+
+/// Luminous orb flying along a quadratic Bezier curve from a cleared rune to the HUD objectives or Boss.
+#[derive(Component)]
+pub struct FlyingOrb {
+    pub start: Vec2,
+    pub control: Vec2,
+    pub target: Vec2,
+    pub elapsed: f32,
+    pub duration: f32,
+    pub color: Color,
+}
+
+/// Diagonal specular sheen sweeping periodically over boosters and Bifrost Shards.
+#[derive(Component)]
+pub struct BoosterShimmer {
+    pub phase: f32,
+}
+
+/// Marker on the Match-3 Patron Fury button when 100% charged so its golden rim pulses.
+#[derive(Component)]
+pub struct FuryReadyPulse;
+
+#[derive(Component)]
+pub struct LowMovesPulse;
 
 /// Gently pulses placed board boosters so they stand out crisply.
 #[derive(Component)]
@@ -119,12 +183,14 @@ pub enum Match3UiAction {
     Undo,
     ToggleHelp,
     SelectTool(ActiveTool),
+    CancelTool,
     TriggerFury,
     ToggleAudio,
     CycleBgmVolume,
     CycleSfxVolume,
     ToggleColorblind,
     ToggleFastAnim,
+    ToggleReducedMotion,
 }
 
 /// Stepped animation phase machine so every swap, match, clear, fall, and cascade is readable.
@@ -194,6 +260,10 @@ pub struct Match3InputState {
     pub dirty_hud: bool,
     pub undo_snapshot: Option<LevelSession>,
     pub undo_used: bool,
+    pub confirm_retreat: bool,
+    pub confirm_loki_shuffle: bool,
+    pub skip_valhalla: bool,
+    pub reduced_motion: bool,
     pub idle_secs: f32,
     pub hint_pair: Option<(CellPos, CellPos)>,
     pub hover_cell: Option<CellPos>,
@@ -216,16 +286,21 @@ impl Match3InputState {
 }
 
 /// Initializes the Match-3 scene (painted sanctuary backdrop + 2D sprites + HUD overlay).
+#[allow(clippy::too_many_arguments)]
 pub fn setup_match3_scene(
     mut commands: Commands,
     ctx: Res<GameContext>,
     textures: Res<RuneTextures>,
+    vfx: Res<VfxTextures>,
     fjord_art: Res<FjordTextures>,
     sound_bank: Res<SoundBank>,
     scroll_mem: Res<UiScrollMemory>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    let mut input_state = Match3InputState::default();
+    let mut input_state = Match3InputState {
+        reduced_motion: ctx.reduced_motion,
+        ..default()
+    };
 
     if let Ok(window) = windows.get_single() {
         let bg_w = window.width().max(window.height() * (16.0 / 9.0));
@@ -241,6 +316,65 @@ pub fn setup_match3_scene(
             Transform::from_xyz(0.0, 0.0, Z_BOARD_BG - 2.0),
         ));
 
+        // Flickering warm wall torch halos aligned to the sanctuary sconces.
+        let torch_defs = [
+            (-0.332, -0.015, 0.0_f32, 185.0_f32),
+            (0.332, -0.015, 2.4_f32, 185.0_f32),
+            (0.415, -0.175, 4.1_f32, 160.0_f32),
+        ];
+        for (nx, ny, phase, base_size) in torch_defs {
+            commands.spawn((
+                Match3Cleanup,
+                SanctuaryTorchGlow {
+                    norm_x: nx,
+                    norm_y: ny,
+                    phase,
+                    base_size,
+                },
+                Sprite {
+                    image: vfx.soft_orb.clone(),
+                    color: Color::srgba(1.0, 0.62, 0.22, 0.34),
+                    custom_size: Some(Vec2::splat(base_size)),
+                    ..default()
+                },
+                Transform::from_xyz(nx * bg_w, ny * bg_h, Z_BOARD_BG - 1.2),
+            ));
+        }
+
+        // Gentle floating runic embers/motes drifting up the sanctuary arches.
+        let half_w = window.width() * 0.48;
+        let half_h = window.height() * 0.52;
+        for i in 0..SANCTUARY_EMBER_COUNT {
+            let side = if i % 2 == 0 { -1.0 } else { 1.0 };
+            let lane = 0.55 + ((i * 19) % 45) as f32 / 100.0;
+            let bx = side * half_w * lane;
+            let by = -half_h + ((i * 73) % 100) as f32 / 100.0 * (half_h * 2.0);
+            let is_aurora = i % 3 == 0;
+            let color = if is_aurora {
+                Color::srgba(0.34, 0.94, 0.76, 0.32)
+            } else {
+                Color::srgba(1.0, 0.72, 0.30, 0.38)
+            };
+            let size = 7.0 + (i % 4) as f32 * 3.5;
+            commands.spawn((
+                Match3Cleanup,
+                SanctuaryEmber {
+                    base_x: bx,
+                    y: by,
+                    speed_y: 16.0 + (i % 5) as f32 * 5.5,
+                    phase: i as f32 * 1.17,
+                    half_h,
+                },
+                Sprite {
+                    image: vfx.soft_orb.clone(),
+                    color,
+                    custom_size: Some(Vec2::splat(size)),
+                    ..default()
+                },
+                Transform::from_xyz(bx, by, Z_BOARD_BG - 0.8),
+            ));
+        }
+
         if let Some(session) = &ctx.active_session {
             compute_board_layout(
                 window.width(),
@@ -249,11 +383,12 @@ pub fn setup_match3_scene(
                 session.board.rows(),
                 &mut input_state,
             );
-            spawn_board_static_sprites(&mut commands, session, &textures, &input_state);
+            spawn_board_static_sprites(&mut commands, session, &textures, &vfx, &input_state);
             spawn_board_sprites(
                 &mut commands,
                 session,
                 &textures,
+                &vfx,
                 &input_state,
                 None,
                 ctx.colorblind_mode,
@@ -265,10 +400,15 @@ pub fn setup_match3_scene(
         &mut commands,
         &ctx,
         &fjord_art,
+        &textures,
+        &vfx,
         &sound_bank,
         scroll_mem.modal_offset_y,
         input_state.is_compact_hud,
         input_state.can_undo(&ctx),
+        input_state.confirm_retreat,
+        input_state.confirm_loki_shuffle,
+        false,
     );
     commands.insert_resource(input_state);
 }
@@ -297,11 +437,20 @@ pub(super) fn compute_board_layout(
     layout: &mut Match3InputState,
 ) {
     let compact = win_w < 760.0;
+    let narrow = win_w < 500.0;
     layout.is_compact_hud = compact;
     let side_margin = if compact { 12.0 } else { BOARD_SIDE_MARGIN_PX };
-    let top_reserved = if compact { 96.0 } else { BOARD_TOP_RESERVED_PX };
-    let bottom_reserved = if compact {
-        76.0
+    let top_reserved = if narrow {
+        148.0
+    } else if compact {
+        126.0
+    } else {
+        BOARD_TOP_RESERVED_PX
+    };
+    let bottom_reserved = if narrow {
+        116.0
+    } else if compact {
+        96.0
     } else {
         BOARD_BOTTOM_RESERVED_PX
     };
@@ -363,19 +512,32 @@ pub(super) fn spawn_board_static_sprites(
     commands: &mut Commands,
     session: &wyrdstone_core::LevelSession,
     textures: &RuneTextures,
+    vfx: &VfxTextures,
     layout: &Match3InputState,
 ) {
     let cols = session.board.cols();
     let rows = session.board.rows();
-    let board_w = cols as f32 * layout.cell_step + 16.0;
-    let board_h = rows as f32 * layout.cell_step + 16.0;
+    let board_w = cols as f32 * layout.cell_step + 28.0;
+    let board_h = rows as f32 * layout.cell_step + 28.0;
     let center_y = layout.board_center_y;
+
+    // Soft ambient shadow behind the sculpted stone board frame.
+    commands.spawn((
+        Match3Cleanup,
+        BoardStaticEntity,
+        Sprite {
+            color: Color::srgba(0.02, 0.03, 0.06, 0.58),
+            custom_size: Some(Vec2::new(board_w + 18.0, board_h + 18.0)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, center_y - 5.0, Z_BOARD_BG - 0.2),
+    ));
 
     commands.spawn((
         Match3Cleanup,
         BoardStaticEntity,
         Sprite {
-            color: Color::srgba(0.06, 0.09, 0.14, 0.84),
+            image: vfx.board_frame.clone(),
             custom_size: Some(Vec2::new(board_w, board_h)),
             ..default()
         },
@@ -420,10 +582,12 @@ pub(super) fn spawn_board_static_sprites(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_board_sprites(
     commands: &mut Commands,
     session: &wyrdstone_core::LevelSession,
     textures: &RuneTextures,
+    vfx: &VfxTextures,
     layout: &Match3InputState,
     fall_starts: Option<&HashMap<CellPos, i32>>,
     colorblind_mode: bool,
@@ -509,18 +673,32 @@ pub(super) fn spawn_board_sprites(
                     Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
                 ));
             } else if cell.booster == Booster::BifrostShard {
-                commands.spawn((
-                    Match3Cleanup,
-                    Match3Entity,
-                    BoardTileVisual { pos },
-                    BoosterPulse,
-                    Sprite {
-                        image: textures.booster_bifrost.clone(),
-                        custom_size: Some(tile_size),
-                        ..default()
-                    },
-                    Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
-                ));
+                let phase = (pos.col as f32 * 0.23 + pos.row as f32 * 0.37).fract();
+                commands
+                    .spawn((
+                        Match3Cleanup,
+                        Match3Entity,
+                        BoardTileVisual { pos },
+                        BoosterPulse,
+                        Sprite {
+                            image: textures.booster_bifrost.clone(),
+                            custom_size: Some(tile_size),
+                            ..default()
+                        },
+                        Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
+                    ))
+                    .with_children(|parent| {
+                        parent.spawn((
+                            BoosterShimmer { phase },
+                            Sprite {
+                                image: vfx.shimmer_band.clone(),
+                                color: Color::srgba(1.0, 0.96, 0.80, 0.0),
+                                custom_size: Some(tile_size * 0.94),
+                                ..default()
+                            },
+                            Transform::from_xyz(0.0, 0.0, 0.6),
+                        ));
+                    });
             } else if let Some(rune) = cell.rune {
                 if let Some(tex) = textures.runes.get(&rune) {
                     let mut rune_cmd = commands.spawn((
@@ -573,18 +751,32 @@ pub(super) fn spawn_board_sprites(
                     }
                 }
                 if let Some(booster_tex) = textures.booster_handle(cell.booster) {
-                    commands.spawn((
-                        Match3Cleanup,
-                        Match3Entity,
-                        BoardTileVisual { pos },
-                        BoosterPulse,
-                        Sprite {
-                            image: booster_tex,
-                            custom_size: Some(tile_size),
-                            ..default()
-                        },
-                        Transform::from_xyz(tile_world.x, tile_world.y, Z_BOOSTER_BADGE),
-                    ));
+                    let phase = (pos.col as f32 * 0.29 + pos.row as f32 * 0.41).fract();
+                    commands
+                        .spawn((
+                            Match3Cleanup,
+                            Match3Entity,
+                            BoardTileVisual { pos },
+                            BoosterPulse,
+                            Sprite {
+                                image: booster_tex,
+                                custom_size: Some(tile_size),
+                                ..default()
+                            },
+                            Transform::from_xyz(tile_world.x, tile_world.y, Z_BOOSTER_BADGE),
+                        ))
+                        .with_children(|parent| {
+                            parent.spawn((
+                                BoosterShimmer { phase },
+                                Sprite {
+                                    image: vfx.shimmer_band.clone(),
+                                    color: Color::srgba(1.0, 0.96, 0.80, 0.0),
+                                    custom_size: Some(tile_size * 0.92),
+                                    ..default()
+                                },
+                                Transform::from_xyz(0.0, 0.0, 0.15),
+                            ));
+                        });
                 }
             }
 
@@ -660,6 +852,7 @@ pub(super) fn rebuild_board_now(
     commands: &mut Commands,
     session: &wyrdstone_core::LevelSession,
     textures: &RuneTextures,
+    vfx: &VfxTextures,
     window: &Window,
     input_state: &mut Match3InputState,
     sprites: &Query<Entity, With<Match3Entity>>,
@@ -680,10 +873,31 @@ pub(super) fn rebuild_board_now(
         commands,
         session,
         textures,
+        vfx,
         input_state,
         fall_starts,
         colorblind_mode,
     );
+}
+
+fn spawn_invalid_cell_flash(commands: &mut Commands, pos: CellPos, layout: &Match3InputState) {
+    let w = cell_to_world(pos, layout);
+    commands.spawn((
+        Match3Cleanup,
+        BlastBeam {
+            elapsed: 0.0,
+            lifetime: 0.28,
+            rotation_speed: 0.0,
+            start_scale: 1.0,
+            end_scale: 1.12,
+        },
+        Sprite {
+            color: Color::srgba(0.95, 0.22, 0.26, 0.62),
+            custom_size: Some(Vec2::splat(layout.cell_step * 0.94)),
+            ..default()
+        },
+        Transform::from_xyz(w.x, w.y, Z_SELECTION_RING + 0.3),
+    ));
 }
 
 fn update_selection_marker(
@@ -762,6 +976,7 @@ fn execute_undo(
 fn execute_loki_shuffle(
     commands: &mut Commands,
     ctx: &mut GameContext,
+    vfx: &VfxTextures,
     sound_bank: &SoundBank,
     input_state: &mut Match3InputState,
 ) {
@@ -779,7 +994,7 @@ fn execute_loki_shuffle(
         ctx.persist();
         input_state.undo_snapshot = None;
         play_sfx(commands, sound_bank, SfxKind::ToolBlast);
-        anim::spawn_loki_vfx(commands, cols, rows, input_state);
+        anim::spawn_loki_vfx(commands, vfx, cols, rows, input_state);
         input_state.shake_secs = SHAKE_DURATION_SECS * 0.7;
         input_state.dirty_board = true;
         input_state.dirty_hud = true;
@@ -789,6 +1004,7 @@ fn execute_loki_shuffle(
 fn execute_patron_fury(
     commands: &mut Commands,
     ctx: &mut GameContext,
+    vfx: &VfxTextures,
     sound_bank: &SoundBank,
     input_state: &mut Match3InputState,
 ) {
@@ -803,6 +1019,9 @@ fn execute_patron_fury(
         return;
     };
     if !can_fire || !input_state.is_idle() {
+        if input_state.is_idle() {
+            play_sfx(commands, sound_bank, SfxKind::Invalid);
+        }
         return;
     }
     let ctx_ref = ctx;
@@ -817,7 +1036,7 @@ fn execute_patron_fury(
         .as_ref()
         .map(|p| p.cells.clone())
         .unwrap_or(spawned_positions);
-    anim::spawn_patron_fury_vfx(commands, patron, &vfx_targets, cols, rows, input_state);
+    anim::spawn_patron_fury_vfx(commands, vfx, patron, &vfx_targets, cols, rows, input_state);
     input_state.shake_secs = SHAKE_DURATION_SECS;
     input_state.dirty_hud = true;
     if let Some(prep) = prepared {
@@ -846,6 +1065,7 @@ pub fn handle_match3_hud_buttons(
     keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
     textures: Res<RuneTextures>,
+    vfx: Res<VfxTextures>,
     mut sound_bank: ResMut<SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut scroll_mem: ResMut<UiScrollMemory>,
@@ -853,8 +1073,19 @@ pub fn handle_match3_hud_buttons(
     mut next_state: ResMut<NextState<AppState>>,
     selection_markers: Query<Entity, With<SelectionMarker>>,
     kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
+    mut tooltip_q: Query<(&mut Text, &mut Node), With<Match3TooltipText>>,
     buttons: Query<(&Interaction, &Match3UiAction), Changed<Interaction>>,
 ) {
+    // Allow players to fast-forward the Valhalla Bonus victory cascade with Space or Enter.
+    if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
+        if keys.just_pressed(KeyCode::Space)
+            || keys.just_pressed(KeyCode::Enter)
+            || keys.just_pressed(KeyCode::Escape)
+        {
+            input_state.skip_valhalla = true;
+        }
+        return;
+    }
     if keys.just_pressed(KeyCode::Escape) {
         if ctx.active_modal == ActiveModal::Help {
             ctx.active_modal = ActiveModal::None;
@@ -862,11 +1093,20 @@ pub fn handle_match3_hud_buttons(
             input_state.dirty_hud = true;
             return;
         }
-        if ctx.armed_tool.is_some() {
+        if ctx.armed_tool.is_some()
+            || input_state.confirm_retreat
+            || input_state.confirm_loki_shuffle
+        {
             ctx.armed_tool = None;
+            input_state.confirm_retreat = false;
+            input_state.confirm_loki_shuffle = false;
             input_state.dirty_hud = true;
             return;
         }
+        ctx.active_modal = ActiveModal::Help;
+        scroll_mem.modal_offset_y = 0.0;
+        input_state.dirty_hud = true;
+        return;
     }
 
     if keys.just_pressed(KeyCode::Backspace)
@@ -944,6 +1184,7 @@ pub fn handle_match3_hud_buttons(
                             play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
                             anim::spawn_tool_vfx(
                                 &mut commands,
+                                &vfx,
                                 tool,
                                 cell,
                                 &prep.cells,
@@ -968,6 +1209,7 @@ pub fn handle_match3_hud_buttons(
                             };
                         }
                     } else {
+                        spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                         play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     }
                     return;
@@ -997,6 +1239,8 @@ pub fn handle_match3_hud_buttons(
                                 &input_state,
                                 &selection_markers,
                             );
+                            spawn_invalid_cell_flash(&mut commands, prev, &input_state);
+                            spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                         }
                     } else {
@@ -1038,7 +1282,7 @@ pub fn handle_match3_hud_buttons(
         && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
     {
-        execute_patron_fury(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+        execute_patron_fury(&mut commands, &mut ctx, &vfx, &sound_bank, &mut input_state);
         return;
     }
 
@@ -1053,9 +1297,25 @@ pub fn handle_match3_hud_buttons(
     for (kc, tool) in key_tools {
         if keys.just_pressed(kc) && input_state.is_idle() && ctx.active_modal != ActiveModal::Help {
             if ctx.city.tools.count(tool) > 0 {
+                input_state.confirm_retreat = false;
                 if tool == ActiveTool::LokiShuffle {
-                    execute_loki_shuffle(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+                    if input_state.confirm_loki_shuffle {
+                        input_state.confirm_loki_shuffle = false;
+                        execute_loki_shuffle(
+                            &mut commands,
+                            &mut ctx,
+                            &vfx,
+                            &sound_bank,
+                            &mut input_state,
+                        );
+                    } else {
+                        ctx.armed_tool = None;
+                        input_state.confirm_loki_shuffle = true;
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                        input_state.dirty_hud = true;
+                    }
                 } else {
+                    input_state.confirm_loki_shuffle = false;
                     ctx.armed_tool = if ctx.armed_tool == Some(tool) {
                         None
                     } else {
@@ -1065,18 +1325,76 @@ pub fn handle_match3_hud_buttons(
                     input_state.dirty_board = true;
                     input_state.dirty_hud = true;
                 }
+            } else {
+                play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
             }
             return;
         }
     }
 
+    let help_open = ctx.active_modal == ActiveModal::Help;
+    let suppress_clicks = scroll_mem.is_touch_scrolling();
+
     for (interaction, action) in &buttons {
-        if *interaction != Interaction::Pressed {
+        // Live in-place tooltip on hover for tools and Patron Divine Fury (no HUD rebuild).
+        if !help_open && ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
+            match *interaction {
+                Interaction::Hovered => {
+                    let tip_key = match *action {
+                        Match3UiAction::SelectTool(tool) => Some(tool_hint_key(tool)),
+                        Match3UiAction::TriggerFury => {
+                            ctx.active_session.as_ref().map(|s| s.patron.desc_key())
+                        }
+                        _ => None,
+                    };
+                    if let Some(k) = tip_key {
+                        let txt = ctx.data.i18n.t(k).to_string();
+                        for (mut t, mut node) in &mut tooltip_q {
+                            t.0 = txt.clone();
+                            node.display = Display::Flex;
+                        }
+                    }
+                }
+                Interaction::None => {
+                    if matches!(
+                        action,
+                        Match3UiAction::SelectTool(_) | Match3UiAction::TriggerFury
+                    ) {
+                        for (mut t, mut node) in &mut tooltip_q {
+                            t.0.clear();
+                            node.display = Display::None;
+                        }
+                    }
+                }
+                Interaction::Pressed => {}
+            }
+        }
+
+        if suppress_clicks || *interaction != Interaction::Pressed {
+            continue;
+        }
+        if help_open
+            && matches!(
+                action,
+                Match3UiAction::Retreat
+                    | Match3UiAction::Undo
+                    | Match3UiAction::SelectTool(_)
+                    | Match3UiAction::CancelTool
+                    | Match3UiAction::TriggerFury
+            )
+        {
             continue;
         }
         match *action {
             Match3UiAction::Retreat => {
                 if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
+                    continue;
+                }
+                if !input_state.confirm_retreat {
+                    input_state.confirm_retreat = true;
+                    input_state.confirm_loki_shuffle = false;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    input_state.dirty_hud = true;
                     continue;
                 }
                 let was_expedition = ctx
@@ -1097,9 +1415,13 @@ pub fn handle_match3_hud_buttons(
                 return;
             }
             Match3UiAction::Undo => {
+                input_state.confirm_retreat = false;
+                input_state.confirm_loki_shuffle = false;
                 execute_undo(&mut commands, &mut ctx, &sound_bank, &mut input_state);
             }
             Match3UiAction::ToggleHelp => {
+                input_state.confirm_retreat = false;
+                input_state.confirm_loki_shuffle = false;
                 ctx.toggle_modal(ActiveModal::Help);
                 scroll_mem.modal_offset_y = 0.0;
                 input_state.dirty_hud = true;
@@ -1130,24 +1452,81 @@ pub fn handle_match3_hud_buttons(
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 input_state.dirty_hud = true;
             }
+            Match3UiAction::ToggleReducedMotion => {
+                ctx.reduced_motion = !ctx.reduced_motion;
+                input_state.reduced_motion = ctx.reduced_motion;
+                ctx.persist();
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                input_state.dirty_hud = true;
+            }
             Match3UiAction::TriggerFury => {
-                execute_patron_fury(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+                input_state.confirm_retreat = false;
+                input_state.confirm_loki_shuffle = false;
+                let ready = ctx
+                    .active_session
+                    .as_ref()
+                    .map(|s| s.can_trigger_fury())
+                    .unwrap_or(false);
+                if !ready {
+                    if let Some(desc_key) = ctx.active_session.as_ref().map(|s| s.patron.desc_key())
+                    {
+                        let txt = ctx.data.i18n.t(desc_key).to_string();
+                        for (mut t, mut node) in &mut tooltip_q {
+                            t.0 = txt.clone();
+                            node.display = Display::Flex;
+                        }
+                    }
+                }
+                execute_patron_fury(&mut commands, &mut ctx, &vfx, &sound_bank, &mut input_state);
             }
             Match3UiAction::SelectTool(tool) => {
-                if !input_state.is_idle() || ctx.city.tools.count(tool) == 0 {
+                if !input_state.is_idle() {
                     continue;
                 }
+                if ctx.city.tools.count(tool) == 0 {
+                    let txt = ctx.data.i18n.t(tool_hint_key(tool)).to_string();
+                    for (mut t, mut node) in &mut tooltip_q {
+                        t.0 = txt.clone();
+                        node.display = Display::Flex;
+                    }
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    continue;
+                }
+                input_state.confirm_retreat = false;
                 if tool == ActiveTool::LokiShuffle {
-                    execute_loki_shuffle(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+                    if input_state.confirm_loki_shuffle {
+                        input_state.confirm_loki_shuffle = false;
+                        execute_loki_shuffle(
+                            &mut commands,
+                            &mut ctx,
+                            &vfx,
+                            &sound_bank,
+                            &mut input_state,
+                        );
+                    } else {
+                        ctx.armed_tool = None;
+                        input_state.confirm_loki_shuffle = true;
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                        input_state.dirty_hud = true;
+                    }
                 } else if ctx.armed_tool == Some(tool) {
+                    input_state.confirm_loki_shuffle = false;
                     ctx.armed_tool = None;
                     input_state.dirty_hud = true;
                 } else {
+                    input_state.confirm_loki_shuffle = false;
                     ctx.armed_tool = Some(tool);
                     input_state.selected = None;
                     input_state.dirty_board = true;
                     input_state.dirty_hud = true;
                 }
+            }
+            Match3UiAction::CancelTool => {
+                ctx.armed_tool = None;
+                input_state.confirm_loki_shuffle = false;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                input_state.dirty_board = true;
+                input_state.dirty_hud = true;
             }
         }
     }
@@ -1163,12 +1542,20 @@ pub fn handle_board_pointer_input(
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mut ctx: ResMut<GameContext>,
     textures: Res<RuneTextures>,
+    vfx: Res<VfxTextures>,
     sound_bank: Res<SoundBank>,
     mut input_state: ResMut<Match3InputState>,
     hover_overlays: Query<Entity, With<ToolHoverOverlay>>,
     drag_highlights: Query<Entity, With<DragTargetHighlight>>,
     selection_markers: Query<Entity, With<SelectionMarker>>,
+    kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
 ) {
+    if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
+        if mouse.just_pressed(MouseButton::Left) || touches.iter_just_pressed().next().is_some() {
+            input_state.skip_valhalla = true;
+        }
+        return;
+    }
     if !input_state.is_idle() || ctx.active_modal == ActiveModal::Help {
         for e in &hover_overlays {
             commands.entity(e).despawn();
@@ -1191,14 +1578,16 @@ pub fn handle_board_pointer_input(
         None => return,
     };
 
-    // Live AoE hover highlight when an active tool is armed.
+    // Live hover highlight: AoE preview when a tool is armed (tracks mouse or keyboard cursor),
+    // or soft luminous rune halo when idle.
+    let pointer_hovered = window
+        .cursor_position()
+        .and_then(|sp| camera.viewport_to_world_2d(cam_transform, sp).ok())
+        .and_then(|wp| world_to_cell(wp, cols, rows, &input_state));
     let hovered = if ctx.armed_tool.is_some() {
-        window
-            .cursor_position()
-            .and_then(|sp| camera.viewport_to_world_2d(cam_transform, sp).ok())
-            .and_then(|wp| world_to_cell(wp, cols, rows, &input_state))
+        pointer_hovered.or(input_state.kbd_cursor)
     } else {
-        None
+        pointer_hovered
     };
     if hovered != input_state.hover_cell {
         input_state.hover_cell = hovered;
@@ -1219,6 +1608,28 @@ pub fn handle_board_pointer_input(
                         ..default()
                     },
                     Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.2),
+                ));
+            }
+        } else if let (None, Some(cell), Some(session)) =
+            (ctx.armed_tool, hovered, &ctx.active_session)
+        {
+            let playable = session
+                .board
+                .get(cell)
+                .map(|c| !c.blocked && !c.fog)
+                .unwrap_or(false);
+            if playable {
+                let w = cell_to_world(cell, &input_state);
+                commands.spawn((
+                    Match3Cleanup,
+                    ToolHoverOverlay,
+                    Sprite {
+                        image: vfx.soft_orb.clone(),
+                        color: Color::srgba(1.0, 0.92, 0.62, 0.30),
+                        custom_size: Some(Vec2::splat(input_state.cell_step * 1.18)),
+                        ..default()
+                    },
+                    Transform::from_xyz(w.x, w.y, Z_CELL_BG + 0.8),
                 ));
             }
         }
@@ -1254,8 +1665,17 @@ pub fn handle_board_pointer_input(
     if let Some(screen_pos) = pressed_screen {
         input_state.idle_secs = 0.0;
         input_state.hint_pair = None;
+        if input_state.kbd_cursor.is_some() {
+            input_state.kbd_cursor = None;
+            update_kbd_cursor_marker(&mut commands, &input_state, &kbd_markers);
+        }
         if let Ok(world_pos) = camera.viewport_to_world_2d(cam_transform, screen_pos) {
             if let Some(cell) = world_to_cell(world_pos, cols, rows, &input_state) {
+                if input_state.confirm_retreat || input_state.confirm_loki_shuffle {
+                    input_state.confirm_retreat = false;
+                    input_state.confirm_loki_shuffle = false;
+                    input_state.dirty_hud = true;
+                }
                 if let Some(tool) = ctx.armed_tool {
                     let prepared = ctx
                         .active_session
@@ -1269,6 +1689,7 @@ pub fn handle_board_pointer_input(
                             play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
                             anim::spawn_tool_vfx(
                                 &mut commands,
+                                &vfx,
                                 tool,
                                 cell,
                                 &prep.cells,
@@ -1293,6 +1714,7 @@ pub fn handle_board_pointer_input(
                             };
                         }
                     } else {
+                        spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                         play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     }
                     return;
@@ -1325,6 +1747,8 @@ pub fn handle_board_pointer_input(
                                 &input_state,
                                 &selection_markers,
                             );
+                            spawn_invalid_cell_flash(&mut commands, prev, &input_state);
+                            spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                         }
                         return;
@@ -1408,6 +1832,8 @@ pub fn handle_board_pointer_input(
                         &input_state,
                         &selection_markers,
                     );
+                    spawn_invalid_cell_flash(&mut commands, origin_cell, &input_state);
+                    spawn_invalid_cell_flash(&mut commands, nb, &input_state);
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                 }
             }
@@ -1457,6 +1883,7 @@ pub fn sync_match3_visuals(
     mut commands: Commands,
     ctx: Res<GameContext>,
     textures: Res<RuneTextures>,
+    vfx: Res<VfxTextures>,
     fjord_art: Res<FjordTextures>,
     sound_bank: Res<SoundBank>,
     scroll_mem: Res<UiScrollMemory>,
@@ -1478,7 +1905,7 @@ pub fn sync_match3_visuals(
                 session.board.rows(),
                 &mut input_state,
             );
-            spawn_board_static_sprites(&mut commands, session, &textures, &input_state);
+            spawn_board_static_sprites(&mut commands, session, &textures, &vfx, &input_state);
         }
         input_state.dirty_static_board = false;
     }
@@ -1489,6 +1916,7 @@ pub fn sync_match3_visuals(
                 &mut commands,
                 session,
                 &textures,
+                &vfx,
                 window,
                 &mut input_state,
                 &sprites,
@@ -1507,10 +1935,15 @@ pub fn sync_match3_visuals(
             &mut commands,
             &ctx,
             &fjord_art,
+            &textures,
+            &vfx,
             &sound_bank,
             scroll_mem.modal_offset_y,
             input_state.is_compact_hud,
             input_state.can_undo(&ctx),
+            input_state.confirm_retreat,
+            input_state.confirm_loki_shuffle,
+            matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }),
         );
         input_state.dirty_hud = false;
     }

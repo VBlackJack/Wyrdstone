@@ -438,6 +438,38 @@ impl Board {
         Some(self.groups_to_prepared_clear(&groups, None))
     }
 
+    /// Returns all playable cells currently holding an active charged rune (booster).
+    pub fn find_remaining_boosters(&self) -> Vec<(CellPos, Booster)> {
+        let mut out = Vec::new();
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                let pos = CellPos::new(col, row);
+                let cell = self.cells[self.idx(pos)];
+                if !cell.blocked && cell.booster != Booster::None {
+                    out.push((pos, cell.booster));
+                }
+            }
+        }
+        out
+    }
+
+    /// Prepares a direct detonation for a single charged rune (used during Victory bonus sweeps).
+    pub fn prepare_booster_detonation(&self, target: CellPos) -> Option<PreparedClear> {
+        if !self.in_bounds(target) {
+            return None;
+        }
+        let cell = self.cells[self.idx(target)];
+        if cell.blocked || cell.booster == Booster::None {
+            return None;
+        }
+        Some(PreparedClear {
+            cells: vec![target],
+            spawned_boosters: Vec::new(),
+            converted_boosters: Vec::new(),
+            is_direct_blast: true,
+        })
+    }
+
     /// Prepares a direct-blast clear for targeted active tools.
     pub fn prepare_tool_step(&self, tool: ActiveTool, target: CellPos) -> Option<PreparedClear> {
         if !self.in_bounds(target) || self.cells[self.idx(target)].blocked {

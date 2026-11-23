@@ -26,6 +26,8 @@ mod scroll;
 mod state;
 mod theme;
 mod title_ui;
+mod ui_style;
+mod vfx_art;
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
@@ -65,6 +67,7 @@ pub fn run_app() {
             (
                 setup_camera,
                 runes_art::init_rune_textures,
+                vfx_art::init_vfx_textures,
                 fjord_art::init_fjord_textures,
                 audio::init_sound_bank,
             ),
@@ -76,17 +79,29 @@ pub fn run_app() {
                 tick_energy_regen,
                 handle_global_shortcuts,
                 scroll::handle_ui_scroll,
+                ui_style::tick_screen_fades,
+                ui_style::animate_button_feedback,
             ),
         )
         // Title screen
-        .add_systems(OnEnter(AppState::Title), title_ui::setup_title_ui)
+        .add_systems(
+            OnEnter(AppState::Title),
+            (title_ui::setup_title_ui, ui_style::spawn_screen_fade),
+        )
         .add_systems(
             Update,
-            title_ui::handle_title_buttons.run_if(in_state(AppState::Title)),
+            (
+                title_ui::handle_title_buttons,
+                title_ui::animate_title_ambience,
+            )
+                .run_if(in_state(AppState::Title)),
         )
         .add_systems(OnExit(AppState::Title), title_ui::cleanup_title_ui)
         // Fjord City hub
-        .add_systems(OnEnter(AppState::FjordCity), city_ui::setup_city_ui)
+        .add_systems(
+            OnEnter(AppState::FjordCity),
+            (city_ui::setup_city_ui, ui_style::spawn_screen_fade),
+        )
         .add_systems(
             Update,
             (city_ui::handle_city_buttons, city_ui::animate_city_ambience)
@@ -99,6 +114,7 @@ pub fn run_app() {
             (
                 match3_scene::setup_match3_scene,
                 audio::switch_bgm_to_match3,
+                ui_style::spawn_screen_fade,
             ),
         )
         .add_systems(
@@ -121,10 +137,17 @@ pub fn run_app() {
             ),
         )
         // Level Result modal
-        .add_systems(OnEnter(AppState::LevelResult), result_ui::setup_result_ui)
+        .add_systems(
+            OnEnter(AppState::LevelResult),
+            (result_ui::setup_result_ui, ui_style::spawn_screen_fade),
+        )
         .add_systems(
             Update,
-            result_ui::handle_result_buttons.run_if(in_state(AppState::LevelResult)),
+            (
+                result_ui::handle_result_buttons,
+                result_ui::animate_result_stars,
+            )
+                .run_if(in_state(AppState::LevelResult)),
         )
         .add_systems(OnExit(AppState::LevelResult), result_ui::cleanup_result_ui)
         .run();

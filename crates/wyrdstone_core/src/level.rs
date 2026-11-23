@@ -699,14 +699,24 @@ impl LevelSession {
         }
     }
 
+    /// Returns `(move_bonus_pct, passive_bonus_pct, fury_bonus_pct)` applied to victory rewards.
+    pub fn reward_bonus_breakdown(&self, balance: &BalanceConfig) -> (u32, u32, u32) {
+        let move_bonus = (self.moves_left * balance.move_reward_bonus_pct_per_move)
+            .min(balance.move_reward_bonus_cap_pct);
+        (
+            move_bonus,
+            self.resource_bonus_pct,
+            self.fury_resource_bonus_pct,
+        )
+    }
+
     /// Computes final resource rewards when the level is won (scaled by remaining moves + bonuses).
     pub fn earned_rewards(&self, balance: &BalanceConfig) -> ResourceBundle {
         if self.outcome != LevelOutcome::Victory {
             return ResourceBundle::default();
         }
-        let move_bonus = (self.moves_left * balance.move_reward_bonus_pct_per_move)
-            .min(balance.move_reward_bonus_cap_pct);
-        let bonus_pct = move_bonus + self.resource_bonus_pct + self.fury_resource_bonus_pct;
+        let (move_bonus, passive_bonus, fury_bonus) = self.reward_bonus_breakdown(balance);
+        let bonus_pct = move_bonus + passive_bonus + fury_bonus;
         let scale = |base: u32| base + (base * bonus_pct) / 100;
         ResourceBundle {
             wood: scale(self.level.base_reward.wood),

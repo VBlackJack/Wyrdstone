@@ -30,6 +30,16 @@ const BLDG_DOCK_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_dock.p
 const BLDG_SHRINE_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_shrine.png");
 const BLDG_MEADERY_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_meadery.png");
 const BLDG_WATCHTOWER_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_watchtower.png");
+const MAP_BLDG_GREAT_HALL_PNG: &[u8] =
+    include_bytes!("../../../assets/sprites/map_bldg_great_hall.png");
+const MAP_BLDG_FORGE_PNG: &[u8] = include_bytes!("../../../assets/sprites/map_bldg_forge.png");
+const MAP_BLDG_DOCK_PNG: &[u8] =
+    include_bytes!("../../../assets/sprites/map_bldg_longship_dock.png");
+const MAP_BLDG_SHRINE_PNG: &[u8] =
+    include_bytes!("../../../assets/sprites/map_bldg_odin_shrine.png");
+const MAP_BLDG_MEADERY_PNG: &[u8] = include_bytes!("../../../assets/sprites/map_bldg_meadery.png");
+const MAP_BLDG_WATCHTOWER_PNG: &[u8] =
+    include_bytes!("../../../assets/sprites/map_bldg_watchtower.png");
 const PORTRAIT_JARL_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_jarl.png");
 const PORTRAIT_BROKK_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_brokk.png");
 const PORTRAIT_VOLVA_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_volva.png");
@@ -60,14 +70,17 @@ const COL_ASGARD_PNG: &[u8] = include_bytes!("../../../assets/sprites/col_asgard
 const COL_JOTUNHEIM_PNG: &[u8] = include_bytes!("../../../assets/sprites/col_jotunheim.png");
 const COL_VANAHEIM_PNG: &[u8] = include_bytes!("../../../assets/sprites/col_vanaheim.png");
 const INTER_REGULAR_TTF: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+const CINZEL_BOLD_TTF: &[u8] = include_bytes!("../../../assets/fonts/CinzelDecorative-Bold.ttf");
 
-/// Handles to all bundled painted artworks.
+/// Handles to all bundled painted artworks and typography.
 #[derive(Resource)]
 pub struct FjordTextures {
+    pub display_font: Handle<Font>,
     pub fjord_map: Handle<Image>,
     pub match3_bg: Handle<Image>,
     pub logo: Handle<Image>,
     pub buildings: HashMap<String, Handle<Image>>,
+    pub map_buildings: HashMap<String, Handle<Image>>,
     pub portraits: HashMap<String, Handle<Image>>,
     pub boss_portraits: HashMap<String, Handle<Image>>,
     pub patron_portraits: HashMap<PatronGod, Handle<Image>>,
@@ -85,9 +98,17 @@ pub fn app_icon_rgba() -> (Vec<u8>, u32, u32) {
 }
 
 impl FjordTextures {
-    /// Returns the painted illustration handle for a given building ID.
+    /// Returns the painted illustration handle for a given building ID (Inspector view).
     pub fn building_image(&self, building_id: &str) -> Option<Handle<Image>> {
         self.buildings.get(building_id).cloned()
+    }
+
+    /// Returns the transparent isometric cutout sprite for a given building on the Fjord map.
+    pub fn map_building_image(&self, building_id: &str) -> Option<Handle<Image>> {
+        self.map_buildings
+            .get(building_id)
+            .or_else(|| self.buildings.get(building_id))
+            .cloned()
     }
 
     /// Returns the painted character portrait for a Saga speaker (`"jarl"`, `"brokk"`, `"volva"`).
@@ -131,10 +152,13 @@ pub fn init_fjord_textures(
     if let Ok(inter_font) = Font::try_from_bytes(INTER_REGULAR_TTF.to_vec()) {
         fonts.insert(&Handle::default(), inter_font);
     }
+    let display_font = Font::try_from_bytes(CINZEL_BOLD_TTF.to_vec())
+        .map(|f| fonts.add(f))
+        .unwrap_or_default();
 
     let fjord_map = images.add(decode_png(FJORD_MAP_PNG));
     let match3_bg = images.add(decode_png(MATCH3_BG_PNG));
-    let logo = images.add(decode_png(WYRDSTONE_LOGO_PNG));
+    let logo = images.add(decode_logo_png(WYRDSTONE_LOGO_PNG));
 
     let mut buildings = HashMap::new();
     buildings.insert(
@@ -157,6 +181,32 @@ pub fn init_fjord_textures(
     buildings.insert(
         "watchtower".to_string(),
         images.add(decode_png(BLDG_WATCHTOWER_PNG)),
+    );
+
+    let mut map_buildings = HashMap::new();
+    map_buildings.insert(
+        "great_hall".to_string(),
+        images.add(decode_png(MAP_BLDG_GREAT_HALL_PNG)),
+    );
+    map_buildings.insert(
+        "forge".to_string(),
+        images.add(decode_png(MAP_BLDG_FORGE_PNG)),
+    );
+    map_buildings.insert(
+        "longship_dock".to_string(),
+        images.add(decode_png(MAP_BLDG_DOCK_PNG)),
+    );
+    map_buildings.insert(
+        "odin_shrine".to_string(),
+        images.add(decode_png(MAP_BLDG_SHRINE_PNG)),
+    );
+    map_buildings.insert(
+        "meadery".to_string(),
+        images.add(decode_png(MAP_BLDG_MEADERY_PNG)),
+    );
+    map_buildings.insert(
+        "watchtower".to_string(),
+        images.add(decode_png(MAP_BLDG_WATCHTOWER_PNG)),
     );
 
     let mut portraits = HashMap::new();
@@ -265,10 +315,12 @@ pub fn init_fjord_textures(
     );
 
     commands.insert_resource(FjordTextures {
+        display_font,
         fjord_map,
         match3_bg,
         logo,
         buildings,
+        map_buildings,
         portraits,
         boss_portraits,
         patron_portraits,
@@ -276,6 +328,50 @@ pub fn init_fjord_textures(
         amulet_icons,
         collection_icons,
     });
+}
+
+/// Decodes `wyrdstone_logo.png` and smoothly keys out its dark navy canvas so the sculpted
+/// emblem and aurora glow float cleanly over the animated fjord sky without a box seam.
+fn decode_logo_png(bytes: &[u8]) -> Image {
+    let mut img = decode_png(bytes);
+    let w = img.width() as usize;
+    let h = img.height() as usize;
+    if w == 0 || h == 0 || img.data.len() < w * h * 4 {
+        return img;
+    }
+    // Sample top-left corner as the backdrop key color.
+    let bg_r = img.data[0] as f32;
+    let bg_g = img.data[1] as f32;
+    let bg_b = img.data[2] as f32;
+    let half_w = w as f32 * 0.5;
+    let half_h = h as f32 * 0.5;
+
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 4;
+            let r = img.data[idx] as f32;
+            let g = img.data[idx + 1] as f32;
+            let b = img.data[idx + 2] as f32;
+            let a = img.data[idx + 3] as f32;
+
+            let dr = r - bg_r;
+            let dg = g - bg_g;
+            let db = b - bg_b;
+            let color_dist = (dr * dr + dg * dg + db * db).sqrt();
+            // Smooth alpha ramp: dark navy backdrop fades completely to 0, while teal aurora
+            // and bright gold/stone lettering stay 100% opaque.
+            let key_alpha = ((color_dist - 16.0) / 34.0).clamp(0.0, 1.0);
+
+            // Soft elliptical edge feathering so no outer corner artifact can survive.
+            let nx = (x as f32 - half_w) / half_w;
+            let ny = (y as f32 - half_h) / half_h;
+            let edge_r = (nx * nx * 0.92 + ny * ny * 0.98).sqrt();
+            let edge_fade = (1.0 - ((edge_r - 0.86) / 0.14).clamp(0.0, 1.0)).powf(1.4);
+
+            img.data[idx + 3] = (a * key_alpha * edge_fade).clamp(0.0, 255.0) as u8;
+        }
+    }
+    img
 }
 
 fn decode_png(bytes: &[u8]) -> Image {
