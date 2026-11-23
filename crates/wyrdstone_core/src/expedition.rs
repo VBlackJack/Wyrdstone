@@ -162,6 +162,11 @@ impl ExpeditionRun {
             relic_cells: vec![],
             portals,
             frost_spread: w >= 5,
+            fog_cells: if w >= 4 && !w.is_multiple_of(2) {
+                vec![(2, 3), (3, 3), (4, 3), (5, 3), (3, 4), (4, 4)]
+            } else {
+                vec![]
+            },
             blocked_cells: vec![(0, 0), (7, 0), (0, 7), (7, 7)],
             base_reward: ResourceBundle {
                 wood: 50 + w * 20,

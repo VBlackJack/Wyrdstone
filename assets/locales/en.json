@@ -300,5 +300,16 @@
   "match3.fury.charge": "Fury ({patron}): {pct}%",
   "match3.fury.ready": "UNLEASH {patron}! [Space]",
   "match3.boss.hp": "{boss}  HP: {hp}/{max}  |  2x: {rune}  |  Strike in {turns}",
-  "match3.boss.riposte": "{boss} strikes back!"
+  "match3.boss.riposte": "{boss} strikes back!",
+  "match3.valhalla.bonus": "Valhalla Bonus! +{pts}",
+  "city.panel.amulets.tier": "Tier {tier}/3",
+  "city.panel.amulets.upgrade": "Upgrade",
+  "city.panel.colorblind.on": "Colorblind Badges: ON",
+  "city.panel.colorblind.off": "Colorblind Badges: OFF",
+  "city.panel.building.fog_warning": "Niflheim Fog conceals tiles until revealed by an adjacent match!",
+  "tutorial.step0": "Jarl Halvar: Welcome to Wyrdstone! Click the Great Hall and press Play Runes to gather your first Timber & Gold.",
+  "tutorial.step1": "Jarl Halvar: Match 4 or 5 runes to forge Boosters, and unleash your Patron God's Divine Fury [Space] when full!",
+  "tutorial.step2": "Jarl Halvar: Rebuild the Great Hall to unlock the Fjord, collect periodic tributes on the map, and challenge Mythological Bosses!",
+  "tutorial.next": "Next Tip",
+  "tutorial.done": "Got It!"
 }

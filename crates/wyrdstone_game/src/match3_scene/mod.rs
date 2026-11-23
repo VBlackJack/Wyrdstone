@@ -201,7 +201,14 @@ pub fn setup_match3_scene(
                 session.board.rows(),
                 &mut input_state,
             );
-            spawn_board_sprites(&mut commands, session, &textures, &input_state, None);
+            spawn_board_sprites(
+                &mut commands,
+                session,
+                &textures,
+                &input_state,
+                None,
+                ctx.colorblind_mode,
+            );
         }
     }
 
@@ -290,6 +297,7 @@ pub(super) fn spawn_board_sprites(
     textures: &RuneTextures,
     layout: &Match3InputState,
     fall_starts: Option<&HashMap<CellPos, i32>>,
+    colorblind_mode: bool,
 ) {
     let cols = session.board.cols();
     let rows = session.board.rows();
@@ -354,6 +362,20 @@ pub(super) fn spawn_board_sprites(
                 ));
             }
 
+            if cell.fog {
+                commands.spawn((
+                    Match3Cleanup,
+                    Match3Entity,
+                    Sprite {
+                        image: textures.fog_overlay.clone(),
+                        custom_size: Some(Vec2::splat(layout.cell_step * 0.98)),
+                        ..default()
+                    },
+                    Transform::from_xyz(world.x, world.y, Z_CHAIN_OVERLAY + 0.5),
+                ));
+                continue;
+            }
+
             if cell.crate_layers > 0 {
                 let crate_tex = if cell.crate_layers >= 2 {
                     textures.crate_layer2.clone()
@@ -409,6 +431,21 @@ pub(super) fn spawn_board_sprites(
                         },
                         Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
                     ));
+                }
+                if colorblind_mode {
+                    if let Some(badge) = textures.colorblind_badges.get(&rune) {
+                        commands.spawn((
+                            Match3Cleanup,
+                            Match3Entity,
+                            BoardTileVisual { pos },
+                            Sprite {
+                                image: badge.clone(),
+                                custom_size: Some(tile_size),
+                                ..default()
+                            },
+                            Transform::from_xyz(tile_world.x, tile_world.y, Z_BOOSTER_BADGE + 0.2),
+                        ));
+                    }
                 }
                 if let Some(booster_tex) = textures.booster_handle(cell.booster) {
                     commands.spawn((
@@ -473,6 +510,7 @@ pub(super) fn spawn_board_sprites(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn rebuild_board_now(
     commands: &mut Commands,
     session: &wyrdstone_core::LevelSession,
@@ -481,6 +519,7 @@ pub(super) fn rebuild_board_now(
     input_state: &mut Match3InputState,
     sprites: &Query<Entity, With<Match3Entity>>,
     fall_starts: Option<&HashMap<CellPos, i32>>,
+    colorblind_mode: bool,
 ) {
     for e in sprites {
         commands.entity(e).despawn_recursive();
@@ -492,7 +531,39 @@ pub(super) fn rebuild_board_now(
         session.board.rows(),
         input_state,
     );
-    spawn_board_sprites(commands, session, textures, input_state, fall_starts);
+    spawn_board_sprites(
+        commands,
+        session,
+        textures,
+        input_state,
+        fall_starts,
+        colorblind_mode,
+    );
+}
+
+fn update_selection_marker(
+    commands: &mut Commands,
+    textures: &RuneTextures,
+    layout: &Match3InputState,
+    markers: &Query<Entity, With<SelectionMarker>>,
+) {
+    for e in markers {
+        commands.entity(e).despawn();
+    }
+    if let Some(sel) = layout.selected {
+        let w = cell_to_world(sel, layout);
+        commands.spawn((
+            Match3Cleanup,
+            Match3Entity,
+            SelectionMarker,
+            Sprite {
+                image: textures.selection_ring.clone(),
+                custom_size: Some(Vec2::splat(layout.cell_step)),
+                ..default()
+            },
+            Transform::from_xyz(w.x, w.y, Z_SELECTION_RING),
+        ));
+    }
 }
 
 fn execute_loki_shuffle(
@@ -681,9 +752,11 @@ pub fn handle_board_pointer_input(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mut ctx: ResMut<GameContext>,
+    textures: Res<RuneTextures>,
     sound_bank: Res<SoundBank>,
     mut input_state: ResMut<Match3InputState>,
     hover_overlays: Query<Entity, With<ToolHoverOverlay>>,
+    selection_markers: Query<Entity, With<SelectionMarker>>,
 ) {
     if !input_state.is_idle() || ctx.active_modal == ActiveModal::Help {
         for e in &hover_overlays {
@@ -811,13 +884,30 @@ pub fn handle_board_pointer_input(
                 if let Some(prev) = input_state.selected {
                     if prev == cell {
                         input_state.selected = None;
-                        input_state.dirty_board = true;
+                        update_selection_marker(
+                            &mut commands,
+                            &textures,
+                            &input_state,
+                            &selection_markers,
+                        );
                         return;
                     }
                     if prev.is_adjacent(cell) {
                         if start_swap_animation(prev, cell, &ctx, &mut input_state) {
+                            update_selection_marker(
+                                &mut commands,
+                                &textures,
+                                &input_state,
+                                &selection_markers,
+                            );
                             play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                         } else {
+                            update_selection_marker(
+                                &mut commands,
+                                &textures,
+                                &input_state,
+                                &selection_markers,
+                            );
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                         }
                         return;
@@ -827,7 +917,7 @@ pub fn handle_board_pointer_input(
                 input_state.selected = Some(cell);
                 input_state.drag_origin_cell = Some(cell);
                 input_state.drag_origin_screen = Some(screen_pos);
-                input_state.dirty_board = true;
+                update_selection_marker(&mut commands, &textures, &input_state, &selection_markers);
             }
         }
     }
@@ -922,6 +1012,7 @@ pub fn sync_match3_visuals(
                 &mut input_state,
                 &sprites,
                 None,
+                ctx.colorblind_mode,
             );
         }
         input_state.dirty_board = false;

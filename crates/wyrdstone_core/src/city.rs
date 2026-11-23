@@ -28,6 +28,8 @@ use std::collections::{HashMap, HashSet};
 pub const MAX_MASTERY_STARS: u8 = 5;
 /// Maximum daily trial streak tier for bonus rewards.
 pub const MAX_DAILY_STREAK_CYCLE: u32 = 7;
+/// Maximum upgrade tier for Nordic Amulets.
+pub const MAX_AMULET_TIER: u8 = 3;
 
 /// Bundle of village resources used for costs and rewards.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,6 +261,8 @@ pub struct CityState {
     #[serde(default)]
     pub crafted_amulets: HashSet<String>,
     #[serde(default)]
+    pub amulet_tiers: HashMap<String, u8>,
+    #[serde(default)]
     pub equipped_amulet: Option<String>,
     #[serde(default)]
     pub found_relics: HashSet<String>,
@@ -304,6 +308,7 @@ impl CityState {
             building_wins: HashMap::new(),
             claimed_quests: HashSet::new(),
             crafted_amulets: HashSet::new(),
+            amulet_tiers: HashMap::new(),
             equipped_amulet: None,
             found_relics: HashSet::new(),
             claimed_collections: HashSet::new(),
@@ -506,7 +511,34 @@ impl CityState {
         Ok(self.tools.count(recipe.tool))
     }
 
-    /// Crafts a Nordic Amulet and equips it immediately.
+    /// Returns the current tier (0 = uncrafted, 1..=3 = crafted/upgraded) of an amulet.
+    pub fn amulet_tier(&self, amulet_id: &str) -> u8 {
+        if let Some(&t) = self.amulet_tiers.get(amulet_id) {
+            return t.min(MAX_AMULET_TIER);
+        }
+        if self.crafted_amulets.contains(amulet_id) {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Returns the resource cost to craft (tier 0->1) or upgrade (tier 1->2, 2->3) an amulet.
+    pub fn amulet_next_cost(&self, amulet: &AmuletDef) -> Option<ResourceBundle> {
+        let tier = self.amulet_tier(&amulet.id);
+        if tier >= MAX_AMULET_TIER {
+            return None;
+        }
+        let mult = (tier as u32) + 1;
+        Some(ResourceBundle {
+            wood: amulet.cost.wood * mult,
+            stone: amulet.cost.stone * mult,
+            gold: amulet.cost.gold * mult,
+            mead: amulet.cost.mead * mult,
+        })
+    }
+
+    /// Crafts a Nordic Amulet (tier 1) or equips it if already crafted.
     pub fn try_craft_amulet(
         &mut self,
         amulet: &AmuletDef,
@@ -521,9 +553,35 @@ impl CityState {
         }
         self.resources.subtract(&amulet.cost);
         self.crafted_amulets.insert(amulet.id.clone());
+        self.amulet_tiers.insert(amulet.id.clone(), 1);
         self.equipped_amulet = Some(amulet.id.clone());
         self.glory += balance.amulet_glory;
         Ok(())
+    }
+
+    /// Upgrades an already crafted amulet to the next tier (up to `MAX_AMULET_TIER`).
+    pub fn try_upgrade_amulet(
+        &mut self,
+        amulet: &AmuletDef,
+        balance: &BalanceConfig,
+    ) -> Result<u8, &'static str> {
+        let current = self.amulet_tier(&amulet.id);
+        if current == 0 {
+            self.try_craft_amulet(amulet, balance)?;
+            return Ok(1);
+        }
+        let Some(cost) = self.amulet_next_cost(amulet) else {
+            return Err("city.button.max_level");
+        };
+        if !self.resources.can_afford(&cost) {
+            return Err("city.error.not_enough_resources");
+        }
+        self.resources.subtract(&cost);
+        let next = (current + 1).min(MAX_AMULET_TIER);
+        self.amulet_tiers.insert(amulet.id.clone(), next);
+        self.equipped_amulet = Some(amulet.id.clone());
+        self.glory += balance.amulet_glory;
+        Ok(next)
     }
 
     /// Equips an already crafted amulet.
@@ -536,10 +594,32 @@ impl CityState {
         }
     }
 
-    /// Returns the passive effect of the currently equipped amulet, if any.
+    /// Returns the passive effect of the currently equipped amulet, scaled by its tier (1..=3).
     pub fn active_amulet_effect(&self, amulets: &[AmuletDef]) -> Option<AmuletEffect> {
         let id = self.equipped_amulet.as_deref()?;
-        amulets.iter().find(|a| a.id == id).map(|a| a.effect)
+        let def = amulets.iter().find(|a| a.id == id)?;
+        let tier = self.amulet_tier(id).max(1) as u32;
+        let extra_tiers = tier.saturating_sub(1);
+        let scaled = match def.effect {
+            AmuletEffect::ResourceBonusPct(base) => {
+                AmuletEffect::ResourceBonusPct(base + extra_tiers * 12)
+            }
+            AmuletEffect::ExtraMoves(base) => AmuletEffect::ExtraMoves(base + extra_tiers),
+            AmuletEffect::ScoreBonusPct(base) => {
+                AmuletEffect::ScoreBonusPct(base + extra_tiers * 15)
+            }
+            AmuletEffect::ExtraTimePct(base) => AmuletEffect::ExtraTimePct(base + extra_tiers * 15),
+            AmuletEffect::StartingBooster => AmuletEffect::StartingBooster,
+        };
+        Some(scaled)
+    }
+
+    /// Returns the tier of the currently equipped amulet (0 if none equipped).
+    pub fn equipped_amulet_tier(&self) -> u8 {
+        self.equipped_amulet
+            .as_deref()
+            .map(|id| self.amulet_tier(id))
+            .unwrap_or(0)
     }
 
     /// Consumes endurance to launch a Match-3 level.

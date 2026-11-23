@@ -300,5 +300,16 @@
   "match3.fury.charge": "Fureur ({patron}) : {pct}%",
   "match3.fury.ready": "DÉCHAÎNER {patron} ! [Espace]",
   "match3.boss.hp": "{boss}  PV : {hp}/{max}  |  x2 : {rune}  |  Riposte : {turns}",
-  "match3.boss.riposte": "{boss} contre-attaque !"
+  "match3.boss.riposte": "{boss} contre-attaque !",
+  "match3.valhalla.bonus": "Bonus Valhalla ! +{pts}",
+  "city.panel.amulets.tier": "Niv. {tier}/3",
+  "city.panel.amulets.upgrade": "Améliorer",
+  "city.panel.colorblind.on": "Badges Daltonisme : OUI",
+  "city.panel.colorblind.off": "Badges Daltonisme : NON",
+  "city.panel.building.fog_warning": "Le Brouillard de Niflheim cache des cases jusqu'à un alignement adjacent !",
+  "tutorial.step0": "Jarl Halvar : Bienvenue à Wyrdstone ! Cliquez sur la Grande Salle puis Jouer les Runes pour récolter votre premier butin.",
+  "tutorial.step1": "Jarl Halvar : Alignez 4 ou 5 runes pour créer des Boosters, et déchaînez la Fureur Divine [Espace] quand la jauge est pleine !",
+  "tutorial.step2": "Jarl Halvar : Rebâtissez la Grande Salle pour débloquer le Fjord, récoltez les tributs sur la carte et défiez les Boss !",
+  "tutorial.next": "Suivant",
+  "tutorial.done": "Compris !"
 }

@@ -326,6 +326,16 @@ pub(super) fn spawn_building_inspector(
                             TextColor(Color::srgb(0.45, 0.86, 1.0)),
                         ));
                     }
+                    if !level.fog_cells.is_empty() {
+                        prev.spawn((
+                            Text::new(i18n.t("city.panel.building.fog_warning")),
+                            TextFont {
+                                font_size: 11.5,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.72, 0.82, 0.96)),
+                        ));
+                    }
                     let r = level.base_reward;
                     prev.spawn((
                         Text::new(i18n.t_fmt(

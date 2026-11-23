@@ -105,9 +105,13 @@ pub(super) fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
         ActiveModal::Amulets,
         |modal| {
             for amulet in &ctx.data.amulets {
-                let crafted = ctx.city.crafted_amulets.contains(&amulet.id);
+                let tier = ctx.city.amulet_tier(&amulet.id);
+                let crafted = tier > 0;
                 let equipped = ctx.city.equipped_amulet.as_deref() == Some(amulet.id.as_str());
-                let can_afford = ctx.city.resources.can_afford(&amulet.cost);
+                let next_cost = ctx.city.amulet_next_cost(amulet);
+                let can_afford_next = next_cost
+                    .map(|c| ctx.city.resources.can_afford(&c))
+                    .unwrap_or(false);
                 let action_lbl = if equipped {
                     i18n.t("city.panel.amulets.equipped")
                 } else if crafted {
@@ -119,7 +123,7 @@ pub(super) fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
                     (COLOR_ACCENT_GOLD, COLOR_TEXT_DARK)
                 } else if crafted {
                     (COLOR_ACCENT_TEAL, COLOR_TEXT_PRIMARY)
-                } else if can_afford {
+                } else if can_afford_next {
                     (COLOR_ACCENT_GREEN, COLOR_TEXT_PRIMARY)
                 } else {
                     (COLOR_BUTTON_DISABLED, COLOR_TEXT_PRIMARY)
@@ -151,8 +155,20 @@ pub(super) fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
                             ..default()
                         })
                         .with_children(|info| {
+                            let title = if crafted {
+                                format!(
+                                    "{}  ({})",
+                                    i18n.t(&amulet.name_key),
+                                    i18n.t_fmt(
+                                        "city.panel.amulets.tier",
+                                        &[("tier", tier.to_string())]
+                                    )
+                                )
+                            } else {
+                                i18n.t(&amulet.name_key).to_string()
+                            };
                             info.spawn((
-                                Text::new(i18n.t(&amulet.name_key)),
+                                Text::new(title),
                                 TextFont {
                                     font_size: FONT_BODY,
                                     ..default()
@@ -167,8 +183,7 @@ pub(super) fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
                                 },
                                 TextColor(COLOR_TEXT_PRIMARY),
                             ));
-                            if !crafted {
-                                let c = amulet.cost;
+                            if let Some(c) = next_cost {
                                 info.spawn((
                                     Text::new(i18n.t_fmt(
                                         "city.panel.amulet.cost",
@@ -188,13 +203,32 @@ pub(super) fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
                             }
                         });
 
-                        spawn_small_button_colored(
-                            row,
-                            action_lbl,
-                            CityAction::CraftOrEquipAmulet(amulet.id.clone()),
-                            btn_bg,
-                            btn_fg,
-                        );
+                        row.spawn(Node {
+                            column_gap: Val::Px(6.0),
+                            align_items: AlignItems::Center,
+                            ..default()
+                        })
+                        .with_children(|btns| {
+                            spawn_small_button_colored(
+                                btns,
+                                action_lbl,
+                                CityAction::CraftOrEquipAmulet(amulet.id.clone()),
+                                btn_bg,
+                                btn_fg,
+                            );
+                            if crafted && next_cost.is_some() {
+                                spawn_small_button(
+                                    btns,
+                                    i18n.t("city.panel.amulets.upgrade"),
+                                    CityAction::UpgradeAmulet(amulet.id.clone()),
+                                    if can_afford_next {
+                                        COLOR_ACCENT_GREEN
+                                    } else {
+                                        COLOR_BUTTON_DISABLED
+                                    },
+                                );
+                            }
+                        });
                     });
             }
         },
@@ -507,6 +541,20 @@ pub(super) fn spawn_stats_modal(
                     CityAction::CycleSfxVolume,
                     COLOR_PANEL_CARD,
                 );
+                spawn_small_button(
+                    audio_row,
+                    if ctx.colorblind_mode {
+                        i18n.t("city.panel.colorblind.on")
+                    } else {
+                        i18n.t("city.panel.colorblind.off")
+                    },
+                    CityAction::ToggleColorblind,
+                    if ctx.colorblind_mode {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        COLOR_PANEL_CARD
+                    },
+                );
             });
         },
     );
@@ -556,11 +604,15 @@ pub(super) fn spawn_help_modal(root: &mut ChildBuilder, ctx: &GameContext) {
     );
 }
 
-pub(super) fn spawn_patrons_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+pub(super) fn spawn_patrons_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
-        580.0,
+        620.0,
         i18n.t("city.panel.patrons.title"),
         i18n.t("city.panel.amulets.close"),
         ActiveModal::Patrons,
@@ -587,28 +639,54 @@ pub(super) fn spawn_patrons_modal(root: &mut ChildBuilder, ctx: &GameContext) {
                     ))
                     .with_children(|row| {
                         row.spawn(Node {
-                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(10.0),
                             flex_shrink: 1.0,
-                            row_gap: Val::Px(3.0),
                             ..default()
                         })
-                        .with_children(|info| {
-                            info.spawn((
-                                Text::new(i18n.t(god.name_key())),
-                                TextFont {
-                                    font_size: FONT_BODY,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_GOLD),
-                            ));
-                            info.spawn((
-                                Text::new(i18n.t(god.desc_key())),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_TEXT_PRIMARY),
-                            ));
+                        .with_children(|left| {
+                            if let Some(img) = fjord_art.patron_portrait(god) {
+                                left.spawn((
+                                    ImageNode::new(img),
+                                    Node {
+                                        width: Val::Px(56.0),
+                                        height: Val::Px(56.0),
+                                        flex_shrink: 0.0,
+                                        border: UiRect::all(Val::Px(1.5)),
+                                        ..default()
+                                    },
+                                    BorderColor(if active {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_PANEL_BORDER
+                                    }),
+                                    BorderRadius::all(Val::Px(8.0)),
+                                ));
+                            }
+                            left.spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                flex_shrink: 1.0,
+                                row_gap: Val::Px(3.0),
+                                ..default()
+                            })
+                            .with_children(|info| {
+                                info.spawn((
+                                    Text::new(i18n.t(god.name_key())),
+                                    TextFont {
+                                        font_size: FONT_BODY,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                                info.spawn((
+                                    Text::new(i18n.t(god.desc_key())),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_PRIMARY),
+                                ));
+                            });
                         });
                         spawn_small_button_colored(
                             row,
@@ -635,11 +713,15 @@ pub(super) fn spawn_patrons_modal(root: &mut ChildBuilder, ctx: &GameContext) {
     );
 }
 
-pub(super) fn spawn_raids_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+pub(super) fn spawn_raids_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
-        620.0,
+        650.0,
         i18n.t("city.panel.raids.title"),
         i18n.t("city.panel.amulets.close"),
         ActiveModal::Raids,
@@ -669,52 +751,82 @@ pub(super) fn spawn_raids_modal(root: &mut ChildBuilder, ctx: &GameContext) {
                     ))
                     .with_children(|row| {
                         row.spawn(Node {
-                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(12.0),
                             flex_shrink: 1.0,
-                            row_gap: Val::Px(3.0),
                             ..default()
                         })
-                        .with_children(|info| {
-                            let header = if slain {
-                                format!(
-                                    "{} - {} [{}]",
-                                    i18n.t(&boss.name_key),
-                                    i18n.t(&boss.title_key),
-                                    i18n.t("city.panel.raids.defeated")
-                                )
-                            } else {
-                                format!("{} - {}", i18n.t(&boss.name_key), i18n.t(&boss.title_key))
-                            };
-                            info.spawn((
-                                Text::new(header),
-                                TextFont {
-                                    font_size: FONT_BODY,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_GOLD),
-                            ));
-                            info.spawn((
-                                Text::new(i18n.t(&boss.desc_key)),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_TEXT_PRIMARY),
-                            ));
-                            info.spawn((
-                                Text::new(i18n.t_fmt(
-                                    "city.panel.raids.weakness",
-                                    &[
-                                        ("rune", i18n.t(boss.weakness.i18n_key()).to_string()),
-                                        ("hp", boss.max_hp.to_string()),
-                                    ],
-                                )),
-                                TextFont {
-                                    font_size: 12.0,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_TEAL),
-                            ));
+                        .with_children(|left| {
+                            if let Some(img) = fjord_art.boss_portrait(&boss.id) {
+                                left.spawn((
+                                    ImageNode::new(img),
+                                    Node {
+                                        width: Val::Px(64.0),
+                                        height: Val::Px(64.0),
+                                        flex_shrink: 0.0,
+                                        border: UiRect::all(Val::Px(2.0)),
+                                        ..default()
+                                    },
+                                    BorderColor(if slain {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_ACCENT_CRIMSON
+                                    }),
+                                    BorderRadius::all(Val::Px(8.0)),
+                                ));
+                            }
+                            left.spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                flex_shrink: 1.0,
+                                row_gap: Val::Px(3.0),
+                                ..default()
+                            })
+                            .with_children(|info| {
+                                let header = if slain {
+                                    format!(
+                                        "{} - {} [{}]",
+                                        i18n.t(&boss.name_key),
+                                        i18n.t(&boss.title_key),
+                                        i18n.t("city.panel.raids.defeated")
+                                    )
+                                } else {
+                                    format!(
+                                        "{} - {}",
+                                        i18n.t(&boss.name_key),
+                                        i18n.t(&boss.title_key)
+                                    )
+                                };
+                                info.spawn((
+                                    Text::new(header),
+                                    TextFont {
+                                        font_size: FONT_BODY,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                                info.spawn((
+                                    Text::new(i18n.t(&boss.desc_key)),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_PRIMARY),
+                                ));
+                                info.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.panel.raids.weakness",
+                                        &[
+                                            ("rune", i18n.t(boss.weakness.i18n_key()).to_string()),
+                                            ("hp", boss.max_hp.to_string()),
+                                        ],
+                                    )),
+                                    TextFont {
+                                        font_size: 12.0,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_TEAL),
+                                ));
+                            });
                         });
 
                         if unlocked {

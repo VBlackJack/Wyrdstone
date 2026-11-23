@@ -126,6 +126,8 @@ pub struct Cell {
     pub chained: bool,
     pub crate_layers: u8,
     pub relic: bool,
+    #[serde(default)]
+    pub fog: bool,
 }
 
 impl Cell {
@@ -138,6 +140,7 @@ impl Cell {
             chained: false,
             crate_layers: 0,
             relic: false,
+            fog: false,
         }
     }
 
@@ -150,6 +153,7 @@ impl Cell {
             chained: false,
             crate_layers: 0,
             relic: false,
+            fog: false,
         }
     }
 
@@ -157,6 +161,7 @@ impl Cell {
     pub fn can_be_swapped(&self) -> bool {
         !self.blocked
             && !self.chained
+            && !self.fog
             && self.crate_layers == 0
             && (self.rune.is_some() || self.booster == Booster::BifrostShard || self.relic)
     }
@@ -176,6 +181,7 @@ pub struct MatchStepOutcome {
     pub ice_broken: u32,
     pub chains_broken: u32,
     pub crates_broken: u32,
+    pub fog_cleared: u32,
     pub relics_dropped: u32,
     pub cleared_runes: HashMap<RuneType, u32>,
     pub cleared_positions: Vec<CellPos>,
@@ -278,6 +284,15 @@ impl Board {
                     cell.rune = None;
                     cell.booster = Booster::None;
                     cell.chained = false;
+                }
+            }
+        }
+
+        for &(col, row) in &level.fog_cells {
+            let pos = CellPos::new(col, row);
+            if let Some(cell) = board.get_mut(pos) {
+                if !cell.blocked {
+                    cell.fog = true;
                 }
             }
         }
@@ -1073,6 +1088,7 @@ impl Board {
         let mut queue: VecDeque<CellPos> = initial.iter().copied().collect();
         let mut visited: HashSet<CellPos> = HashSet::new();
         let mut adjacent_crates_hit: HashSet<CellPos> = HashSet::new();
+        let mut adjacent_fog_hit: HashSet<CellPos> = HashSet::new();
         let mult = balance.combo_multiplier(combo_depth);
 
         while let Some(pos) = queue.pop_front() {
@@ -1082,6 +1098,17 @@ impl Board {
             let idx = self.idx(pos);
             if self.cells[idx].blocked {
                 continue;
+            }
+
+            // Dispel Niflheim Fog when directly hit by a blast or booster.
+            if self.cells[idx].fog {
+                self.cells[idx].fog = false;
+                outcome.fog_cleared += 1;
+                outcome.score_gained += (balance.ice_break_bonus as f32 * mult).round() as u32;
+                outcome.cleared_positions.push(pos);
+                if !is_direct_blast {
+                    continue;
+                }
             }
 
             // Frost crates take 1 hit from direct blasts or boosters.
@@ -1100,11 +1127,16 @@ impl Board {
                 continue;
             }
 
-            // Collect orthogonally adjacent frost crates damaged by this cleared cell.
+            // Collect orthogonally adjacent frost crates and fog tiles revealed by this cleared cell.
             for nb in self.orthogonal_neighbors(pos) {
                 let nb_idx = self.idx(nb);
-                if !self.cells[nb_idx].blocked && self.cells[nb_idx].crate_layers > 0 {
-                    adjacent_crates_hit.insert(nb);
+                if !self.cells[nb_idx].blocked {
+                    if self.cells[nb_idx].crate_layers > 0 {
+                        adjacent_crates_hit.insert(nb);
+                    }
+                    if self.cells[nb_idx].fog {
+                        adjacent_fog_hit.insert(nb);
+                    }
                 }
             }
 
@@ -1183,6 +1215,17 @@ impl Board {
                 }
                 outcome.score_gained += (balance.crate_break_bonus as f32 * mult).round() as u32;
                 outcome.cleared_positions.push(crate_pos);
+            }
+        }
+
+        // Dispel Niflheim Fog on orthogonally adjacent tiles.
+        for fog_pos in adjacent_fog_hit {
+            let idx = self.idx(fog_pos);
+            if self.cells[idx].fog {
+                self.cells[idx].fog = false;
+                outcome.fog_cleared += 1;
+                outcome.score_gained += (balance.ice_break_bonus as f32 * mult).round() as u32;
+                outcome.cleared_positions.push(fog_pos);
             }
         }
     }
@@ -1501,6 +1544,7 @@ fn merge_outcomes(total: &mut MatchStepOutcome, step: &MatchStepOutcome) {
     total.ice_broken += step.ice_broken;
     total.chains_broken += step.chains_broken;
     total.crates_broken += step.crates_broken;
+    total.fog_cleared += step.fog_cleared;
     total.relics_dropped += step.relics_dropped;
     for (&rune, &count) in &step.cleared_runes {
         *total.cleared_runes.entry(rune).or_insert(0) += count;

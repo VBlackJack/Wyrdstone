@@ -20,7 +20,7 @@ use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use std::collections::HashMap;
-use wyrdstone_core::ActiveTool;
+use wyrdstone_core::{ActiveTool, PatronGod};
 
 const FJORD_MAP_PNG: &[u8] = include_bytes!("../../../assets/sprites/fjord_map.png");
 const MATCH3_BG_PNG: &[u8] = include_bytes!("../../../assets/sprites/match3_bg.png");
@@ -40,6 +40,13 @@ const TOOL_THOR_BOLT_PNG: &[u8] = include_bytes!("../../../assets/sprites/tool_t
 const TOOL_BIFROST_PNG: &[u8] = include_bytes!("../../../assets/sprites/tool_bifrost.png");
 const TOOL_DRAKKAR_PNG: &[u8] = include_bytes!("../../../assets/sprites/tool_drakkar.png");
 const TOOL_LOKI_PNG: &[u8] = include_bytes!("../../../assets/sprites/tool_loki.png");
+const BOSS_FENRIR_PNG: &[u8] = include_bytes!("../../../assets/sprites/boss_fenrir.png");
+const BOSS_JORMUNGANDR_PNG: &[u8] = include_bytes!("../../../assets/sprites/boss_jormungandr.png");
+const BOSS_SURTR_PNG: &[u8] = include_bytes!("../../../assets/sprites/boss_surtr.png");
+const PATRON_THOR_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_thor.png");
+const PATRON_FREYA_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_freya.png");
+const PATRON_LOKI_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_loki.png");
+const PATRON_ODIN_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_odin.png");
 const INTER_REGULAR_TTF: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
 
 /// Handles to all bundled painted artworks.
@@ -50,6 +57,8 @@ pub struct FjordTextures {
     pub logo: Handle<Image>,
     pub buildings: HashMap<String, Handle<Image>>,
     pub portraits: HashMap<String, Handle<Image>>,
+    pub boss_portraits: HashMap<String, Handle<Image>>,
+    pub patron_portraits: HashMap<PatronGod, Handle<Image>>,
     pub tool_icons: HashMap<ActiveTool, Handle<Image>>,
 }
 
@@ -75,6 +84,16 @@ impl FjordTextures {
     /// Returns the painted skill icon for one of the six active tools.
     pub fn tool_icon(&self, tool: ActiveTool) -> Option<Handle<Image>> {
         self.tool_icons.get(&tool).cloned()
+    }
+
+    /// Returns the painted portrait for a Mythological Boss by ID.
+    pub fn boss_portrait(&self, boss_id: &str) -> Option<Handle<Image>> {
+        self.boss_portraits.get(boss_id).cloned()
+    }
+
+    /// Returns the painted portrait for a Norse Patron God.
+    pub fn patron_portrait(&self, god: PatronGod) -> Option<Handle<Image>> {
+        self.patron_portraits.get(&god).cloned()
     }
 }
 
@@ -152,12 +171,34 @@ pub fn init_fjord_textures(
         images.add(decode_png(TOOL_LOKI_PNG)),
     );
 
+    let mut boss_portraits = HashMap::new();
+    boss_portraits.insert(
+        "boss_fenrir".to_string(),
+        images.add(decode_png(BOSS_FENRIR_PNG)),
+    );
+    boss_portraits.insert(
+        "boss_jormungandr".to_string(),
+        images.add(decode_png(BOSS_JORMUNGANDR_PNG)),
+    );
+    boss_portraits.insert(
+        "boss_surtr".to_string(),
+        images.add(decode_png(BOSS_SURTR_PNG)),
+    );
+
+    let mut patron_portraits = HashMap::new();
+    patron_portraits.insert(PatronGod::Thor, images.add(decode_png(PATRON_THOR_PNG)));
+    patron_portraits.insert(PatronGod::Freya, images.add(decode_png(PATRON_FREYA_PNG)));
+    patron_portraits.insert(PatronGod::Loki, images.add(decode_png(PATRON_LOKI_PNG)));
+    patron_portraits.insert(PatronGod::Odin, images.add(decode_png(PATRON_ODIN_PNG)));
+
     commands.insert_resource(FjordTextures {
         fjord_map,
         match3_bg,
         logo,
         buildings,
         portraits,
+        boss_portraits,
+        patron_portraits,
         tool_icons,
     });
 }

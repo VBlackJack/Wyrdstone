@@ -395,6 +395,7 @@ pub fn tick_board_animation(
                             &mut input_state,
                             &all_sprites,
                             None,
+                            ctx.colorblind_mode,
                         );
                     }
                     let cleared_set: HashSet<CellPos> = prep.cells.iter().copied().collect();
@@ -554,6 +555,7 @@ pub fn tick_board_animation(
                         &mut input_state,
                         &all_sprites,
                         Some(&fall_map),
+                        ctx.colorblind_mode,
                     );
                 }
                 input_state.idle_secs = 0.0;
@@ -631,6 +633,7 @@ pub fn tick_board_animation(
                             &mut input_state,
                             &all_sprites,
                             Some(&relic_fall_map),
+                            ctx.colorblind_mode,
                         );
                     }
                     input_state.dirty_hud = true;
@@ -810,12 +813,30 @@ pub fn tick_board_animation(
                         }
                     }
                     if !burst_cells.is_empty() {
+                        let board_h = rows as f32 * input_state.cell_step;
+                        let center_y = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
+                        let strike_world = cell_to_world(burst_cells[0], &input_state);
+                        // Valhalla Bonus golden lightning bolt striking down the column!
+                        spawn_blast_beam(
+                            &mut commands,
+                            Vec2::new(strike_world.x, center_y),
+                            Vec2::new(input_state.tile_size * 0.42, board_h),
+                            Color::srgba(1.0, 0.88, 0.36, 0.92),
+                        );
                         spawn_clear_particles(&mut commands, &burst_cells, session, &input_state);
                         let bonus_pts = ctx.data.balance.remaining_move_bonus;
+                        let label = if burst_index == 1 && session.moves_left > 0 {
+                            ctx.data.i18n.t_fmt(
+                                "match3.valhalla.bonus",
+                                &[("pts", (session.moves_left * bonus_pts).to_string())],
+                            )
+                        } else {
+                            format!("+{bonus_pts}")
+                        };
                         spawn_floating_score(
                             &mut commands,
                             &[burst_cells[0]],
-                            format!("+{bonus_pts}"),
+                            label,
                             COLOR_ACCENT_GOLD,
                             &input_state,
                         );

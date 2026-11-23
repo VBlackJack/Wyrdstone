@@ -134,6 +134,10 @@ pub struct SaveData {
     pub bgm_volume: f32,
     #[serde(default = "default_sfx_volume")]
     pub sfx_volume: f32,
+    #[serde(default)]
+    pub colorblind_mode: bool,
+    #[serde(default)]
+    pub tutorial_step: u8,
     pub city: CityState,
 }
 
@@ -147,6 +151,8 @@ impl SaveData {
             muted: false,
             bgm_volume: DEFAULT_BGM_VOLUME,
             sfx_volume: DEFAULT_SFX_VOLUME,
+            colorblind_mode: false,
+            tutorial_step: 0,
             city: CityState::new(balance),
         }
     }

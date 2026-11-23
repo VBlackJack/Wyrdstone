@@ -75,6 +75,8 @@ pub struct LevelDef {
     pub portals: Vec<((usize, usize), (usize, usize))>,
     #[serde(default)]
     pub frost_spread: bool,
+    #[serde(default)]
+    pub fog_cells: Vec<(usize, usize)>,
     pub blocked_cells: Vec<(usize, usize)>,
     pub base_reward: ResourceBundle,
 }
@@ -215,6 +217,11 @@ impl LevelDef {
             relic_cells,
             portals,
             frost_spread,
+            fog_cells: if archetype == 3 {
+                vec![(2, 3), (3, 3), (4, 3), (5, 3), (2, 4), (5, 4)]
+            } else {
+                vec![]
+            },
             blocked_cells,
             base_reward: ResourceBundle {
                 wood: 140,

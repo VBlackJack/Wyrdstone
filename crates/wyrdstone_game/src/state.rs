@@ -67,6 +67,8 @@ pub struct GameContext {
     pub audio_muted: bool,
     pub bgm_volume: f32,
     pub sfx_volume: f32,
+    pub colorblind_mode: bool,
+    pub tutorial_step: u8,
     pub active_session: Option<LevelSession>,
     pub active_level_id: Option<String>,
     pub active_expedition: Option<ExpeditionRun>,
@@ -95,6 +97,8 @@ impl GameContext {
         let mut audio_muted = false;
         let mut bgm_volume = DEFAULT_BGM_VOLUME;
         let mut sfx_volume = DEFAULT_SFX_VOLUME;
+        let mut colorblind_mode = false;
+        let mut tutorial_step = 0u8;
 
         let loaded_save = save_path
             .as_ref()
@@ -112,6 +116,13 @@ impl GameContext {
                 audio_muted = saved.muted;
                 bgm_volume = saved.bgm_volume.clamp(0.0, 1.0);
                 sfx_volume = saved.sfx_volume.clamp(0.0, 1.0);
+                colorblind_mode = saved.colorblind_mode;
+                tutorial_step = if saved.city.stats.total_victories > 0 && saved.tutorial_step == 0
+                {
+                    3
+                } else {
+                    saved.tutorial_step
+                };
                 let now = now_unix_secs();
                 if saved.last_saved_unix_secs > 0 && now > saved.last_saved_unix_secs {
                     saved.city.apply_offline_energy_regen(
@@ -147,6 +158,8 @@ impl GameContext {
             audio_muted,
             bgm_volume,
             sfx_volume,
+            colorblind_mode,
+            tutorial_step,
             active_session: None,
             active_level_id: None,
             active_expedition: None,
@@ -186,6 +199,8 @@ impl GameContext {
                 muted: self.audio_muted,
                 bgm_volume: self.bgm_volume,
                 sfx_volume: self.sfx_volume,
+                colorblind_mode: self.colorblind_mode,
+                tutorial_step: self.tutorial_step,
                 city: self.city.clone(),
             };
             if let Err(err) = snapshot.save_to_path(path) {
@@ -206,6 +221,7 @@ impl GameContext {
         self.selected_difficulty = 0;
         self.active_modal = ActiveModal::None;
         self.confirm_reset = false;
+        self.tutorial_step = 0;
         self.active_session = None;
         self.active_level_id = None;
         self.active_expedition = None;

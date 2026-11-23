@@ -350,6 +350,8 @@ fn city_upgrades_quests_and_save_roundtrip() {
         muted: true,
         bgm_volume: DEFAULT_BGM_VOLUME,
         sfx_volume: DEFAULT_SFX_VOLUME,
+        colorblind_mode: true,
+        tutorial_step: 3,
         city,
     };
     let json = save.to_json().expect("serialize save");
@@ -596,4 +598,72 @@ fn patron_fury_boss_raids_expedition_and_achievements_work() {
     assert!(city.has_any_claimable_achievement(&data.buildings, data.bosses.len()));
     assert!(city.try_claim_achievement("ach_first_boss", &data.buildings, data.bosses.len()));
     assert!(!city.try_claim_achievement("ach_first_boss", &data.buildings, data.bosses.len()));
+}
+
+#[test]
+fn amulet_tiers_upgrade_and_fog_of_war_dispels_on_adjacent_match() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(4242);
+
+    // 1. Amulet Tier 1 -> 2 -> 3 upgrades scale effect (Heimdall: +3 -> +4 -> +5 moves).
+    let mut city = CityState::new(&data.balance);
+    city.resources = ResourceBundle {
+        wood: 2000,
+        stone: 2000,
+        gold: 2000,
+        mead: 1000,
+    };
+    let heimdall = data.amulet_by_id("amulet_heimdall").unwrap();
+    assert_eq!(city.try_upgrade_amulet(heimdall, &data.balance), Ok(1));
+    assert_eq!(
+        city.active_amulet_effect(&data.amulets),
+        Some(AmuletEffect::ExtraMoves(3))
+    );
+    assert_eq!(city.try_upgrade_amulet(heimdall, &data.balance), Ok(2));
+    assert_eq!(
+        city.active_amulet_effect(&data.amulets),
+        Some(AmuletEffect::ExtraMoves(4))
+    );
+    assert_eq!(city.try_upgrade_amulet(heimdall, &data.balance), Ok(3));
+    assert_eq!(
+        city.active_amulet_effect(&data.amulets),
+        Some(AmuletEffect::ExtraMoves(5))
+    );
+    assert!(city.try_upgrade_amulet(heimdall, &data.balance).is_err());
+
+    // 2. Fog of War prevents direct swap, and adjacent match dispels fog!
+    let mut cells = vec![
+        Cell::playable(RuneType::Fire),
+        Cell::playable(RuneType::Fire),
+        Cell::playable(RuneType::Ice),
+        Cell::playable(RuneType::Fire),
+        Cell::playable(RuneType::Wood),
+        Cell::playable(RuneType::Stone),
+        Cell::playable(RuneType::Gold),
+        Cell::playable(RuneType::Water),
+        Cell::playable(RuneType::Gold),
+        Cell::playable(RuneType::Water),
+        Cell::playable(RuneType::Wood),
+        Cell::playable(RuneType::Stone),
+        Cell::playable(RuneType::Water),
+        Cell::playable(RuneType::Gold),
+        Cell::playable(RuneType::Stone),
+        Cell::playable(RuneType::Wood),
+    ];
+    cells[4].fog = true; // (0, 1) directly below (0, 0) Fire
+    let mut board = Board::from_cells(4, 4, 6, cells);
+    assert!(!board.can_initiate_swap(CellPos::new(0, 1), CellPos::new(1, 1)));
+
+    let outcome = board.try_swap(
+        CellPos::new(2, 0),
+        CellPos::new(3, 0),
+        &data.balance,
+        &mut rng,
+    );
+    assert!(outcome.valid);
+    assert!(
+        outcome.fog_cleared >= 1,
+        "Adjacent match must dispel Niflheim Fog"
+    );
+    assert!(!board.get(CellPos::new(0, 1)).unwrap().fog);
 }

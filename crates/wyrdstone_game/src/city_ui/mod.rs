@@ -87,6 +87,9 @@ pub enum CityAction {
     ClaimCollection(String),
     CraftTool(ActiveTool),
     CraftOrEquipAmulet(String),
+    UpgradeAmulet(String),
+    AdvanceTutorial,
+    ToggleColorblind,
     CycleBgmVolume,
     CycleSfxVolume,
     ToggleLanguage,
@@ -503,6 +506,51 @@ fn spawn_city_tree(
                 }
             });
 
+            // Guided 3-step Tutorial Banner for first-time players
+            if ctx.tutorial_step < 3 {
+                let step_key = match ctx.tutorial_step {
+                    0 => "tutorial.step0",
+                    1 => "tutorial.step1",
+                    _ => "tutorial.step2",
+                };
+                let btn_key = if ctx.tutorial_step < 2 {
+                    "tutorial.next"
+                } else {
+                    "tutorial.done"
+                };
+                root.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+                        column_gap: Val::Px(12.0),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.10, 0.22, 0.34, 0.96)),
+                    BorderColor(COLOR_ACCENT_TEAL),
+                    BorderRadius::all(Val::Px(8.0)),
+                ))
+                .with_children(|tut| {
+                    tut.spawn((
+                        Text::new(i18n.t(step_key)),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_PRIMARY),
+                    ));
+                    spawn_small_button_colored(
+                        tut,
+                        i18n.t(btn_key),
+                        CityAction::AdvanceTutorial,
+                        COLOR_ACCENT_GOLD,
+                        COLOR_TEXT_DARK,
+                    );
+                });
+            }
+
             // Optional Celebration Banner
             if let Some(msg) = &ctx.celebration_message {
                 root.spawn((
@@ -718,8 +766,8 @@ fn spawn_city_tree(
                 ActiveModal::Shop => modals::spawn_tool_shop_modal(root, ctx, fjord_art),
                 ActiveModal::Stats => modals::spawn_stats_modal(root, ctx, sound_bank),
                 ActiveModal::Help => modals::spawn_help_modal(root, ctx),
-                ActiveModal::Raids => modals::spawn_raids_modal(root, ctx),
-                ActiveModal::Patrons => modals::spawn_patrons_modal(root, ctx),
+                ActiveModal::Raids => modals::spawn_raids_modal(root, ctx, fjord_art),
+                ActiveModal::Patrons => modals::spawn_patrons_modal(root, ctx, fjord_art),
                 ActiveModal::Achievements => modals::spawn_achievements_modal(root, ctx),
                 ActiveModal::ExpeditionBoons => modals::spawn_expedition_boons_modal(root, ctx),
             }
@@ -1292,6 +1340,35 @@ pub fn handle_city_buttons(
                     }
                     rebuild = true;
                 }
+            }
+            CityAction::UpgradeAmulet(amulet_id) => {
+                if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {
+                    let balance = ctx.data.balance.clone();
+                    match ctx.city.try_upgrade_amulet(&amulet, &balance) {
+                        Ok(_) => {
+                            ctx.status_notice_key = None;
+                            ctx.persist();
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                        }
+                        Err(err_key) => {
+                            ctx.status_notice_key = Some(err_key.to_string());
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        }
+                    }
+                    rebuild = true;
+                }
+            }
+            CityAction::AdvanceTutorial => {
+                ctx.tutorial_step = ctx.tutorial_step.saturating_add(1).min(3);
+                ctx.persist();
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
+            }
+            CityAction::ToggleColorblind => {
+                ctx.colorblind_mode = !ctx.colorblind_mode;
+                ctx.persist();
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
             }
             CityAction::CycleBgmVolume => {
                 cycle_bgm_volume(&mut ctx, &mut sound_bank, &mut bgm_sinks);

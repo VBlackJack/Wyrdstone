@@ -52,6 +52,8 @@ pub struct RuneTextures {
     pub booster_bifrost: Handle<Image>,
     pub selection_ring: Handle<Image>,
     pub portal_ring: Handle<Image>,
+    pub fog_overlay: Handle<Image>,
+    pub colorblind_badges: HashMap<RuneType, Handle<Image>>,
 }
 
 impl RuneTextures {
@@ -76,6 +78,11 @@ pub fn init_rune_textures(mut commands: Commands, mut images: ResMut<Assets<Imag
     runes.insert(RuneType::Gold, images.add(decode_rune_png(RUNE_GOLD_PNG)));
     runes.insert(RuneType::Water, images.add(decode_rune_png(RUNE_WATER_PNG)));
 
+    let mut colorblind_badges = HashMap::new();
+    for rune in RuneType::ALL {
+        colorblind_badges.insert(rune, images.add(build_colorblind_badge_image(rune)));
+    }
+
     let textures = RuneTextures {
         runes,
         cell_bg: images.add(build_cell_bg_image()),
@@ -91,6 +98,8 @@ pub fn init_rune_textures(mut commands: Commands, mut images: ResMut<Assets<Imag
         booster_bifrost: images.add(decode_rune_png(BOOSTER_BIFROST_PNG)),
         selection_ring: images.add(build_selection_ring_image()),
         portal_ring: images.add(build_portal_ring_image()),
+        fog_overlay: images.add(build_fog_overlay_image()),
+        colorblind_badges,
     };
 
     commands.insert_resource(textures);
@@ -344,6 +353,92 @@ fn build_portal_ring_image() -> Image {
             } else if (21 * 21..24 * 24).contains(&d2) {
                 set_px(&mut px, x, y, [92, 232, 255, 210]);
             }
+        }
+    }
+    finish_image(px)
+}
+
+/// Dense swirling Niflheim Fog of War cloud that conceals a tile until an adjacent match dispels it.
+fn build_fog_overlay_image() -> Image {
+    let mut px = new_canvas();
+    let s = RUNE_TEX_SIZE as i32;
+    let half = s as f32 * 0.5;
+    for y in 0..s {
+        for x in 0..s {
+            let dx = x as f32 - half;
+            let dy = y as f32 - half;
+            let wave = ((x as f32 * 0.18).sin() + (y as f32 * 0.16).cos()) * 14.0;
+            let edge = x.min(y).min(s - 1 - x).min(s - 1 - y);
+            let alpha = if edge <= 2 { 215 } else { 244 };
+            let r = (36.0 + wave * 0.6).clamp(18.0, 90.0) as u8;
+            let g = (48.0 + wave * 0.9).clamp(24.0, 115.0) as u8;
+            let b =
+                (68.0 + wave * 1.1 + (dx * dx + dy * dy).sqrt() * 0.25).clamp(40.0, 150.0) as u8;
+            set_px(&mut px, x, y, [r, g, b, alpha]);
+        }
+    }
+    // Subtle silver mist swirl accent
+    draw_thick_line(&mut px, 14, 24, 48, 22, 2, [175, 205, 228, 120]);
+    draw_thick_line(&mut px, 18, 42, 50, 38, 2, [160, 195, 220, 110]);
+    finish_image(px)
+}
+
+/// High-contrast geometric corner badge per rune type for colorblind accessibility.
+fn build_colorblind_badge_image(rune: RuneType) -> Image {
+    let mut px = new_canvas();
+    let dark = [10, 14, 22, 235];
+    let white = [255, 255, 255, 255];
+    // Crisp dark circular backing in bottom-right corner (42..60, 42..60)
+    for y in 40..62 {
+        for x in 40..62 {
+            let dx = x - 51;
+            let dy = y - 51;
+            if dx * dx + dy * dy <= 100 {
+                set_px(&mut px, x, y, dark);
+            }
+        }
+    }
+    match rune {
+        RuneType::Fire => {
+            // Upward triangle
+            draw_thick_line(&mut px, 51, 44, 45, 56, 1, white);
+            draw_thick_line(&mut px, 51, 44, 57, 56, 1, white);
+            draw_thick_line(&mut px, 45, 56, 57, 56, 1, white);
+        }
+        RuneType::Ice => {
+            // Plus / snow cross
+            draw_thick_line(&mut px, 51, 44, 51, 58, 1, white);
+            draw_thick_line(&mut px, 44, 51, 58, 51, 1, white);
+        }
+        RuneType::Wood => {
+            // Diamond
+            draw_thick_line(&mut px, 51, 44, 58, 51, 1, white);
+            draw_thick_line(&mut px, 58, 51, 51, 58, 1, white);
+            draw_thick_line(&mut px, 51, 58, 44, 51, 1, white);
+            draw_thick_line(&mut px, 44, 51, 51, 44, 1, white);
+        }
+        RuneType::Stone => {
+            // Square
+            draw_thick_line(&mut px, 46, 46, 56, 46, 1, white);
+            draw_thick_line(&mut px, 56, 46, 56, 56, 1, white);
+            draw_thick_line(&mut px, 56, 56, 46, 56, 1, white);
+            draw_thick_line(&mut px, 46, 56, 46, 46, 1, white);
+        }
+        RuneType::Gold => {
+            // Hollow circle
+            for y in 44..=58 {
+                for x in 44..=58 {
+                    let d2 = (x - 51) * (x - 51) + (y - 51) * (y - 51);
+                    if (20..=42).contains(&d2) {
+                        set_px(&mut px, x, y, white);
+                    }
+                }
+            }
+        }
+        RuneType::Water => {
+            // X mark
+            draw_thick_line(&mut px, 46, 46, 56, 56, 1, white);
+            draw_thick_line(&mut px, 56, 46, 46, 56, 1, white);
         }
     }
     finish_image(px)

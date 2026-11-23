@@ -123,50 +123,86 @@ pub(super) fn spawn_match3_hud(
                         let hp_pct = (boss.hp as f32 / boss.def.max_hp.max(1) as f32 * 100.0)
                             .clamp(0.0, 100.0);
                         objs.spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(4.0),
                             align_items: AlignItems::Center,
+                            column_gap: Val::Px(10.0),
                             ..default()
                         })
-                        .with_children(|bcol| {
-                            bcol.spawn((
-                                Text::new(i18n.t_fmt(
-                                    "match3.boss.hp",
-                                    &[
-                                        ("boss", i18n.t(&boss.def.name_key).to_string()),
-                                        ("hp", boss.hp.to_string()),
-                                        ("max", boss.def.max_hp.to_string()),
-                                        ("rune", i18n.t(boss.def.weakness.i18n_key()).to_string()),
-                                        ("turns", boss.turns_until_riposte.to_string()),
-                                    ],
-                                )),
-                                TextFont {
-                                    font_size: FONT_BODY,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_CRIMSON),
-                            ));
-                            bcol.spawn((
-                                Node {
-                                    width: Val::Px(280.0),
-                                    height: Val::Px(10.0),
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.16, 0.08, 0.10, 0.95)),
-                                BorderColor(COLOR_ACCENT_GOLD),
-                                BorderRadius::all(Val::Px(5.0)),
-                            ))
-                            .with_children(|track| {
-                                track.spawn((
-                                    Node {
-                                        width: Val::Percent(hp_pct),
-                                        height: Val::Percent(100.0),
+                        .with_children(|brow| {
+                            if let Some(img) = fjord_art.boss_portrait(&boss.def.id) {
+                                let hit_flash = boss.last_damage_dealt > 0;
+                                brow.spawn((
+                                    ImageNode {
+                                        image: img,
+                                        color: if hit_flash {
+                                            Color::srgb(1.35, 0.72, 0.72)
+                                        } else {
+                                            Color::WHITE
+                                        },
                                         ..default()
                                     },
-                                    BackgroundColor(COLOR_ACCENT_CRIMSON),
-                                    BorderRadius::all(Val::Px(4.0)),
+                                    Node {
+                                        width: Val::Px(46.0),
+                                        height: Val::Px(46.0),
+                                        border: UiRect::all(Val::Px(2.0)),
+                                        ..default()
+                                    },
+                                    BorderColor(if hit_flash {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_ACCENT_CRIMSON
+                                    }),
+                                    BorderRadius::all(Val::Px(8.0)),
                                 ));
+                            }
+                            brow.spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(4.0),
+                                align_items: AlignItems::Center,
+                                ..default()
+                            })
+                            .with_children(|bcol| {
+                                bcol.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "match3.boss.hp",
+                                        &[
+                                            ("boss", i18n.t(&boss.def.name_key).to_string()),
+                                            ("hp", boss.hp.to_string()),
+                                            ("max", boss.def.max_hp.to_string()),
+                                            (
+                                                "rune",
+                                                i18n.t(boss.def.weakness.i18n_key()).to_string(),
+                                            ),
+                                            ("turns", boss.turns_until_riposte.to_string()),
+                                        ],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_BODY,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_CRIMSON),
+                                ));
+                                bcol.spawn((
+                                    Node {
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(10.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(0.16, 0.08, 0.10, 0.95)),
+                                    BorderColor(COLOR_ACCENT_GOLD),
+                                    BorderRadius::all(Val::Px(5.0)),
+                                ))
+                                .with_children(|track| {
+                                    track.spawn((
+                                        Node {
+                                            width: Val::Percent(hp_pct),
+                                            height: Val::Percent(100.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(COLOR_ACCENT_CRIMSON),
+                                        BorderRadius::all(Val::Px(4.0)),
+                                    ));
+                                });
                             });
                         });
                     } else {
@@ -365,7 +401,8 @@ pub(super) fn spawn_match3_hud(
                             Button,
                             Match3UiAction::TriggerFury,
                             Node {
-                                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                column_gap: Val::Px(8.0),
                                 align_items: AlignItems::Center,
                                 border: UiRect::all(Val::Px(2.0)),
                                 ..default()
@@ -383,6 +420,17 @@ pub(super) fn spawn_match3_hud(
                             BorderRadius::all(Val::Px(8.0)),
                         ))
                         .with_children(|btn| {
+                            if let Some(p_img) = fjord_art.patron_portrait(session.patron) {
+                                btn.spawn((
+                                    ImageNode::new(p_img),
+                                    Node {
+                                        width: Val::Px(32.0),
+                                        height: Val::Px(32.0),
+                                        ..default()
+                                    },
+                                    BorderRadius::all(Val::Px(6.0)),
+                                ));
+                            }
                             btn.spawn((
                                 Text::new(fury_lbl),
                                 TextFont {

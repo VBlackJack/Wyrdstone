@@ -103,6 +103,7 @@ impl BossDef {
             relic_cells: vec![],
             portals: vec![],
             frost_spread: false,
+            fog_cells: vec![],
             blocked_cells,
             base_reward: self.reward_resources,
         }
