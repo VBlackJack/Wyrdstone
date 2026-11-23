@@ -21,9 +21,10 @@ use crate::city::{CityState, ResourceBundle};
 use crate::level::{LevelDef, Objective};
 use rand::seq::SliceRandom;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 /// Roguelite blessing offered between Expedition waves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpeditionBoon {
     ExtraMoves(u32),
     ScoreBoostPct(u32),
@@ -63,7 +64,7 @@ impl ExpeditionBoon {
 }
 
 /// Active Endless Drakkar Expedition run state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpeditionRun {
     pub wave: u32,
     pub extra_moves: u32,

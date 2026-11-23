@@ -42,4 +42,8 @@ BalanceConfig(
     daily_glory: 35,
     collection_glory: 40,
     harvest_interval_seconds: 120,
+    watchtower_fury_pct_per_tier: 15,
+    clan_rank_huscarl_glory: 100,
+    clan_rank_jarl_glory: 280,
+    clan_rank_high_king_glory: 600,
 )

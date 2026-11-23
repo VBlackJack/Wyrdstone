@@ -18,6 +18,7 @@
             ResourceBundle(wood: 260, stone: 200, gold: 220, mead: 40),
         ],
         glory_per_tier: 25,
+        harvest_per_tier: ResourceBundle(wood: 10, stone: 0, gold: 15, mead: 0),
     ),
     BuildingDef(
         id: "forge",
@@ -37,6 +38,7 @@
             ResourceBundle(wood: 220, stone: 320, gold: 260, mead: 30),
         ],
         glory_per_tier: 30,
+        harvest_per_tier: ResourceBundle(wood: 0, stone: 15, gold: 12, mead: 0),
     ),
     BuildingDef(
         id: "longship_dock",
@@ -56,6 +58,7 @@
             ResourceBundle(wood: 340, stone: 220, gold: 300, mead: 50),
         ],
         glory_per_tier: 35,
+        harvest_per_tier: ResourceBundle(wood: 15, stone: 0, gold: 15, mead: 0),
     ),
     BuildingDef(
         id: "odin_shrine",
@@ -75,6 +78,7 @@
             ResourceBundle(wood: 280, stone: 400, gold: 420, mead: 60),
         ],
         glory_per_tier: 45,
+        harvest_per_tier: ResourceBundle(wood: 0, stone: 5, gold: 18, mead: 6),
     ),
     BuildingDef(
         id: "meadery",
@@ -94,5 +98,26 @@
             ResourceBundle(wood: 280, stone: 180, gold: 220, mead: 35),
         ],
         glory_per_tier: 25,
+        harvest_per_tier: ResourceBundle(wood: 8, stone: 0, gold: 0, mead: 10),
+    ),
+    BuildingDef(
+        id: "watchtower",
+        name_key: "building.watchtower.name",
+        desc_key: "building.watchtower.desc",
+        bonus_key: "building.watchtower.bonus",
+        max_tier: 3,
+        requires_great_hall_tier: 2,
+        level_id: "watchtower_1",
+        mastery_level_id: Some("watchtower_2"),
+        legendary_level_id: Some("watchtower_3"),
+        map_x_pct: 18.0,
+        map_y_pct: 24.0,
+        upgrade_costs: [
+            ResourceBundle(wood: 110, stone: 130, gold: 140, mead: 20),
+            ResourceBundle(wood: 220, stone: 260, gold: 280, mead: 40),
+            ResourceBundle(wood: 360, stone: 420, gold: 460, mead: 70),
+        ],
+        glory_per_tier: 40,
+        harvest_per_tier: ResourceBundle(wood: 6, stone: 10, gold: 16, mead: 4),
     ),
 ]

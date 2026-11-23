@@ -16,7 +16,7 @@
 
 //! Fjord city-builder progression: resources, buildings, passive harvests, mastery, amulets, quests, and tools.
 
-use crate::achievements::{is_achievement_unlocked, ClanRank, ACHIEVEMENTS};
+use crate::achievements::{is_achievement_unlocked, AchievementDef, ClanRank};
 use crate::balance::BalanceConfig;
 use crate::board::ActiveTool;
 use crate::boss::BossDef;
@@ -73,7 +73,7 @@ pub enum AmuletEffect {
     ResourceBonusPct(u32),
     ExtraMoves(u32),
     ScoreBonusPct(u32),
-    StartingBooster,
+    StartingBoosters(u32),
     ExtraTimePct(u32),
 }
 
@@ -87,7 +87,7 @@ pub struct AmuletDef {
     pub effect: AmuletEffect,
 }
 
-/// Aggregate passive bonuses granted by all rebuilt village buildings.
+/// Aggregate passive bonuses granted by all rebuilt village buildings and Clan Rank.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CityBonuses {
     pub extra_max_energy: u32,
@@ -95,6 +95,8 @@ pub struct CityBonuses {
     pub resource_bonus_pct: u32,
     pub extra_moves: u32,
     pub energy_regen_speed_pct: u32,
+    pub fury_charge_bonus_pct: u32,
+    pub starting_fury: u32,
 }
 
 /// Static building definition loaded from `assets/data/buildings.ron`.
@@ -115,6 +117,8 @@ pub struct BuildingDef {
     pub map_y_pct: f32,
     pub upgrade_costs: Vec<ResourceBundle>,
     pub glory_per_tier: u32,
+    #[serde(default)]
+    pub harvest_per_tier: ResourceBundle,
 }
 
 /// Completion requirement for a Saga quest.
@@ -126,6 +130,8 @@ pub enum QuestCondition {
     CraftAnyAmulet,
     ClaimAnyCollection,
     CompleteDailyTrials { count: u32 },
+    DefeatBosses { count: u32 },
+    ReachExpeditionWave { wave: u32 },
 }
 
 /// Static Saga quest loaded from `assets/data/quests.ron`.
@@ -327,6 +333,11 @@ impl CityState {
         ClanRank::from_glory(self.glory)
     }
 
+    /// Returns the player's current Viking Clan Rank using externalized balance thresholds.
+    pub fn clan_rank_with_balance(&self, balance: &BalanceConfig) -> ClanRank {
+        ClanRank::from_glory_with_balance(self.glory, balance)
+    }
+
     pub fn building_tier(&self, building_id: &str) -> u32 {
         self.building_tiers.get(building_id).copied().unwrap_or(0)
     }
@@ -359,16 +370,21 @@ impl CityState {
         }
     }
 
-    /// Computes aggregate passive bonuses granted by all rebuilt buildings.
+    /// Computes aggregate passive bonuses granted by all rebuilt buildings and Clan Rank.
     pub fn compute_bonuses(&self, balance: &BalanceConfig) -> CityBonuses {
+        let rank = self.clan_rank_with_balance(balance);
         CityBonuses {
             extra_max_energy: self.building_tier("great_hall") * balance.great_hall_energy_per_tier,
             score_bonus_pct: self.building_tier("forge") * balance.forge_score_pct_per_tier,
             resource_bonus_pct: self.building_tier("longship_dock")
-                * balance.dock_resource_pct_per_tier,
+                * balance.dock_resource_pct_per_tier
+                + rank.resource_bonus_pct(),
             extra_moves: self.building_tier("odin_shrine") * balance.shrine_moves_per_tier,
             energy_regen_speed_pct: self.building_tier("meadery")
                 * balance.meadery_regen_pct_per_tier,
+            fury_charge_bonus_pct: self.building_tier("watchtower")
+                * balance.watchtower_fury_pct_per_tier,
+            starting_fury: rank.starting_fury(),
         }
     }
 
@@ -377,49 +393,17 @@ impl CityState {
         balance.max_energy + self.compute_bonuses(balance).extra_max_energy
     }
 
-    /// Returns passive harvest output for a rebuilt building based on its tier.
-    pub fn harvest_reward(&self, building_id: &str) -> ResourceBundle {
-        let tier = self.building_tier(building_id);
+    /// Returns passive harvest output for a rebuilt building based on its RON `harvest_per_tier` and tier.
+    pub fn harvest_reward(&self, def: &BuildingDef) -> ResourceBundle {
+        let tier = self.building_tier(&def.id);
         if tier == 0 {
             return ResourceBundle::default();
         }
-        match building_id {
-            "great_hall" => ResourceBundle {
-                wood: 10 * tier,
-                stone: 0,
-                gold: 15 * tier,
-                mead: 0,
-            },
-            "forge" => ResourceBundle {
-                wood: 0,
-                stone: 15 * tier,
-                gold: 12 * tier,
-                mead: 0,
-            },
-            "longship_dock" => ResourceBundle {
-                wood: 15 * tier,
-                stone: 0,
-                gold: 15 * tier,
-                mead: 0,
-            },
-            "odin_shrine" => ResourceBundle {
-                wood: 0,
-                stone: 5 * tier,
-                gold: 18 * tier,
-                mead: 6 * tier,
-            },
-            "meadery" => ResourceBundle {
-                wood: 8 * tier,
-                stone: 0,
-                gold: 0,
-                mead: 10 * tier,
-            },
-            _ => ResourceBundle {
-                wood: 0,
-                stone: 0,
-                gold: 10 * tier,
-                mead: 0,
-            },
+        ResourceBundle {
+            wood: def.harvest_per_tier.wood * tier,
+            stone: def.harvest_per_tier.stone * tier,
+            gold: def.harvest_per_tier.gold * tier,
+            mead: def.harvest_per_tier.mead * tier,
         }
     }
 
@@ -444,20 +428,19 @@ impl CityState {
     /// Collects a building's ready passive resource harvest and resets its timer.
     pub fn try_collect_harvest(
         &mut self,
-        building_id: &str,
+        def: &BuildingDef,
         now_secs: u64,
         balance: &BalanceConfig,
     ) -> Option<ResourceBundle> {
-        if !self.is_harvest_ready(building_id, now_secs, balance) {
+        if !self.is_harvest_ready(&def.id, now_secs, balance) {
             return None;
         }
-        let reward = self.harvest_reward(building_id);
+        let reward = self.harvest_reward(def);
         if reward.is_zero() {
             return None;
         }
         self.resources.add(&reward);
-        self.last_harvest_unix_secs
-            .insert(building_id.to_string(), now_secs);
+        self.last_harvest_unix_secs.insert(def.id.clone(), now_secs);
         Some(reward)
     }
 
@@ -495,6 +478,10 @@ impl CityState {
             "meadery" => {
                 let cap = self.max_energy(balance);
                 self.energy = self.energy.max(cap);
+            }
+            "watchtower" => {
+                self.tools.bifrost_prism += 1;
+                self.tools.loki_shuffle += 1;
             }
             _ => {}
         }
@@ -594,13 +581,11 @@ impl CityState {
         }
     }
 
-    /// Returns the passive effect of the currently equipped amulet, scaled by its tier (1..=3).
-    pub fn active_amulet_effect(&self, amulets: &[AmuletDef]) -> Option<AmuletEffect> {
-        let id = self.equipped_amulet.as_deref()?;
-        let def = amulets.iter().find(|a| a.id == id)?;
-        let tier = self.amulet_tier(id).max(1) as u32;
+    /// Scales an amulet's base effect by its current tier (`1..=3`).
+    pub fn scaled_amulet_effect(&self, def: &AmuletDef) -> AmuletEffect {
+        let tier = self.amulet_tier(&def.id).max(1) as u32;
         let extra_tiers = tier.saturating_sub(1);
-        let scaled = match def.effect {
+        match def.effect {
             AmuletEffect::ResourceBonusPct(base) => {
                 AmuletEffect::ResourceBonusPct(base + extra_tiers * 12)
             }
@@ -609,9 +594,17 @@ impl CityState {
                 AmuletEffect::ScoreBonusPct(base + extra_tiers * 15)
             }
             AmuletEffect::ExtraTimePct(base) => AmuletEffect::ExtraTimePct(base + extra_tiers * 15),
-            AmuletEffect::StartingBooster => AmuletEffect::StartingBooster,
-        };
-        Some(scaled)
+            AmuletEffect::StartingBoosters(base) => {
+                AmuletEffect::StartingBoosters(base + extra_tiers)
+            }
+        }
+    }
+
+    /// Returns the passive effect of the currently equipped amulet, scaled by its tier (1..=3).
+    pub fn active_amulet_effect(&self, amulets: &[AmuletDef]) -> Option<AmuletEffect> {
+        let id = self.equipped_amulet.as_deref()?;
+        let def = amulets.iter().find(|a| a.id == id)?;
+        Some(self.scaled_amulet_effect(def))
     }
 
     /// Returns the tier of the currently equipped amulet (0 if none equipped).
@@ -706,6 +699,17 @@ impl CityState {
         self.stats.last_daily_day_index < day_index
     }
 
+    /// Applies the Daily Trial streak multiplier (`+10%` per consecutive day beyond day 1).
+    pub fn scale_daily_rewards(rewards: &ResourceBundle, streak: u32) -> ResourceBundle {
+        let streak_bonus_pct = (streak.saturating_sub(1)) * 10;
+        ResourceBundle {
+            wood: rewards.wood + (rewards.wood * streak_bonus_pct) / 100,
+            stone: rewards.stone + (rewards.stone * streak_bonus_pct) / 100,
+            gold: rewards.gold + (rewards.gold * streak_bonus_pct) / 100,
+            mead: rewards.mead + (rewards.mead * streak_bonus_pct) / 100,
+        }
+    }
+
     /// Marks today's Daily Trial as completed, updating streak and granting escalating rewards.
     pub fn record_daily_victory(
         &mut self,
@@ -720,13 +724,7 @@ impl CityState {
         } else {
             1
         };
-        let streak_bonus_pct = (new_streak.saturating_sub(1)) * 10;
-        let scaled_rewards = ResourceBundle {
-            wood: rewards.wood + (rewards.wood * streak_bonus_pct) / 100,
-            stone: rewards.stone + (rewards.stone * streak_bonus_pct) / 100,
-            gold: rewards.gold + (rewards.gold * streak_bonus_pct) / 100,
-            mead: rewards.mead + (rewards.mead * streak_bonus_pct) / 100,
-        };
+        let scaled_rewards = Self::scale_daily_rewards(rewards, new_streak);
         self.resources.add(&scaled_rewards);
         self.stats.last_daily_day_index = day_index;
         self.stats.daily_streak = new_streak;
@@ -761,6 +759,12 @@ impl CityState {
             QuestCondition::CraftAnyAmulet => !self.crafted_amulets.is_empty(),
             QuestCondition::ClaimAnyCollection => !self.claimed_collections.is_empty(),
             QuestCondition::CompleteDailyTrials { count } => self.stats.daily_completions >= *count,
+            QuestCondition::DefeatBosses { count } => {
+                self.stats.bosses_defeated >= *count || self.defeated_bosses.len() as u32 >= *count
+            }
+            QuestCondition::ReachExpeditionWave { wave } => {
+                self.stats.best_expedition_wave >= *wave
+            }
         }
     }
 
@@ -857,7 +861,7 @@ impl CityState {
         let mut count = 0usize;
         let mut total = ResourceBundle::default();
         for b in buildings {
-            if let Some(r) = self.try_collect_harvest(&b.id, now_secs, balance) {
+            if let Some(r) = self.try_collect_harvest(b, now_secs, balance) {
                 count += 1;
                 total.add(&r);
             }
@@ -865,9 +869,14 @@ impl CityState {
         (count, total)
     }
 
-    /// Records a Mythological Boss Raid victory, granting massive spoils, tools, and glory.
+    /// Records a Mythological Boss Raid victory using the boss's base reward bundle.
     pub fn record_boss_victory(&mut self, boss: &BossDef) {
-        self.resources.add(&boss.reward_resources);
+        self.record_boss_victory_with_rewards(boss, &boss.reward_resources);
+    }
+
+    /// Records a Mythological Boss Raid victory with scaled spoils (Freya Fury, Amulets, Dock, Rank).
+    pub fn record_boss_victory_with_rewards(&mut self, boss: &BossDef, rewards: &ResourceBundle) {
+        self.resources.add(rewards);
         self.tools.add(&boss.reward_tools);
         self.glory += boss.glory_reward;
         self.defeated_bosses.insert(boss.id.clone());
@@ -891,12 +900,13 @@ impl CityState {
     /// Returns true if at least one Skald's Feat is unlocked and ready to claim.
     pub fn has_any_claimable_achievement(
         &self,
+        achievements: &[AchievementDef],
         buildings: &[BuildingDef],
         total_bosses: usize,
     ) -> bool {
-        ACHIEVEMENTS.iter().any(|ach| {
-            !self.claimed_achievements.contains(ach.id)
-                && is_achievement_unlocked(ach.id, self, buildings, total_bosses)
+        achievements.iter().any(|ach| {
+            !self.claimed_achievements.contains(&ach.id)
+                && is_achievement_unlocked(&ach.id, self, buildings, total_bosses)
         })
     }
 
@@ -904,13 +914,14 @@ impl CityState {
     pub fn try_claim_achievement(
         &mut self,
         ach_id: &str,
+        achievements: &[AchievementDef],
         buildings: &[BuildingDef],
         total_bosses: usize,
     ) -> bool {
         if self.claimed_achievements.contains(ach_id) {
             return false;
         }
-        let Some(ach) = ACHIEVEMENTS.iter().find(|a| a.id == ach_id) else {
+        let Some(ach) = achievements.iter().find(|a| a.id == ach_id) else {
             return false;
         };
         if !is_achievement_unlocked(ach_id, self, buildings, total_bosses) {

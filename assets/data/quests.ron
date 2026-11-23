@@ -120,4 +120,28 @@
         condition: WinSpecificLevel(level_id: "shrine_3"),
         reward: ResourceBundle(wood: 250, stone: 250, gold: 350, mead: 90),
     ),
+    QuestDef(
+        id: "q16",
+        speaker: "jarl",
+        title_key: "quest.q16.title",
+        desc_key: "quest.q16.desc",
+        condition: DefeatBosses(count: 1),
+        reward: ResourceBundle(wood: 220, stone: 220, gold: 320, mead: 75),
+    ),
+    QuestDef(
+        id: "q17",
+        speaker: "brokk",
+        title_key: "quest.q17.title",
+        desc_key: "quest.q17.desc",
+        condition: ReachExpeditionWave(wave: 3),
+        reward: ResourceBundle(wood: 260, stone: 240, gold: 360, mead: 85),
+    ),
+    QuestDef(
+        id: "q18",
+        speaker: "volva",
+        title_key: "quest.q18.title",
+        desc_key: "quest.q18.desc",
+        condition: ReachBuildingTier(building_id: "watchtower", tier: 1),
+        reward: ResourceBundle(wood: 300, stone: 300, gold: 420, mead: 100),
+    ),
 ]

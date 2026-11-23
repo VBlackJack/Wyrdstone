@@ -16,16 +16,18 @@
 
 //! Bundled game data loader and persistent JSON save schema.
 
+use crate::achievements::AchievementDef;
 use crate::balance::BalanceConfig;
 use crate::boss::BossDef;
 use crate::city::{AmuletDef, BuildingDef, CityState, CollectionDef, QuestDef, ToolRecipeDef};
+use crate::expedition::ExpeditionRun;
 use crate::i18n::{I18nCatalog, Language};
 use crate::level::LevelDef;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Current save format version for forward-safe migrations.
-pub const SAVE_SCHEMA_VERSION: u32 = 4;
+pub const SAVE_SCHEMA_VERSION: u32 = 5;
 
 /// Default background music volume (0.0..=1.0).
 pub const DEFAULT_BGM_VOLUME: f32 = 0.22;
@@ -50,6 +52,7 @@ const BUNDLED_AMULETS_RON: &str = include_str!("../../../assets/data/amulets.ron
 const BUNDLED_COLLECTIONS_RON: &str = include_str!("../../../assets/data/collections.ron");
 const BUNDLED_TOOL_SHOP_RON: &str = include_str!("../../../assets/data/tool_shop.ron");
 const BUNDLED_BOSSES_RON: &str = include_str!("../../../assets/data/bosses.ron");
+const BUNDLED_ACHIEVEMENTS_RON: &str = include_str!("../../../assets/data/achievements.ron");
 
 /// All static game definitions loaded once at startup.
 #[derive(Debug, Clone)]
@@ -62,6 +65,7 @@ pub struct GameDataBundle {
     pub collections: Vec<CollectionDef>,
     pub tool_shop: Vec<ToolRecipeDef>,
     pub bosses: Vec<BossDef>,
+    pub achievements: Vec<AchievementDef>,
     pub i18n: I18nCatalog,
 }
 
@@ -84,6 +88,8 @@ impl GameDataBundle {
             .map_err(|e| format!("Failed to parse tool_shop.ron: {e}"))?;
         let bosses: Vec<BossDef> = ron::from_str(BUNDLED_BOSSES_RON)
             .map_err(|e| format!("Failed to parse bosses.ron: {e}"))?;
+        let achievements: Vec<AchievementDef> = ron::from_str(BUNDLED_ACHIEVEMENTS_RON)
+            .map_err(|e| format!("Failed to parse achievements.ron: {e}"))?;
         let i18n = I18nCatalog::from_json_strs(BUNDLED_EN_JSON, BUNDLED_FR_JSON, initial_language)
             .map_err(|e| format!("Failed to parse locales: {e}"))?;
 
@@ -96,6 +102,7 @@ impl GameDataBundle {
             collections,
             tool_shop,
             bosses,
+            achievements,
             i18n,
         })
     }
@@ -138,6 +145,8 @@ pub struct SaveData {
     pub colorblind_mode: bool,
     #[serde(default)]
     pub tutorial_step: u8,
+    #[serde(default)]
+    pub active_expedition: Option<ExpeditionRun>,
     pub city: CityState,
 }
 
@@ -153,6 +162,7 @@ impl SaveData {
             sfx_volume: DEFAULT_SFX_VOLUME,
             colorblind_mode: false,
             tutorial_step: 0,
+            active_expedition: None,
             city: CityState::new(balance),
         }
     }

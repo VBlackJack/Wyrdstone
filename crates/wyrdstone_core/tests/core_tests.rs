@@ -18,9 +18,10 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME, SAVE_SCHEMA_VERSION};
 use wyrdstone_core::{
-    ActiveTool, AmuletEffect, Board, Booster, Cell, CellPos, CityBonuses, CityState, ClanRank,
-    ExpeditionBoon, ExpeditionRun, GameDataBundle, Language, LevelDef, LevelOutcome, LevelSession,
-    PatronGod, QuestCondition, ResourceBundle, RuneType, SaveData, ACHIEVEMENTS, FURY_CHARGE_MAX,
+    achievement_progress, ActiveTool, AmuletEffect, Board, Booster, Cell, CellPos, CityBonuses,
+    CityState, ClanRank, ExpeditionBoon, ExpeditionRun, GameDataBundle, Language, LevelDef,
+    LevelOutcome, LevelSession, PatronGod, QuestCondition, ResourceBundle, RuneType, SaveData,
+    FURY_CHARGE_MAX,
 };
 
 #[test]
@@ -60,7 +61,9 @@ fn bundled_data_loads_and_i18n_has_full_parity() {
             }
             QuestCondition::CraftAnyAmulet
             | QuestCondition::ClaimAnyCollection
-            | QuestCondition::CompleteDailyTrials { .. } => {}
+            | QuestCondition::CompleteDailyTrials { .. }
+            | QuestCondition::DefeatBosses { .. }
+            | QuestCondition::ReachExpeditionWave { .. } => {}
         }
     }
 
@@ -352,6 +355,7 @@ fn city_upgrades_quests_and_save_roundtrip() {
         sfx_volume: DEFAULT_SFX_VOLUME,
         colorblind_mode: true,
         tutorial_step: 3,
+        active_expedition: None,
         city,
     };
     let json = save.to_json().expect("serialize save");
@@ -382,7 +386,7 @@ fn passive_harvest_and_meadery_energy_cap_respect_balance() {
 
     // Rebuilt building has a ready harvest at now = 1000, then cools down until +harvest_interval_seconds.
     assert!(city.is_harvest_ready("great_hall", 1000, &data.balance));
-    let collected = city.try_collect_harvest("great_hall", 1000, &data.balance);
+    let collected = city.try_collect_harvest(great_hall, 1000, &data.balance);
     assert!(collected.is_some());
     assert!(!city.is_harvest_ready("great_hall", 1050, &data.balance));
     assert!(city.is_harvest_ready(
@@ -463,7 +467,7 @@ fn p2_tools_crates_relics_timer_and_amulets_work() {
     // Eye of Odin spawns a starting booster; Horn of Vidar adds +25% time.
     let odin_session = LevelSession::start_with_amulet(
         timed_level.clone(),
-        Some(AmuletEffect::StartingBooster),
+        Some(AmuletEffect::StartingBoosters(1)),
         &mut rng,
     );
     let has_starter_booster = (0..odin_session.board.rows()).any(|r| {
@@ -540,9 +544,9 @@ fn patron_fury_boss_raids_expedition_and_achievements_work() {
         assert_ne!(data.i18n.t(god.name_key()), god.name_key());
         assert_ne!(data.i18n.t(god.desc_key()), god.desc_key());
     }
-    for ach in ACHIEVEMENTS {
-        assert_ne!(data.i18n.t(ach.title_key), ach.title_key);
-        assert_ne!(data.i18n.t(ach.desc_key), ach.desc_key);
+    for ach in &data.achievements {
+        assert_ne!(data.i18n.t(&ach.title_key), ach.title_key);
+        assert_ne!(data.i18n.t(&ach.desc_key), ach.desc_key);
     }
 
     // 2. Boss Raid: weakness deals 2x damage, riposte fires every 3 turns, Patron Fury works.
@@ -595,9 +599,23 @@ fn patron_fury_boss_raids_expedition_and_achievements_work() {
     assert_eq!(city.clan_rank(), ClanRank::Scout);
     city.record_boss_victory(&fenrir);
     assert_eq!(city.clan_rank(), ClanRank::Huscarl);
-    assert!(city.has_any_claimable_achievement(&data.buildings, data.bosses.len()));
-    assert!(city.try_claim_achievement("ach_first_boss", &data.buildings, data.bosses.len()));
-    assert!(!city.try_claim_achievement("ach_first_boss", &data.buildings, data.bosses.len()));
+    assert!(city.has_any_claimable_achievement(
+        &data.achievements,
+        &data.buildings,
+        data.bosses.len()
+    ));
+    assert!(city.try_claim_achievement(
+        "ach_first_boss",
+        &data.achievements,
+        &data.buildings,
+        data.bosses.len()
+    ));
+    assert!(!city.try_claim_achievement(
+        "ach_first_boss",
+        &data.achievements,
+        &data.buildings,
+        data.bosses.len()
+    ));
 }
 
 #[test]
@@ -666,4 +684,221 @@ fn amulet_tiers_upgrade_and_fog_of_war_dispels_on_adjacent_match() {
         "Adjacent match must dispel Niflheim Fog"
     );
     assert!(!board.get(CellPos::new(0, 1)).unwrap().fog);
+}
+
+#[test]
+fn fog_of_war_blocks_invisible_matches_and_keeps_shuffles_playable() {
+    let mut rng = StdRng::seed_from_u64(808);
+    // 3 Fire runes in row 0, with the middle one hidden in fog: must NOT form an invisible match.
+    let mut cells = vec![
+        Cell::playable(RuneType::Fire),
+        Cell::playable(RuneType::Fire),
+        Cell::playable(RuneType::Fire),
+        Cell::playable(RuneType::Water),
+        Cell::playable(RuneType::Wood),
+        Cell::playable(RuneType::Stone),
+        Cell::playable(RuneType::Gold),
+        Cell::playable(RuneType::Ice),
+        Cell::playable(RuneType::Gold),
+        Cell::playable(RuneType::Water),
+        Cell::playable(RuneType::Wood),
+        Cell::playable(RuneType::Stone),
+        Cell::playable(RuneType::Water),
+        Cell::playable(RuneType::Gold),
+        Cell::playable(RuneType::Stone),
+        Cell::playable(RuneType::Wood),
+    ];
+    cells[1].fog = true;
+    let mut board = Board::from_cells(4, 4, 6, cells);
+    assert!(
+        board.prepare_cascade_step().is_none(),
+        "Fogged cells must never form invisible matches"
+    );
+    assert!(
+        board
+            .prepare_tool_step(ActiveTool::BifrostPrism, CellPos::new(1, 0))
+            .is_none(),
+        "BifrostPrism must not target a fogged cell"
+    );
+    board.shuffle_free_runes(&mut rng);
+    assert!(
+        board.has_valid_moves(),
+        "Shuffling a board with fog must produce a genuinely swappable move"
+    );
+}
+
+#[test]
+fn eye_of_odin_scales_boosters_and_watchtower_clan_rank_perks_apply() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(5150);
+    let mut city = CityState::new(&data.balance);
+    city.resources = ResourceBundle {
+        wood: 5000,
+        stone: 5000,
+        gold: 5000,
+        mead: 2000,
+    };
+
+    // Upgrade Eye of Odin to Tier 3 -> must spawn 3 starting boosters.
+    let odin = data.amulet_by_id("amulet_odin").unwrap();
+    assert_eq!(city.try_upgrade_amulet(odin, &data.balance), Ok(1));
+    assert_eq!(city.try_upgrade_amulet(odin, &data.balance), Ok(2));
+    assert_eq!(city.try_upgrade_amulet(odin, &data.balance), Ok(3));
+    assert_eq!(
+        city.active_amulet_effect(&data.amulets),
+        Some(AmuletEffect::StartingBoosters(3))
+    );
+
+    // Unlock and build Heimdall's Watchtower (requires Great Hall Tier 2).
+    let gh = data.building_by_id("great_hall").unwrap();
+    let wt = data.building_by_id("watchtower").unwrap();
+    assert_eq!(city.try_upgrade_building(gh, &data.balance), Ok(1));
+    assert_eq!(city.try_upgrade_building(gh, &data.balance), Ok(2));
+    assert_eq!(city.try_upgrade_building(wt, &data.balance), Ok(1));
+    city.glory = 300; // Jarl rank: +10% spoils, +20 starting Fury.
+
+    let bonuses = city.compute_bonuses(&data.balance);
+    assert_eq!(
+        bonuses.fury_charge_bonus_pct,
+        data.balance.watchtower_fury_pct_per_tier
+    );
+    assert_eq!(bonuses.starting_fury, ClanRank::Jarl.starting_fury());
+    assert!(bonuses.resource_bonus_pct >= ClanRank::Jarl.resource_bonus_pct());
+
+    let lvl = data.level_by_id("watchtower_1").unwrap().clone();
+    let session = LevelSession::start_full(
+        lvl,
+        city.active_amulet_effect(&data.amulets),
+        bonuses,
+        PatronGod::Freya,
+        None,
+        &mut rng,
+    );
+    let starter_count = (0..session.board.rows())
+        .flat_map(|r| (0..session.board.cols()).map(move |c| CellPos::new(c, r)))
+        .filter(|&p| session.board.get(p).unwrap().booster != Booster::None)
+        .count();
+    assert_eq!(starter_count, 3, "Tier 3 Eye of Odin must spawn 3 boosters");
+    assert_eq!(session.fury, ClanRank::Jarl.starting_fury());
+
+    // Live achievement progress counter works.
+    let (done, target) = achievement_progress("ach_master_builder", &city, &data.buildings, 3);
+    assert_eq!(done, 2);
+    assert_eq!(target, data.buildings.len() as u64);
+
+    // Persisted ExpeditionRun roundtrip in SaveData.
+    let mut run = ExpeditionRun::new();
+    run.roll_boon_choices(&mut rng);
+    let mut save = SaveData::new_game(&data.balance, Language::Fr);
+    save.active_expedition = Some(run);
+    let raw = save.to_json().expect("serialize with expedition");
+    let loaded = SaveData::from_json(&raw).expect("deserialize with expedition");
+    assert_eq!(
+        loaded
+            .active_expedition
+            .as_ref()
+            .map(|r| r.pending_boons.len()),
+        Some(3)
+    );
+}
+
+#[test]
+fn typography_guard_recursively_scans_all_project_text_files() {
+    use std::path::Path;
+
+    let banned: [(char, &str); 17] = [
+        ('\u{2014}', "em-dash"),
+        ('\u{2013}', "en-dash"),
+        ('\u{2010}', "unicode-hyphen"),
+        ('\u{2212}', "minus-sign"),
+        ('\u{201C}', "left-double-quote"),
+        ('\u{201D}', "right-double-quote"),
+        ('\u{201E}', "low-double-quote"),
+        ('\u{00AB}', "left-guillemet"),
+        ('\u{00BB}', "right-guillemet"),
+        ('\u{2018}', "left-single-quote"),
+        ('\u{2019}', "right-single-quote"),
+        ('\u{2026}', "ellipsis"),
+        ('\u{00A0}', "nbsp"),
+        ('\u{202F}', "narrow-nbsp"),
+        ('\u{200B}', "zwsp"),
+        ('\u{0153}', "oe-ligature"),
+        ('\u{0152}', "OE-ligature"),
+    ];
+    let text_exts = ["rs", "md", "toml", "yml", "yaml", "json", "ron", "xml"];
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+
+    fn walk(
+        dir: &Path,
+        root: &Path,
+        text_exts: &[&str],
+        banned: &[(char, &str)],
+        visited_nested: &mut bool,
+        violations: &mut Vec<String>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if path.is_dir() {
+                if matches!(name_str.as_ref(), ".git" | "target" | "local") {
+                    continue;
+                }
+                walk(&path, root, text_exts, banned, visited_nested, violations);
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if !text_exts.contains(&ext) {
+                    continue;
+                }
+                let rel = path.strip_prefix(root).unwrap_or(&path);
+                if rel.components().count() >= 3 {
+                    *visited_nested = true;
+                }
+                let Ok(content) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                if content.starts_with('\u{FEFF}') {
+                    violations.push(format!("{}:1 BOM", rel.display()));
+                }
+                for (line_no, line) in content.lines().enumerate() {
+                    for &(ch, label) in banned {
+                        if line.contains(ch) {
+                            violations.push(format!(
+                                "{}:{} forbidden {}",
+                                rel.display(),
+                                line_no + 1,
+                                label
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut visited_nested = false;
+    let mut violations = Vec::new();
+    walk(
+        root,
+        root,
+        &text_exts,
+        &banned,
+        &mut visited_nested,
+        &mut violations,
+    );
+    assert!(
+        visited_nested,
+        "Typography guard must prove it reached nested subdirectories"
+    );
+    assert!(
+        violations.is_empty(),
+        "Forbidden typography characters found:\n{}",
+        violations.join("\n")
+    );
 }

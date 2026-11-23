@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
-//! Clan Ranks and Skalds' Feats (permanent achievements with resource & glory rewards).
+//! Clan Ranks and Skalds' Feats (permanent achievements loaded from RON with live progress).
 
+use crate::balance::BalanceConfig;
 use crate::city::{BuildingDef, CityState, ResourceBundle};
+use serde::{Deserialize, Serialize};
 
 /// Progressive Viking Clan rank unlocked by total Clan Glory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,7 +30,7 @@ pub enum ClanRank {
 }
 
 impl ClanRank {
-    /// Resolves the player's Clan Rank from their current Glory score.
+    /// Resolves the player's Clan Rank using default Glory thresholds.
     pub const fn from_glory(glory: u32) -> Self {
         if glory >= 600 {
             ClanRank::HighKing
@@ -41,6 +43,39 @@ impl ClanRank {
         }
     }
 
+    /// Resolves the player's Clan Rank using externalized thresholds from `BalanceConfig`.
+    pub const fn from_glory_with_balance(glory: u32, balance: &BalanceConfig) -> Self {
+        if glory >= balance.clan_rank_high_king_glory {
+            ClanRank::HighKing
+        } else if glory >= balance.clan_rank_jarl_glory {
+            ClanRank::Jarl
+        } else if glory >= balance.clan_rank_huscarl_glory {
+            ClanRank::Huscarl
+        } else {
+            ClanRank::Scout
+        }
+    }
+
+    /// Passive spoils bonus percentage granted by this Clan Rank.
+    pub const fn resource_bonus_pct(self) -> u32 {
+        match self {
+            ClanRank::Scout => 0,
+            ClanRank::Huscarl => 5,
+            ClanRank::Jarl => 10,
+            ClanRank::HighKing => 15,
+        }
+    }
+
+    /// Starting Divine Fury headstart granted at the start of every board.
+    pub const fn starting_fury(self) -> u32 {
+        match self {
+            ClanRank::Scout => 0,
+            ClanRank::Huscarl => 10,
+            ClanRank::Jarl => 20,
+            ClanRank::HighKing => 30,
+        }
+    }
+
     pub const fn i18n_key(self) -> &'static str {
         match self {
             ClanRank::Scout => "rank.scout",
@@ -49,165 +84,65 @@ impl ClanRank {
             ClanRank::HighKing => "rank.high_king",
         }
     }
+
+    pub const fn perk_key(self) -> &'static str {
+        match self {
+            ClanRank::Scout => "rank.scout.perk",
+            ClanRank::Huscarl => "rank.huscarl.perk",
+            ClanRank::Jarl => "rank.jarl.perk",
+            ClanRank::HighKing => "rank.high_king.perk",
+        }
+    }
 }
 
-/// Static definition of a permanent Skald's Feat (achievement).
-#[derive(Debug, Clone, Copy)]
+/// Static definition of a permanent Skald's Feat loaded from `assets/data/achievements.ron`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AchievementDef {
-    pub id: &'static str,
-    pub title_key: &'static str,
-    pub desc_key: &'static str,
+    pub id: String,
+    pub title_key: String,
+    pub desc_key: String,
     pub reward: ResourceBundle,
     pub glory: u32,
 }
 
-/// All 12 permanent Skalds' Feats.
-pub const ACHIEVEMENTS: [AchievementDef; 12] = [
-    AchievementDef {
-        id: "ach_first_win",
-        title_key: "ach.first_win.title",
-        desc_key: "ach.first_win.desc",
-        reward: ResourceBundle {
-            wood: 40,
-            stone: 40,
-            gold: 50,
-            mead: 10,
-        },
-        glory: 15,
-    },
-    AchievementDef {
-        id: "ach_veteran",
-        title_key: "ach.veteran.title",
-        desc_key: "ach.veteran.desc",
-        reward: ResourceBundle {
-            wood: 120,
-            stone: 120,
-            gold: 150,
-            mead: 30,
-        },
-        glory: 35,
-    },
-    AchievementDef {
-        id: "ach_combo4",
-        title_key: "ach.combo4.title",
-        desc_key: "ach.combo4.desc",
-        reward: ResourceBundle {
-            wood: 60,
-            stone: 60,
-            gold: 90,
-            mead: 20,
-        },
-        glory: 25,
-    },
-    AchievementDef {
-        id: "ach_combo5",
-        title_key: "ach.combo5.title",
-        desc_key: "ach.combo5.desc",
-        reward: ResourceBundle {
-            wood: 100,
-            stone: 100,
-            gold: 160,
-            mead: 35,
-        },
-        glory: 45,
-    },
-    AchievementDef {
-        id: "ach_runes_500",
-        title_key: "ach.runes_500.title",
-        desc_key: "ach.runes_500.desc",
-        reward: ResourceBundle {
-            wood: 80,
-            stone: 80,
-            gold: 100,
-            mead: 20,
-        },
-        glory: 25,
-    },
-    AchievementDef {
-        id: "ach_runes_2000",
-        title_key: "ach.runes_2000.title",
-        desc_key: "ach.runes_2000.desc",
-        reward: ResourceBundle {
-            wood: 180,
-            stone: 180,
-            gold: 240,
-            mead: 50,
-        },
-        glory: 55,
-    },
-    AchievementDef {
-        id: "ach_first_boss",
-        title_key: "ach.first_boss.title",
-        desc_key: "ach.first_boss.desc",
-        reward: ResourceBundle {
-            wood: 140,
-            stone: 140,
-            gold: 200,
-            mead: 45,
-        },
-        glory: 50,
-    },
-    AchievementDef {
-        id: "ach_all_bosses",
-        title_key: "ach.all_bosses.title",
-        desc_key: "ach.all_bosses.desc",
-        reward: ResourceBundle {
-            wood: 300,
-            stone: 300,
-            gold: 450,
-            mead: 100,
-        },
-        glory: 120,
-    },
-    AchievementDef {
-        id: "ach_expedition_3",
-        title_key: "ach.expedition_3.title",
-        desc_key: "ach.expedition_3.desc",
-        reward: ResourceBundle {
-            wood: 100,
-            stone: 100,
-            gold: 140,
-            mead: 30,
-        },
-        glory: 35,
-    },
-    AchievementDef {
-        id: "ach_expedition_5",
-        title_key: "ach.expedition_5.title",
-        desc_key: "ach.expedition_5.desc",
-        reward: ResourceBundle {
-            wood: 200,
-            stone: 200,
-            gold: 280,
-            mead: 60,
-        },
-        glory: 75,
-    },
-    AchievementDef {
-        id: "ach_master_builder",
-        title_key: "ach.master_builder.title",
-        desc_key: "ach.master_builder.desc",
-        reward: ResourceBundle {
-            wood: 150,
-            stone: 150,
-            gold: 200,
-            mead: 40,
-        },
-        glory: 50,
-    },
-    AchievementDef {
-        id: "ach_daily_streak_3",
-        title_key: "ach.daily_streak_3.title",
-        desc_key: "ach.daily_streak_3.desc",
-        reward: ResourceBundle {
-            wood: 120,
-            stone: 120,
-            gold: 180,
-            mead: 40,
-        },
-        glory: 40,
-    },
-];
+/// Returns `(current, target)` numeric progress for a Skald's Feat so UI can display progress badges.
+pub fn achievement_progress(
+    ach_id: &str,
+    city: &CityState,
+    buildings: &[BuildingDef],
+    total_bosses: usize,
+) -> (u64, u64) {
+    match ach_id {
+        "ach_first_win" => (city.stats.total_victories.min(1) as u64, 1),
+        "ach_veteran" => (city.stats.total_victories.min(10) as u64, 10),
+        "ach_combo4" => (city.stats.best_combo.min(4) as u64, 4),
+        "ach_combo5" => (city.stats.best_combo.min(5) as u64, 5),
+        "ach_runes_500" => (city.stats.total_runes_cleared.min(500), 500),
+        "ach_runes_2000" => (city.stats.total_runes_cleared.min(2000), 2000),
+        "ach_first_boss" => {
+            let done =
+                u64::from(city.stats.bosses_defeated >= 1 || !city.defeated_bosses.is_empty());
+            (done, 1)
+        }
+        "ach_all_bosses" => {
+            let target = total_bosses as u64;
+            let done = (city.defeated_bosses.len() as u64).min(target);
+            (done, target)
+        }
+        "ach_expedition_3" => (city.stats.best_expedition_wave.min(3) as u64, 3),
+        "ach_expedition_5" => (city.stats.best_expedition_wave.min(5) as u64, 5),
+        "ach_master_builder" => {
+            let target = buildings.len() as u64;
+            let done = buildings
+                .iter()
+                .filter(|b| city.building_tier(&b.id) >= 1)
+                .count() as u64;
+            (done, target)
+        }
+        "ach_daily_streak_3" => (city.stats.daily_streak.min(3) as u64, 3),
+        _ => (0, 1),
+    }
+}
 
 /// Evaluates whether a Skald's Feat condition is met.
 pub fn is_achievement_unlocked(
@@ -216,21 +151,6 @@ pub fn is_achievement_unlocked(
     buildings: &[BuildingDef],
     total_bosses: usize,
 ) -> bool {
-    match ach_id {
-        "ach_first_win" => city.stats.total_victories >= 1,
-        "ach_veteran" => city.stats.total_victories >= 10,
-        "ach_combo4" => city.stats.best_combo >= 4,
-        "ach_combo5" => city.stats.best_combo >= 5,
-        "ach_runes_500" => city.stats.total_runes_cleared >= 500,
-        "ach_runes_2000" => city.stats.total_runes_cleared >= 2000,
-        "ach_first_boss" => city.stats.bosses_defeated >= 1 || !city.defeated_bosses.is_empty(),
-        "ach_all_bosses" => total_bosses > 0 && city.defeated_bosses.len() >= total_bosses,
-        "ach_expedition_3" => city.stats.best_expedition_wave >= 3,
-        "ach_expedition_5" => city.stats.best_expedition_wave >= 5,
-        "ach_master_builder" => {
-            !buildings.is_empty() && buildings.iter().all(|b| city.building_tier(&b.id) >= 1)
-        }
-        "ach_daily_streak_3" => city.stats.daily_streak >= 3,
-        _ => false,
-    }
+    let (done, target) = achievement_progress(ach_id, city, buildings, total_bosses);
+    target > 0 && done >= target
 }

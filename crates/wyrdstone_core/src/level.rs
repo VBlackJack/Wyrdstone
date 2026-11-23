@@ -261,6 +261,7 @@ pub struct LevelSession {
     pub patron: PatronGod,
     pub fury: u32,
     pub fury_max: u32,
+    pub fury_charge_bonus_pct: u32,
     pub fury_resource_bonus_pct: u32,
     pub boss: Option<BossState>,
 }
@@ -320,7 +321,7 @@ impl LevelSession {
         let level = run.generate_wave_level(rng);
         let mut session = Self::start_full(level, amulet, city_bonuses, patron, None, rng);
         session.score_bonus_pct += run.score_bonus_pct;
-        session.fury = run.fury_headstart.min(FURY_CHARGE_MAX);
+        session.fury = (session.fury + run.fury_headstart).min(FURY_CHARGE_MAX);
         for _ in 0..run.starting_boosters {
             session.board.spawn_random_starting_booster(rng);
         }
@@ -337,8 +338,10 @@ impl LevelSession {
         rng: &mut R,
     ) -> Self {
         let mut board = Board::new_for_level(&level, rng);
-        if matches!(amulet, Some(AmuletEffect::StartingBooster)) {
-            board.spawn_random_starting_booster(rng);
+        if let Some(AmuletEffect::StartingBoosters(count)) = amulet {
+            for _ in 0..count {
+                board.spawn_random_starting_booster(rng);
+            }
         }
 
         let objectives = level
@@ -396,8 +399,9 @@ impl LevelSession {
             turn_ice_broken: 0,
             last_frost_spread: None,
             patron,
-            fury: 0,
+            fury: city_bonuses.starting_fury.min(FURY_CHARGE_MAX),
             fury_max: FURY_CHARGE_MAX,
+            fury_charge_bonus_pct: city_bonuses.fury_charge_bonus_pct,
             fury_resource_bonus_pct: 0,
             boss,
         }
@@ -460,6 +464,11 @@ impl LevelSession {
             self.consume_move();
             self.apply_step_progress(&step);
             self.apply_frost_spread_if_needed(rng);
+            let riposte = self.tick_boss_riposte_if_needed(rng);
+            if !riposte.is_empty() && !self.board.has_valid_moves() {
+                self.board.shuffle_free_runes(rng);
+                self.last_shuffled = true;
+            }
             self.finalize_turn(balance);
         }
         step
@@ -502,8 +511,9 @@ impl LevelSession {
         let tiles_cleared: u32 = step.cleared_runes.values().copied().sum();
         let obstacles_broken = step.ice_broken + step.chains_broken + step.crates_broken;
         let combo_bonus = step.max_combo.saturating_sub(1) * FURY_PER_COMBO_STEP;
-        let fury_gain =
+        let raw_fury =
             tiles_cleared * FURY_PER_TILE + obstacles_broken * FURY_PER_OBSTACLE + combo_bonus;
+        let fury_gain = raw_fury + (raw_fury * self.fury_charge_bonus_pct) / 100;
         self.fury = (self.fury + fury_gain).min(self.fury_max);
 
         if let Some(boss) = self.boss.as_mut() {

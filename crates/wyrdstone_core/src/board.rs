@@ -444,7 +444,11 @@ impl Board {
                 is_direct_blast: true,
             }),
             ActiveTool::BifrostPrism => {
-                let target_rune = self.cells[self.idx(target)].rune?;
+                let cell = self.cells[self.idx(target)];
+                if cell.fog {
+                    return None;
+                }
+                let target_rune = cell.rune?;
                 let mut set = HashSet::new();
                 self.collect_all_of_rune(target_rune, &mut set);
                 Some(PreparedClear {
@@ -897,7 +901,7 @@ impl Board {
     fn most_frequent_rune(&self) -> Option<RuneType> {
         let mut counts = [0u32; 6];
         for cell in &self.cells {
-            if !cell.blocked && cell.crate_layers == 0 {
+            if !cell.blocked && !cell.fog && cell.crate_layers == 0 {
                 if let Some(r) = cell.rune {
                     if let Some(idx) = RuneType::ALL.iter().position(|&x| x == r) {
                         counts[idx] += 1;
@@ -918,7 +922,7 @@ impl Board {
             for col in 0..self.cols {
                 let p = CellPos::new(col, row);
                 let cell = self.cells[self.idx(p)];
-                if !cell.blocked && cell.rune == Some(rune) {
+                if !cell.blocked && !cell.fog && cell.rune == Some(rune) {
                     out.insert(p);
                 }
             }
@@ -986,7 +990,7 @@ impl Board {
                     col += 1;
                     continue;
                 };
-                if cell.blocked || cell.crate_layers > 0 {
+                if cell.blocked || cell.fog || cell.crate_layers > 0 {
                     col += 1;
                     continue;
                 }
@@ -994,7 +998,7 @@ impl Board {
                 while col < self.cols {
                     let cp = CellPos::new(col, row);
                     let c = self.cells[self.idx(cp)];
-                    if !c.blocked && c.crate_layers == 0 && c.rune == Some(rune) {
+                    if !c.blocked && !c.fog && c.crate_layers == 0 && c.rune == Some(rune) {
                         col += 1;
                     } else {
                         break;
@@ -1015,7 +1019,7 @@ impl Board {
                     row += 1;
                     continue;
                 };
-                if cell.blocked || cell.crate_layers > 0 {
+                if cell.blocked || cell.fog || cell.crate_layers > 0 {
                     row += 1;
                     continue;
                 }
@@ -1023,7 +1027,7 @@ impl Board {
                 while row < self.rows {
                     let cp = CellPos::new(col, row);
                     let c = self.cells[self.idx(cp)];
-                    if !c.blocked && c.crate_layers == 0 && c.rune == Some(rune) {
+                    if !c.blocked && !c.fog && c.crate_layers == 0 && c.rune == Some(rune) {
                         row += 1;
                     } else {
                         break;
@@ -1273,6 +1277,7 @@ impl Board {
                 let c = self.cells[self.idx(p)];
                 !c.blocked
                     && !c.chained
+                    && !c.fog
                     && c.crate_layers == 0
                     && !c.relic
                     && c.rune.is_some()
@@ -1340,6 +1345,7 @@ impl Board {
                 let c = self.cells[self.idx(p)];
                 !c.blocked
                     && !c.chained
+                    && !c.fog
                     && c.crate_layers == 0
                     && !c.relic
                     && c.rune.is_some()
@@ -1379,6 +1385,33 @@ impl Board {
         let idx = self.idx(chosen);
         self.cells[idx].ice_layers = 1;
         Some(chosen)
+    }
+
+    /// Returns all adjacent swappable cell pairs where both cells hold a booster (super-combo ready).
+    pub fn find_booster_combo_pairs(&self) -> Vec<(CellPos, CellPos)> {
+        let mut pairs = Vec::new();
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                let a = CellPos::new(col, row);
+                let ca = self.cells[self.idx(a)];
+                if !ca.can_be_swapped() || ca.booster == Booster::None {
+                    continue;
+                }
+                for nb in [
+                    (col + 1 < self.cols).then(|| CellPos::new(col + 1, row)),
+                    (row + 1 < self.rows).then(|| CellPos::new(col, row + 1)),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let cb = self.cells[self.idx(nb)];
+                    if cb.can_be_swapped() && cb.booster != Booster::None {
+                        pairs.push((a, nb));
+                    }
+                }
+            }
+        }
+        pairs
     }
 
     /// Returns the cells affected when hovering a target cell with an armed active tool.
@@ -1454,6 +1487,7 @@ impl Board {
                         let c = self.cells[self.idx(p)];
                         !c.blocked
                             && !c.chained
+                            && !c.fog
                             && c.crate_layers == 0
                             && !c.relic
                             && c.rune.is_some()

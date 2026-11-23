@@ -57,6 +57,18 @@ fn default_collection_glory() -> u32 {
 fn default_harvest_interval_seconds() -> u64 {
     120
 }
+fn default_watchtower_fury_pct_per_tier() -> u32 {
+    15
+}
+fn default_clan_rank_huscarl_glory() -> u32 {
+    100
+}
+fn default_clan_rank_jarl_glory() -> u32 {
+    280
+}
+fn default_clan_rank_high_king_glory() -> u32 {
+    600
+}
 
 /// Tunable gameplay and animation parameters loaded from `assets/data/balance.ron`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +128,14 @@ pub struct BalanceConfig {
     pub collection_glory: u32,
     #[serde(default = "default_harvest_interval_seconds")]
     pub harvest_interval_seconds: u64,
+    #[serde(default = "default_watchtower_fury_pct_per_tier")]
+    pub watchtower_fury_pct_per_tier: u32,
+    #[serde(default = "default_clan_rank_huscarl_glory")]
+    pub clan_rank_huscarl_glory: u32,
+    #[serde(default = "default_clan_rank_jarl_glory")]
+    pub clan_rank_jarl_glory: u32,
+    #[serde(default = "default_clan_rank_high_king_glory")]
+    pub clan_rank_high_king_glory: u32,
 }
 
 impl BalanceConfig {

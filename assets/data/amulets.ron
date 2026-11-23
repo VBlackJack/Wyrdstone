@@ -26,7 +26,7 @@
         name_key: "amulet.odin.name",
         desc_key: "amulet.odin.desc",
         cost: ResourceBundle(wood: 80, stone: 90, gold: 160, mead: 35),
-        effect: StartingBooster,
+        effect: StartingBoosters(1),
     ),
     AmuletDef(
         id: "amulet_vidar",

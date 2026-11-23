@@ -27,7 +27,7 @@ pub mod level;
 pub mod patron;
 pub mod save;
 
-pub use achievements::{is_achievement_unlocked, AchievementDef, ClanRank, ACHIEVEMENTS};
+pub use achievements::{achievement_progress, is_achievement_unlocked, AchievementDef, ClanRank};
 pub use balance::BalanceConfig;
 pub use board::{
     ActiveTool, Board, Booster, Cell, CellPos, FallMove, MatchStepOutcome, PreparedClear, RuneType,
