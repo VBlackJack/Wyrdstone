@@ -33,6 +33,8 @@ pub const LINE_BOOSTER_MATCH_LEN: usize = 4;
 pub const BIFROST_MATCH_LEN: usize = 5;
 /// Maximum attempts when searching for a non-deadlocked shuffle.
 const MAX_SHUFFLE_ATTEMPTS: usize = 32;
+/// Maximum attempts when regenerating free runes from the rune pool as a last resort.
+const MAX_REGENERATION_ATTEMPTS: usize = 128;
 
 /// Coordinates on the Match-3 grid (`col` left-to-right, `row` top-to-bottom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -317,7 +319,7 @@ impl Board {
         }
 
         if !board.has_valid_moves() {
-            board.shuffle_free_runes(rng);
+            board.ensure_playable(rng);
         }
 
         board
@@ -786,8 +788,7 @@ impl Board {
             depth += 1;
         }
 
-        if !self.has_valid_moves() {
-            self.shuffle_free_runes(rng);
+        if !self.has_valid_moves() && self.ensure_playable(rng) {
             total.shuffled = true;
         }
         total
@@ -802,10 +803,10 @@ impl Board {
         rng: &mut R,
     ) -> MatchStepOutcome {
         if tool == ActiveTool::LokiShuffle {
-            self.shuffle_free_runes(rng);
+            let recovered = self.ensure_playable(rng);
             return MatchStepOutcome {
                 valid: true,
-                shuffled: true,
+                shuffled: recovered,
                 ..Default::default()
             };
         }
@@ -828,8 +829,7 @@ impl Board {
             depth += 1;
         }
 
-        if !self.has_valid_moves() {
-            self.shuffle_free_runes(rng);
+        if !self.has_valid_moves() && self.ensure_playable(rng) {
             total.shuffled = true;
         }
         total
@@ -1336,11 +1336,20 @@ impl Board {
         None
     }
 
-    /// Shuffles all unchained free runes without creating instant matches, ensuring a valid move.
-    /// Returns true when the resulting board has no pending match and at least one valid move.
-    /// On failure the original rune layout is restored and false is returned.
-    pub fn shuffle_free_runes<R: Rng>(&mut self, rng: &mut R) -> bool {
-        let free_positions: Vec<CellPos> = (0..self.rows)
+    /// Recovers a deadlocked board: shuffles the free runes first, then falls back to
+    /// regenerating them from the rune pool. Returns true when the board was changed to a
+    /// state with no pending match and at least one valid move. On failure the original
+    /// rune layout is restored and false is returned.
+    pub fn ensure_playable<R: Rng>(&mut self, rng: &mut R) -> bool {
+        if self.shuffle_free_runes(rng) {
+            return true;
+        }
+        self.regenerate_free_runes(rng)
+    }
+
+    /// Positions of plain runes that may be re-rolled (no obstacle, relic or booster).
+    fn free_rune_positions(&self) -> Vec<CellPos> {
+        (0..self.rows)
             .flat_map(|row| (0..self.cols).map(move |col| CellPos::new(col, row)))
             .filter(|&p| {
                 let c = self.cells[self.idx(p)];
@@ -1353,7 +1362,40 @@ impl Board {
                     && c.rune.is_some()
                     && c.booster == Booster::None
             })
+            .collect()
+    }
+
+    /// Re-rolls every free rune from the level's rune pool using the no-initial-match
+    /// spawning logic, keeping the first layout that verifies. Restores the original runes
+    /// and returns false when no attempt succeeds.
+    fn regenerate_free_runes<R: Rng>(&mut self, rng: &mut R) -> bool {
+        let free_positions = self.free_rune_positions();
+        if free_positions.is_empty() {
+            return false;
+        }
+        let original: Vec<Option<RuneType>> = free_positions
+            .iter()
+            .map(|&p| self.cells[self.idx(p)].rune)
             .collect();
+        for _ in 0..MAX_REGENERATION_ATTEMPTS {
+            for &pos in &free_positions {
+                let rune = self.pick_non_matching_rune(pos.col, pos.row, rng);
+                let idx = self.idx(pos);
+                self.cells[idx].rune = Some(rune);
+            }
+            if self.is_settled_and_playable() {
+                return true;
+            }
+        }
+        self.restore_free_runes(&free_positions, &original);
+        false
+    }
+
+    /// Shuffles all unchained free runes without creating instant matches, ensuring a valid move.
+    /// Returns true when the resulting board has no pending match and at least one valid move.
+    /// On failure the original rune layout is restored and false is returned.
+    pub fn shuffle_free_runes<R: Rng>(&mut self, rng: &mut R) -> bool {
+        let free_positions = self.free_rune_positions();
 
         if free_positions.len() < 2 {
             return false;

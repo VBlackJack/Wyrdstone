@@ -567,8 +567,10 @@ impl LevelSession {
             self.apply_frost_spread_if_needed(rng);
             let curse_hits = self.tick_cursed_runes_if_needed();
             let riposte = self.tick_boss_riposte_if_needed(rng);
-            if (!riposte.is_empty() || !curse_hits.is_empty()) && !self.board.has_valid_moves() {
-                self.board.shuffle_free_runes(rng);
+            if (!riposte.is_empty() || !curse_hits.is_empty())
+                && !self.board.has_valid_moves()
+                && self.board.ensure_playable(rng)
+            {
                 self.last_shuffled = true;
             }
             self.finalize_turn(balance);

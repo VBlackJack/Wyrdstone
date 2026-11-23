@@ -1446,8 +1446,9 @@ pub fn tick_board_animation(
                                     .map(|b| ctx_ref.data.i18n.t(&b.def.name_key).to_string());
                             }
                         }
-                        if !session.board.has_valid_moves() {
-                            session.board.shuffle_free_runes(&mut ctx_ref.rng);
+                        if !session.board.has_valid_moves()
+                            && session.board.ensure_playable(&mut ctx_ref.rng)
+                        {
                             session.last_shuffled = true;
                             did_shuffle = true;
                         }

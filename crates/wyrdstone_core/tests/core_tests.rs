@@ -1321,6 +1321,49 @@ fn shuffle_on_an_open_board_always_succeeds() {
     }
 }
 
+#[test]
+fn ensure_playable_regenerates_when_shuffle_cannot_succeed() {
+    // Three free runes, all distinct, next to a cursed rune that can still be swapped but is
+    // never moved by a shuffle. No permutation of the free runes can build a valid move, and
+    // the deterministic fallback has no free mover, so only regeneration can recover.
+    for seed in 0..20u64 {
+        let free = [RuneType::Ice, RuneType::Wood, RuneType::Stone];
+        let mut cells: Vec<Cell> = free.iter().map(|&r| Cell::playable(r)).collect();
+        let mut cursed = Cell::playable(RuneType::Fire);
+        cursed.curse_turns = 3;
+        cells.push(cursed);
+        let mut board = Board::from_cells(4, 1, 5, cells);
+        let mut rng = StdRng::seed_from_u64(seed);
+        assert!(!board.shuffle_free_runes(&mut rng), "seed {seed}");
+        assert!(board.ensure_playable(&mut rng), "seed {seed}");
+        assert!(board.prepare_cascade_step().is_none(), "seed {seed}");
+        assert!(board.has_valid_moves(), "seed {seed}");
+        let cursed_after = board.get(CellPos::new(3, 0)).unwrap();
+        assert_eq!(cursed_after.rune, Some(RuneType::Fire));
+        assert_eq!(cursed_after.curse_turns, 3);
+    }
+}
+
+#[test]
+fn ensure_playable_fails_cleanly_on_a_fully_blocked_board() {
+    let cells: Vec<Cell> = (0..16).map(|_| Cell::blocked_cell()).collect();
+    let mut board = Board::from_cells(4, 4, 5, cells);
+    let mut rng = StdRng::seed_from_u64(7);
+    assert!(!board.ensure_playable(&mut rng));
+    assert!(!board.has_valid_moves());
+}
+
+#[test]
+fn unrecoverable_board_does_not_flag_a_shuffle() {
+    let cells: Vec<Cell> = (0..16).map(|_| Cell::blocked_cell()).collect();
+    let mut board = Board::from_cells(4, 4, 5, cells);
+    let mut rng = StdRng::seed_from_u64(3);
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let out = board.use_active_tool(ActiveTool::LokiShuffle, None, &data.balance, &mut rng);
+    assert!(out.valid);
+    assert!(!out.shuffled);
+}
+
 // ---------------------------------------------------------------------------
 // Boosters combos.
 // ---------------------------------------------------------------------------
