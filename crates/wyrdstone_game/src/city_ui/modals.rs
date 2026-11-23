@@ -181,7 +181,13 @@ fn spawn_modal_shell<F>(
                             display_font(fjord_art, FONT_HEADING),
                             TextColor(COLOR_ACCENT_GOLD),
                         ));
-                        spawn_small_button(hdr, close_label, close_action, COLOR_ACCENT_CRIMSON);
+                        spawn_small_button(
+                            hdr,
+                            close_label,
+                            close_action,
+                            COLOR_ACCENT_CRIMSON,
+                            true,
+                        );
                     });
 
                 // Inline status/error banner so feedback triggered inside modals is immediately visible
@@ -472,6 +478,7 @@ pub(super) fn spawn_amulets_modal(
                                 CityAction::CraftOrEquipAmulet(amulet.id.clone()),
                                 btn_bg,
                                 btn_fg,
+                                equipped || crafted || can_afford_next,
                             );
                             if crafted && next_cost.is_some() {
                                 spawn_small_button(
@@ -483,6 +490,7 @@ pub(super) fn spawn_amulets_modal(
                                     } else {
                                         COLOR_BUTTON_DISABLED
                                     },
+                                    can_afford_next,
                                 );
                             }
                         });
@@ -527,6 +535,7 @@ pub(super) fn spawn_collections_modal(
                             ),
                             CityAction::ClaimAllCollections,
                             COLOR_ACCENT_GREEN,
+                            true,
                         );
                     });
             }
@@ -620,6 +629,7 @@ pub(super) fn spawn_collections_modal(
                                     i18n.t("city.panel.collections.claim"),
                                     CityAction::ClaimCollection(col.id.clone()),
                                     COLOR_ACCENT_GREEN,
+                                    true,
                                 );
                             } else if claimed {
                                 row.spawn((
@@ -775,6 +785,7 @@ pub(super) fn spawn_tool_shop_modal(
                             } else {
                                 COLOR_BUTTON_DISABLED
                             },
+                            can_afford,
                         );
                     });
             }
@@ -882,7 +893,7 @@ pub(super) fn spawn_settings_modal(
             } else {
                 i18n.t("app.audio.on")
             };
-            let bgm_pct = (sound_bank.bgm_volume * 200.0).round() as u32;
+            let bgm_pct = crate::audio::bgm_volume_percent(sound_bank.bgm_volume);
             let sfx_pct = (sound_bank.sfx_volume * 100.0).round() as u32;
 
             // Audio & Language Controls
@@ -893,24 +904,33 @@ pub(super) fn spawn_settings_modal(
                 ..default()
             })
             .with_children(|row| {
-                spawn_small_button(row, sound_label, CityAction::ToggleAudio, COLOR_PANEL_CARD);
+                spawn_small_button(
+                    row,
+                    sound_label,
+                    CityAction::ToggleAudio,
+                    COLOR_PANEL_CARD,
+                    true,
+                );
                 spawn_small_button(
                     row,
                     &i18n.t_fmt("city.panel.audio.bgm", &[("pct", bgm_pct.to_string())]),
                     CityAction::CycleBgmVolume,
                     COLOR_PANEL_CARD,
+                    true,
                 );
                 spawn_small_button(
                     row,
                     &i18n.t_fmt("city.panel.audio.sfx", &[("pct", sfx_pct.to_string())]),
                     CityAction::CycleSfxVolume,
                     COLOR_PANEL_CARD,
+                    true,
                 );
                 spawn_small_button(
                     row,
                     i18n.t("app.title.button.language"),
                     CityAction::ToggleLanguage,
                     COLOR_PANEL_CARD,
+                    true,
                 );
             });
 
@@ -936,6 +956,7 @@ pub(super) fn spawn_settings_modal(
                     } else {
                         COLOR_PANEL_CARD
                     },
+                    true,
                 );
                 spawn_small_button(
                     acc_row,
@@ -950,6 +971,7 @@ pub(super) fn spawn_settings_modal(
                     } else {
                         COLOR_PANEL_CARD
                     },
+                    true,
                 );
                 spawn_small_button(
                     acc_row,
@@ -964,6 +986,7 @@ pub(super) fn spawn_settings_modal(
                     } else {
                         COLOR_PANEL_CARD
                     },
+                    true,
                 );
             });
 
@@ -981,6 +1004,7 @@ pub(super) fn spawn_settings_modal(
                     i18n.t("city.panel.backup.export"),
                     CityAction::ExportBackup,
                     COLOR_ACCENT_TEAL,
+                    true,
                 );
                 spawn_small_button(
                     backup_row,
@@ -995,12 +1019,14 @@ pub(super) fn spawn_settings_modal(
                     } else {
                         COLOR_PANEL_CARD
                     },
+                    true,
                 );
                 spawn_small_button(
                     backup_row,
                     i18n.t("city.button.title"),
                     CityAction::BackToTitle,
                     COLOR_PANEL_CARD,
+                    true,
                 );
             });
         },
@@ -1177,6 +1203,7 @@ pub(super) fn spawn_patrons_modal(
                             } else {
                                 COLOR_TEXT_ON_ACCENT
                             },
+                            true,
                         );
                     });
             }
@@ -1341,6 +1368,7 @@ pub(super) fn spawn_raids_modal(
                                 } else {
                                     COLOR_BUTTON_DISABLED
                                 },
+                                has_energy,
                             );
                         } else {
                             spawn_resource_pill(
@@ -1397,6 +1425,7 @@ pub(super) fn spawn_achievements_modal(
                             ),
                             CityAction::ClaimAllAchievements,
                             COLOR_ACCENT_GREEN,
+                            true,
                         );
                     });
             }
@@ -1522,6 +1551,7 @@ pub(super) fn spawn_achievements_modal(
                                 i18n.t("city.panel.feats.claim"),
                                 CityAction::ClaimAchievement(ach.id.clone()),
                                 COLOR_ACCENT_GREEN,
+                                true,
                             );
                         } else if claimed {
                             spawn_resource_pill(
@@ -1624,6 +1654,7 @@ pub(super) fn spawn_expedition_boons_modal(
                         } else {
                             Color::srgba(0.32, 0.14, 0.16, 0.95)
                         },
+                        true,
                     );
                 });
         },
@@ -1796,6 +1827,7 @@ pub(super) fn spawn_login_calendar_modal(
                             CityAction::ClaimLoginTribute,
                             COLOR_ACCENT_GOLD,
                             COLOR_TEXT_DARK,
+                            true,
                         );
                     });
             }
@@ -1885,6 +1917,7 @@ pub(super) fn spawn_chapter_dialogue_modal(
                         CityAction::CloseModal,
                         COLOR_ACCENT_GOLD,
                         COLOR_TEXT_DARK,
+                        true,
                     );
                 });
         },

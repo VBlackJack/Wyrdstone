@@ -506,6 +506,7 @@ fn spawn_city_tree(
                             } else {
                                 COLOR_BUTTON_DISABLED
                             },
+                            can_drink,
                         );
                     }
                 });
@@ -545,6 +546,7 @@ fn spawn_city_tree(
                                     CityAction::CollectAllHarvests,
                                     COLOR_ACCENT_GOLD,
                                     COLOR_TEXT_DARK,
+                                    true,
                                 );
                             }
                             let daily_ready = ctx.city.is_daily_available(today_day_index());
@@ -589,12 +591,14 @@ fn spawn_city_tree(
                                 } else {
                                     COLOR_TEXT_PRIMARY
                                 },
+                                daily_ready,
                             );
                             spawn_small_button(
                                 btns,
                                 i18n.t("city.panel.raids.button"),
                                 CityAction::ToggleModal(ActiveModal::Raids),
                                 COLOR_ACCENT_CRIMSON,
+                                true,
                             );
                             let exp_lbl = if let Some(run) = &ctx.active_expedition {
                                 i18n.t_fmt(
@@ -613,6 +617,7 @@ fn spawn_city_tree(
                                 } else {
                                     COLOR_ACCENT_TEAL
                                 },
+                                true,
                             );
                         });
 
@@ -657,6 +662,7 @@ fn spawn_city_tree(
                                 } else {
                                     COLOR_PANEL_CARD
                                 },
+                                true,
                             );
                             let claimable_cols =
                                 ctx.city.claimable_collection_count(&ctx.data.collections);
@@ -683,6 +689,7 @@ fn spawn_city_tree(
                                 } else {
                                     COLOR_PANEL_CARD
                                 },
+                                true,
                             );
                             spawn_small_button(
                                 btns,
@@ -693,12 +700,14 @@ fn spawn_city_tree(
                                 } else {
                                     COLOR_PANEL_CARD
                                 },
+                                true,
                             );
                             spawn_small_button(
                                 btns,
                                 i18n.t("city.panel.shop.button"),
                                 CityAction::ToggleModal(ActiveModal::Shop),
                                 COLOR_PANEL_CARD,
+                                true,
                             );
                             let tribute_ready =
                                 ctx.city.is_login_tribute_available(today_day_index());
@@ -718,6 +727,7 @@ fn spawn_city_tree(
                                 } else {
                                     COLOR_TEXT_PRIMARY
                                 },
+                                true,
                             );
                         });
                 });
@@ -757,30 +767,35 @@ fn spawn_city_tree(
                         } else {
                             COLOR_TEXT_PRIMARY
                         },
+                        true,
                     );
                     spawn_small_button(
                         menu,
                         i18n.t("city.panel.patrons.button"),
                         CityAction::ToggleModal(ActiveModal::Patrons),
                         COLOR_PANEL_CARD,
+                        true,
                     );
                     spawn_small_button(
                         menu,
                         i18n.t("city.panel.stats.button"),
                         CityAction::ToggleModal(ActiveModal::Stats),
                         COLOR_PANEL_CARD,
+                        true,
                     );
                     spawn_small_button(
                         menu,
                         i18n.t("city.panel.settings.button"),
                         CityAction::ToggleModal(ActiveModal::Settings),
                         COLOR_PANEL_CARD,
+                        true,
                     );
                     spawn_small_button(
                         menu,
                         i18n.t("city.panel.help.button"),
                         CityAction::ToggleModal(ActiveModal::Help),
                         COLOR_PANEL_CARD,
+                        true,
                     );
                 });
             }
@@ -861,6 +876,7 @@ fn spawn_city_tree(
                             i18n.t("city.panel.quests.complete"),
                             CityAction::ClaimQuest(quest.id.clone()),
                             COLOR_ACCENT_GREEN,
+                            true,
                         );
                     } else {
                         spawn_small_button(
@@ -868,6 +884,7 @@ fn spawn_city_tree(
                             i18n.t("city.panel.quests.go"),
                             CityAction::FocusActiveQuest,
                             COLOR_ACCENT_TEAL,
+                            true,
                         );
                     }
                 } else {
@@ -923,6 +940,7 @@ fn spawn_city_tree(
                         CityAction::AdvanceTutorial,
                         COLOR_ACCENT_GOLD,
                         COLOR_TEXT_DARK,
+                        true,
                     );
                 });
             }
@@ -1667,13 +1685,17 @@ pub(crate) fn readable_text_color(bg_color: Color, text_color: Color) -> Color {
     }
 }
 
+/// Fixed beacon glow level used instead of the pulse when reduced motion is on.
+const BEACON_STATIC_GLOW: f32 = 0.5;
+
 pub(crate) fn spawn_small_button(
     parent: &mut ChildBuilder,
     label: &str,
     action: CityAction,
     bg_color: Color,
+    enabled: bool,
 ) {
-    spawn_small_button_colored(parent, label, action, bg_color, COLOR_TEXT_PRIMARY);
+    spawn_small_button_colored(parent, label, action, bg_color, COLOR_TEXT_PRIMARY, enabled);
 }
 
 pub(crate) fn spawn_small_button_colored(
@@ -1682,6 +1704,7 @@ pub(crate) fn spawn_small_button_colored(
     action: CityAction,
     bg_color: Color,
     text_color: Color,
+    enabled: bool,
 ) {
     let text_color = readable_text_color(bg_color, text_color);
     let mut cmd = parent.spawn((
@@ -1699,7 +1722,7 @@ pub(crate) fn spawn_small_button_colored(
         BorderColor(COLOR_PANEL_BORDER),
         BorderRadius::all(Val::Px(6.0)),
     ));
-    if bg_color == COLOR_BUTTON_DISABLED {
+    if !enabled {
         cmd.insert(NoButtonScale);
     }
     cmd.with_children(|btn| {
@@ -1720,6 +1743,7 @@ pub(crate) fn spawn_full_button(
     action: CityAction,
     bg_color: Color,
     text_color: Color,
+    enabled: bool,
 ) {
     let text_color = readable_text_color(bg_color, text_color);
     let mut cmd = parent.spawn((
@@ -1738,7 +1762,7 @@ pub(crate) fn spawn_full_button(
         BorderColor(COLOR_PANEL_BORDER),
         BorderRadius::all(Val::Px(8.0)),
     ));
-    if bg_color == COLOR_BUTTON_DISABLED {
+    if !enabled {
         cmd.insert(NoButtonScale);
     }
     cmd.with_children(|btn| {
@@ -2888,7 +2912,7 @@ pub fn animate_city_ambience(
     for (entity, mut anim, mut tf) in &mut build_anim_q {
         anim.elapsed += dt;
         let u = (anim.elapsed / anim.duration).clamp(0.0, 1.0);
-        if u >= 1.0 {
+        if u >= 1.0 || ctx.reduced_motion {
             tf.scale = Vec3::ONE;
             commands.entity(entity).remove::<BuildingBuildAnim>();
         } else {
@@ -2907,7 +2931,7 @@ pub fn animate_city_ambience(
     for (entity, mut ring, mut tf, mut img) in &mut build_ring_q {
         ring.elapsed += dt;
         let u = (ring.elapsed / ring.duration).clamp(0.0, 1.0);
-        if u >= 1.0 {
+        if u >= 1.0 || ctx.reduced_motion {
             commands.entity(entity).despawn();
         } else {
             let eased = 1.0 - (1.0 - u) * (1.0 - u);
@@ -2916,7 +2940,11 @@ pub fn animate_city_ambience(
         }
     }
 
-    let glow = 0.5 + 0.5 * (t * 4.5).sin();
+    let glow = if ctx.reduced_motion {
+        BEACON_STATIC_GLOW
+    } else {
+        0.5 + 0.5 * (t * 4.5).sin()
+    };
     let beacon_col = Color::srgb(0.95 + 0.05 * glow, 0.72 + 0.25 * glow, 0.24 + 0.45 * glow);
     for mut border in &mut beacon_q {
         border.0 = beacon_col;

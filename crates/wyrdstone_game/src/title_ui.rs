@@ -465,6 +465,7 @@ pub fn handle_title_buttons(
 
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
         ctx.confirm_reset = false;
+        ctx.has_existing_save = true;
         next_state.set(AppState::FjordCity);
         return;
     }
@@ -492,6 +493,7 @@ pub fn handle_title_buttons(
         match action {
             TitleAction::EnterFjord => {
                 ctx.confirm_reset = false;
+                ctx.has_existing_save = true;
                 next_state.set(AppState::FjordCity);
             }
             TitleAction::NewSaga => {
@@ -519,11 +521,8 @@ pub fn handle_title_buttons(
             }
             TitleAction::ToggleAudio => {
                 ctx.confirm_reset = false;
+                // The title rebuilds on the next frame through `sound_bank` change detection.
                 toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
-                for entity in &roots {
-                    commands.entity(entity).despawn_recursive();
-                }
-                spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
                 return;
             }
         }

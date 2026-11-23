@@ -211,7 +211,8 @@ impl GameContext {
                     let cap = saved.city.max_energy(&data.balance);
                     saved.city.energy = cap;
                 }
-                (saved.city, true, anchor)
+                let progressed = has_saved_progress(&saved.city, tutorial_step);
+                (saved.city, progressed || has_unreadable_save, anchor)
             }
             None => (CityState::new(&data.balance), has_unreadable_save, now),
         };
@@ -280,7 +281,6 @@ impl GameContext {
     /// While the existing save is unreadable (`save_read_only`), nothing is written until the
     /// unreadable file has been copied aside.
     pub fn persist(&mut self) {
-        self.has_existing_save = true;
         let Some(path) = self.save_path.clone() else {
             return;
         };
@@ -406,6 +406,7 @@ impl GameContext {
         self.city = saved.city;
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.lift_save_read_only();
+        self.has_existing_save = true;
         self.persist();
         Ok(())
     }
@@ -450,6 +451,7 @@ impl GameContext {
         self.celebration_timer_secs = 0.0;
         self.pending_dialogue = None;
         self.energy_regen_anchor_unix_secs = now_unix_secs();
+        self.has_existing_save = true;
         self.persist();
     }
 
@@ -646,6 +648,14 @@ pub fn today_day_index() -> u64 {
 }
 
 /// Regeneration speed as a percentage (100 = base rate), raised by the Mead Hall tier.
+/// True when a loaded save holds real progress, so the title offers Continue instead of Play.
+fn has_saved_progress(city: &CityState, tutorial_step: u8) -> bool {
+    tutorial_step > 0
+        || city.stats.total_victories > 0
+        || !city.building_tiers.is_empty()
+        || !city.completed_levels.is_empty()
+}
+
 fn regen_speed_pct(city: &CityState, balance: &BalanceConfig) -> u64 {
     100 + u64::from(city.compute_bonuses(balance).energy_regen_speed_pct)
 }
@@ -706,5 +716,47 @@ pub fn tick_energy_regen(mut ctx: ResMut<GameContext>) {
     }
     if gained > 0 {
         ctx.persist();
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    fn fresh_city() -> CityState {
+        let balance = BalanceConfig::from_ron_str(include_str!("../../../assets/data/balance.ron"))
+            .expect("bundled balance parses");
+        CityState::new(&balance)
+    }
+
+    #[test]
+    fn fresh_city_has_no_progress() {
+        assert!(!has_saved_progress(&fresh_city(), 0));
+    }
+
+    #[test]
+    fn tutorial_step_counts_as_progress() {
+        assert!(has_saved_progress(&fresh_city(), 1));
+    }
+
+    #[test]
+    fn victories_count_as_progress() {
+        let mut city = fresh_city();
+        city.stats.total_victories = 1;
+        assert!(has_saved_progress(&city, 0));
+    }
+
+    #[test]
+    fn built_tiers_count_as_progress() {
+        let mut city = fresh_city();
+        city.building_tiers.insert("great_hall".to_string(), 1);
+        assert!(has_saved_progress(&city, 0));
+    }
+
+    #[test]
+    fn completed_levels_count_as_progress() {
+        let mut city = fresh_city();
+        city.completed_levels.insert("lvl_1".to_string());
+        assert!(has_saved_progress(&city, 0));
     }
 }

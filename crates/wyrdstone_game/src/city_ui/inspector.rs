@@ -86,6 +86,7 @@ pub(super) fn spawn_building_inspector(
                 i18n.t("city.panel.amulets.close"),
                 CityAction::CloseInspector,
                 COLOR_ACCENT_CRIMSON,
+                true,
             );
         });
 
@@ -287,6 +288,7 @@ pub(super) fn spawn_building_inspector(
                                 } else {
                                     COLOR_TEXT_PRIMARY
                                 },
+                                true,
                             );
                             if has_mastery {
                                 let m_id = b.mastery_level_id.as_deref().unwrap_or("");
@@ -310,6 +312,7 @@ pub(super) fn spawn_building_inspector(
                                     } else {
                                         COLOR_TEXT_PRIMARY
                                     },
+                                    true,
                                 );
                             }
                             if has_legendary {
@@ -330,6 +333,7 @@ pub(super) fn spawn_building_inspector(
                                         COLOR_PANEL_CARD
                                     },
                                     COLOR_TEXT_PRIMARY,
+                                    true,
                                 );
                             }
                         });
@@ -807,9 +811,11 @@ pub(super) fn spawn_building_inspector(
                 CityAction::PlayBuildingLevel(preview_level_id.to_string()),
                 play_bg,
                 play_fg,
+                can_play,
             );
 
-            let upg_bg = if unlocked && next_cost.is_some() && can_afford {
+            let can_upgrade_now = unlocked && next_cost.is_some() && can_afford;
+            let upg_bg = if can_upgrade_now {
                 COLOR_ACCENT_GREEN
             } else {
                 COLOR_BUTTON_DISABLED
@@ -823,11 +829,12 @@ pub(super) fn spawn_building_inspector(
                 },
                 CityAction::UpgradeBuilding(b.id.clone()),
                 upg_bg,
-                if upg_bg == COLOR_ACCENT_GREEN {
+                if can_upgrade_now {
                     COLOR_TEXT_ON_ACCENT
                 } else {
                     COLOR_TEXT_PRIMARY
                 },
+                can_upgrade_now,
             );
         });
 }
