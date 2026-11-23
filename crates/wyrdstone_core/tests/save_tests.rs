@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use wyrdstone_core::save::{LoadOutcome, ReadOnlyResolution};
+use wyrdstone_core::save::{LoadOutcome, ReadOnlyResolution, SAVE_SCHEMA_VERSION};
 use wyrdstone_core::{GameDataBundle, Language, SaveData};
 
 static DIR_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -343,4 +343,155 @@ fn tampered_save_is_clamped_on_load_and_cannot_overflow() {
     city.apply_offline_energy_regen(u64::MAX, &data.balance);
     assert_eq!(city.resources.wood, u32::MAX);
     assert_eq!(city.glory, u32::MAX);
+}
+
+/// JSON of a save claiming `schema_version`, with a field the current build does not know.
+fn versioned_json(tutorial_step: u8, schema_version: u32, unknown_field: bool) -> String {
+    let mut value: serde_json::Value =
+        serde_json::from_str(&sample_save(tutorial_step, Language::En).to_json().unwrap()).unwrap();
+    value["schema_version"] = serde_json::json!(schema_version);
+    if unknown_field {
+        value["field_from_the_future"] = serde_json::json!({ "x": 1 });
+    }
+    serde_json::to_string_pretty(&value).unwrap()
+}
+
+fn newer_json(tutorial_step: u8) -> String {
+    versioned_json(tutorial_step, SAVE_SCHEMA_VERSION + 1, true)
+}
+
+fn dir_entries(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn newer_primary_reports_newer_version_and_stays_untouched() {
+    let dir = TempDir::new("newer_primary");
+    let path = dir.save_path();
+    let raw = newer_json(2);
+    std::fs::write(&path, &raw).unwrap();
+    match SaveData::load_with_recovery(&path) {
+        LoadOutcome::NewerVersion { found, backup } => {
+            assert_eq!(found, SAVE_SCHEMA_VERSION + 1);
+            assert!(backup.is_none());
+        }
+        other => panic!("expected NewerVersion, got {other:?}"),
+    }
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+    assert!(corrupt_copies(&path).is_empty());
+    assert!(!path.with_extension("json.corrupt").exists());
+    assert_eq!(dir_entries(&dir.0), vec!["wyrdstone_save.json".to_string()]);
+}
+
+#[test]
+fn newer_primary_with_current_backup_provides_the_backup() {
+    let dir = TempDir::new("newer_with_bak");
+    let path = dir.save_path();
+    std::fs::write(&path, newer_json(2)).unwrap();
+    sample_save(4, Language::En)
+        .save_to_path(&SaveData::backup_path(&path))
+        .unwrap();
+    match SaveData::load_with_recovery(&path) {
+        LoadOutcome::NewerVersion { backup, .. } => {
+            assert_eq!(backup.expect("current backup is usable").tutorial_step, 4);
+        }
+        other => panic!("expected NewerVersion, got {other:?}"),
+    }
+    assert!(corrupt_copies(&path).is_empty());
+}
+
+#[test]
+fn newer_primary_with_newer_backup_provides_no_backup() {
+    let dir = TempDir::new("newer_with_newer_bak");
+    let path = dir.save_path();
+    std::fs::write(&path, newer_json(2)).unwrap();
+    std::fs::write(SaveData::backup_path(&path), newer_json(3)).unwrap();
+    match SaveData::load_with_recovery(&path) {
+        LoadOutcome::NewerVersion { backup, .. } => assert!(backup.is_none()),
+        other => panic!("expected NewerVersion, got {other:?}"),
+    }
+    assert!(corrupt_copies(&path).is_empty());
+}
+
+#[test]
+fn load_from_path_rejects_newer_file_without_corrupt_copy() {
+    let dir = TempDir::new("newer_load_from_path");
+    let path = dir.save_path();
+    let raw = newer_json(2);
+    std::fs::write(&path, &raw).unwrap();
+    let err = SaveData::load_from_path(&path).expect_err("newer file must be refused");
+    assert!(err.contains("newer version"), "unexpected error: {err}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+    assert!(!path.with_extension("json.corrupt").exists());
+    assert!(corrupt_copies(&path).is_empty());
+}
+
+#[test]
+fn resolve_read_only_keeps_newer_primary_blocked_without_new_files() {
+    let dir = TempDir::new("newer_resolve");
+    let path = dir.save_path();
+    std::fs::write(&path, newer_json(2)).unwrap();
+    let before = dir_entries(&dir.0);
+    assert_eq!(
+        SaveData::resolve_read_only(&path),
+        ReadOnlyResolution::StillBlocked
+    );
+    assert_eq!(dir_entries(&dir.0), before);
+}
+
+#[test]
+fn corrupt_json_is_still_preserved_by_load_from_path() {
+    let dir = TempDir::new("corrupt_load_from_path");
+    let path = dir.save_path();
+    std::fs::write(&path, "{ invalid json").unwrap();
+    assert!(SaveData::load_from_path(&path).is_err());
+    let copy = path.with_extension("json.corrupt");
+    assert_eq!(std::fs::read_to_string(copy).unwrap(), "{ invalid json");
+}
+
+#[test]
+fn older_schema_save_loads_at_the_current_version() {
+    let dir = TempDir::new("older_schema");
+    let path = dir.save_path();
+    std::fs::write(&path, versioned_json(3, SAVE_SCHEMA_VERSION - 1, false)).unwrap();
+    match SaveData::load_with_recovery(&path) {
+        LoadOutcome::Loaded(save) => {
+            assert_eq!(save.schema_version, SAVE_SCHEMA_VERSION);
+            assert_eq!(save.tutorial_step, 3);
+        }
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+    let loaded = SaveData::load_from_path(&path).unwrap().unwrap();
+    assert_eq!(loaded.schema_version, SAVE_SCHEMA_VERSION);
+}
+
+#[test]
+fn preserve_copy_writes_a_tagged_sibling_and_keeps_the_source() {
+    let dir = TempDir::new("preserve_copy");
+    let path = dir.save_path();
+    let raw = newer_json(2);
+    std::fs::write(&path, &raw).unwrap();
+    let copy = SaveData::preserve_copy(&path, "newer").unwrap();
+    assert_eq!(copy.parent(), path.parent());
+    assert!(copy
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("wyrdstone_save.json.newer-"));
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), raw);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+    assert!(corrupt_copies(&path).is_empty());
+}
+
+#[test]
+fn preserve_copy_fails_for_a_missing_source_and_creates_nothing() {
+    let dir = TempDir::new("preserve_copy_missing");
+    let path = dir.save_path();
+    assert!(SaveData::preserve_copy(&path, "newer").is_err());
+    assert!(dir_entries(&dir.0).is_empty());
 }
