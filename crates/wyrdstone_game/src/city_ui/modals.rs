@@ -1433,7 +1433,7 @@ pub(super) fn spawn_achievements_modal(
             sorted_achs.sort_by_key(|ach| {
                 let claimed = ctx.city.claimed_achievements.contains(&ach.id);
                 let (done, target) = achievement_progress(
-                    &ach.id,
+                    ach,
                     &ctx.city,
                     &ctx.data.buildings,
                     ctx.data.bosses.len(),
@@ -1450,7 +1450,7 @@ pub(super) fn spawn_achievements_modal(
             for ach in sorted_achs {
                 let claimed = ctx.city.claimed_achievements.contains(&ach.id);
                 let (done, target) = achievement_progress(
-                    &ach.id,
+                    ach,
                     &ctx.city,
                     &ctx.data.buildings,
                     ctx.data.bosses.len(),
@@ -1711,7 +1711,8 @@ pub(super) fn spawn_login_calendar_modal(
                 })
                 .with_children(|grid| {
                     for day in 1..=7u8 {
-                        let (res, tool) = CityState::login_tribute_reward(day);
+                        let (res, tool) =
+                            CityState::login_tribute_reward_with(day, &ctx.data.balance);
                         let is_claimed = if available {
                             day < current_day
                         } else {

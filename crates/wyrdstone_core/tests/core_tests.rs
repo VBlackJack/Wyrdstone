@@ -787,7 +787,12 @@ fn eye_of_odin_scales_boosters_and_watchtower_clan_rank_perks_apply() {
     assert_eq!(session.fury, ClanRank::Jarl.starting_fury());
 
     // Live achievement progress counter works.
-    let (done, target) = achievement_progress("ach_master_builder", &city, &data.buildings, 3);
+    let master_builder = data
+        .achievements
+        .iter()
+        .find(|a| a.id == "ach_master_builder")
+        .expect("master builder feat exists");
+    let (done, target) = achievement_progress(master_builder, &city, &data.buildings, 3);
     assert_eq!(done, 2);
     assert_eq!(target, data.buildings.len() as u64);
 

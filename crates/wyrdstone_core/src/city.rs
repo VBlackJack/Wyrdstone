@@ -17,12 +17,13 @@
 //! Fjord city-builder progression: resources, buildings, passive harvests, mastery, amulets, quests, and tools.
 
 use crate::achievements::{is_achievement_unlocked, AchievementDef, ClanRank};
-use crate::balance::BalanceConfig;
+use crate::balance::{BalanceConfig, BuildingBonusKind};
 use crate::board::ActiveTool;
 use crate::boss::BossDef;
 use crate::patron::PatronGod;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 /// Maximum mastery star rank per building location.
 pub const MAX_MASTERY_STARS: u8 = 5;
@@ -34,6 +35,39 @@ pub const MAX_AMULET_TIER: u8 = 3;
 pub const MAX_LEVEL_STARS: u8 = 3;
 /// Number of days in the Fjord Login Tribute cycle.
 pub const LOGIN_TRIBUTE_DAYS: u8 = 7;
+/// Identifier of the hub building whose tier gates every other building.
+pub const HUB_BUILDING_ID: &str = "great_hall";
+/// Fallback amulet tier step (percent) for resource bonus effects without an explicit `tier_step`.
+pub const DEFAULT_AMULET_RESOURCE_PER_TIER: u32 = 12;
+/// Fallback amulet tier step for extra moves effects without an explicit `tier_step`.
+pub const DEFAULT_AMULET_MOVES_PER_TIER: u32 = 1;
+/// Fallback amulet tier step (percent) for score bonus effects without an explicit `tier_step`.
+pub const DEFAULT_AMULET_SCORE_PER_TIER: u32 = 15;
+/// Fallback amulet tier step (percent) for extra time effects without an explicit `tier_step`.
+pub const DEFAULT_AMULET_TIME_PER_TIER: u32 = 15;
+/// Fallback amulet tier step for starting boosters effects without an explicit `tier_step`.
+pub const DEFAULT_AMULET_BOOSTERS_PER_TIER: u32 = 1;
+
+/// Balance document holding only required fields (zeroed); every tunable falls back to its
+/// serde default, which backs the legacy no-balance wrappers.
+const LEGACY_DEFAULTS_RON: &str =
+    "(default_board_cols: 0, default_board_rows: 0, points_per_tile: 0, \
+combo_multiplier_step: 0.0, booster_activation_bonus: 0, ice_break_bonus: 0, chain_break_bonus: 0, \
+crate_break_bonus: 0, relic_drop_bonus: 0, remaining_move_bonus: 0, max_energy: 0, \
+energy_cost_per_level: 0, energy_regen_seconds: 0, mead_refill_cost: 0, mead_refill_energy: 0, \
+starting_wood: 0, starting_stone: 0, starting_gold: 0, starting_mead: 0, starting_mjolnir: 0, \
+starting_surtr_ember: 0, starting_loki_shuffle: 0, starting_thor_bolt: 0, \
+starting_bifrost_prism: 0, starting_drakkar_charge: 0, swap_anim_seconds: 0.0, \
+clear_anim_seconds: 0.0, fall_anim_seconds: 0.0, swipe_threshold_px: 0.0)";
+
+/// Returns a balance whose tunables all hold their built-in defaults (current game numbers).
+fn legacy_defaults() -> &'static BalanceConfig {
+    static DEFAULTS: OnceLock<BalanceConfig> = OnceLock::new();
+    DEFAULTS.get_or_init(|| {
+        BalanceConfig::from_ron_str(LEGACY_DEFAULTS_RON)
+            .expect("legacy defaults document must parse")
+    })
+}
 
 /// Bundle of village resources used for costs and rewards.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +123,9 @@ pub struct AmuletDef {
     pub desc_key: String,
     pub cost: ResourceBundle,
     pub effect: AmuletEffect,
+    /// Effect gained per extra tier; `None` uses the named per-effect default.
+    #[serde(default)]
+    pub tier_step: Option<u32>,
 }
 
 /// Aggregate passive bonuses granted by all rebuilt village buildings and Clan Rank.
@@ -102,6 +139,17 @@ pub struct CityBonuses {
     pub fury_charge_bonus_pct: u32,
     pub starting_fury: u32,
     pub starting_boosters: u32,
+}
+
+/// Concrete perk granted each time a building is upgraded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UpgradePerk {
+    /// Grants one charge of the given Runic Tool.
+    GrantTool(ActiveTool),
+    /// Raises current endurance by the per-tier max endurance bonus (may exceed the cap).
+    GainMaxEnergyBonus,
+    /// Refills endurance up to the effective cap.
+    RefillEnergy,
 }
 
 /// Static building definition loaded from `assets/data/buildings.ron`.
@@ -131,6 +179,9 @@ pub struct BuildingDef {
     pub glory_per_tier: u32,
     #[serde(default)]
     pub harvest_per_tier: ResourceBundle,
+    /// Perks applied on every upgrade, in order.
+    #[serde(default)]
+    pub upgrade_perks: Vec<UpgradePerk>,
 }
 
 /// Completion requirement for a Saga quest.
@@ -395,71 +446,21 @@ impl CityState {
 
     /// Returns the escalating reward bundle and optional Runic Tool for a given login day (1..=7).
     pub fn login_tribute_reward(day: u8) -> (ResourceBundle, Option<ActiveTool>) {
-        match day {
-            1 => (
-                ResourceBundle {
-                    wood: 35,
-                    stone: 20,
-                    gold: 30,
-                    mead: 0,
-                },
-                None,
-            ),
-            2 => (
-                ResourceBundle {
-                    wood: 25,
-                    stone: 40,
-                    gold: 35,
-                    mead: 10,
-                },
-                None,
-            ),
-            3 => (
-                ResourceBundle {
-                    wood: 30,
-                    stone: 30,
-                    gold: 50,
-                    mead: 10,
-                },
-                Some(ActiveTool::Mjolnir),
-            ),
-            4 => (
-                ResourceBundle {
-                    wood: 60,
-                    stone: 55,
-                    gold: 60,
-                    mead: 15,
-                },
-                None,
-            ),
-            5 => (
-                ResourceBundle {
-                    wood: 50,
-                    stone: 50,
-                    gold: 75,
-                    mead: 15,
-                },
-                Some(ActiveTool::ThorBolt),
-            ),
-            6 => (
-                ResourceBundle {
-                    wood: 75,
-                    stone: 75,
-                    gold: 95,
-                    mead: 25,
-                },
-                None,
-            ),
-            _ => (
-                ResourceBundle {
-                    wood: 100,
-                    stone: 100,
-                    gold: 140,
-                    mead: 35,
-                },
-                Some(ActiveTool::BifrostPrism),
-            ),
-        }
+        Self::login_tribute_reward_with(day, legacy_defaults())
+    }
+
+    /// Returns the login tribute reward of a day (1..=7) from the balance table; days outside the
+    /// table use its last entry.
+    pub fn login_tribute_reward_with(
+        day: u8,
+        balance: &BalanceConfig,
+    ) -> (ResourceBundle, Option<ActiveTool>) {
+        let table = &balance.login_tribute_rewards;
+        let entry = usize::from(day)
+            .checked_sub(1)
+            .and_then(|idx| table.get(idx))
+            .or_else(|| table.last());
+        entry.map_or((ResourceBundle::default(), None), |e| (e.resources, e.tool))
     }
 
     /// Claims today's 7-day Fjord Login Tribute if available, granting resources and optional tool.
@@ -467,11 +468,20 @@ impl CityState {
         &mut self,
         today_day_index: u64,
     ) -> Option<(u8, ResourceBundle, Option<ActiveTool>)> {
+        self.try_claim_login_tribute_with(today_day_index, legacy_defaults())
+    }
+
+    /// Claims today's Fjord Login Tribute using the balance reward table.
+    pub fn try_claim_login_tribute_with(
+        &mut self,
+        today_day_index: u64,
+        balance: &BalanceConfig,
+    ) -> Option<(u8, ResourceBundle, Option<ActiveTool>)> {
         if !self.is_login_tribute_available(today_day_index) {
             return None;
         }
         let day = self.next_login_tribute_day(today_day_index);
-        let (res, tool) = Self::login_tribute_reward(day);
+        let (res, tool) = Self::login_tribute_reward_with(day, balance);
         self.resources.add(&res);
         if let Some(t) = tool {
             self.tools.grant_one(t);
@@ -510,7 +520,7 @@ impl CityState {
 
     /// Returns true if a building is unlocked based on Great Hall tier.
     pub fn is_building_unlocked(&self, def: &BuildingDef) -> bool {
-        self.building_tier("great_hall") >= def.requires_great_hall_tier
+        self.building_tier(HUB_BUILDING_ID) >= def.requires_great_hall_tier
     }
 
     /// Returns the cost of the next upgrade tier, if not yet maxed.
@@ -526,20 +536,48 @@ impl CityState {
     /// Computes aggregate passive bonuses granted by all rebuilt buildings and Clan Rank.
     pub fn compute_bonuses(&self, balance: &BalanceConfig) -> CityBonuses {
         let rank = self.clan_rank_with_balance(balance);
-        CityBonuses {
-            extra_max_energy: self.building_tier("great_hall") * balance.great_hall_energy_per_tier,
-            score_bonus_pct: self.building_tier("forge") * balance.forge_score_pct_per_tier,
-            resource_bonus_pct: self.building_tier("longship_dock")
-                * balance.dock_resource_pct_per_tier
-                + rank.resource_bonus_pct(),
-            extra_moves: self.building_tier("odin_shrine") * balance.shrine_moves_per_tier,
-            energy_regen_speed_pct: self.building_tier("meadery")
-                * balance.meadery_regen_pct_per_tier,
-            fury_charge_bonus_pct: self.building_tier("watchtower")
-                * balance.watchtower_fury_pct_per_tier,
-            starting_fury: rank.starting_fury(),
-            starting_boosters: u32::from(self.stats.win_streak >= 2),
+        let mut bonuses = CityBonuses {
+            starting_fury: rank.starting_fury_with(balance),
+            starting_boosters: if self.stats.win_streak >= balance.win_streak_booster_threshold {
+                balance.win_streak_starting_boosters
+            } else {
+                0
+            },
+            ..CityBonuses::default()
+        };
+        for binding in &balance.building_bonuses {
+            let tier = self.building_tier(&binding.building_id);
+            let (slot, per_tier) = match binding.kind {
+                BuildingBonusKind::ExtraMaxEnergy => (
+                    &mut bonuses.extra_max_energy,
+                    balance.great_hall_energy_per_tier,
+                ),
+                BuildingBonusKind::ScoreBonusPct => (
+                    &mut bonuses.score_bonus_pct,
+                    balance.forge_score_pct_per_tier,
+                ),
+                BuildingBonusKind::ResourceBonusPct => (
+                    &mut bonuses.resource_bonus_pct,
+                    balance.dock_resource_pct_per_tier,
+                ),
+                BuildingBonusKind::ExtraMoves => {
+                    (&mut bonuses.extra_moves, balance.shrine_moves_per_tier)
+                }
+                BuildingBonusKind::EnergyRegenSpeedPct => (
+                    &mut bonuses.energy_regen_speed_pct,
+                    balance.meadery_regen_pct_per_tier,
+                ),
+                BuildingBonusKind::FuryChargeBonusPct => (
+                    &mut bonuses.fury_charge_bonus_pct,
+                    balance.watchtower_fury_pct_per_tier,
+                ),
+            };
+            *slot = slot.saturating_add(tier.saturating_mul(per_tier));
         }
+        bonuses.resource_bonus_pct = bonuses
+            .resource_bonus_pct
+            .saturating_add(rank.resource_bonus_pct_with(balance));
+        bonuses
     }
 
     /// Increments the active win streak and updates the lifetime best streak.
@@ -639,29 +677,19 @@ impl CityState {
         let new_tier = self.building_tier(&def.id).saturating_add(1);
         self.building_tiers.insert(def.id.clone(), new_tier);
         self.glory = self.glory.saturating_add(def.glory_per_tier);
-        match def.id.as_str() {
-            "forge" => {
-                self.tools.grant_one(ActiveTool::Mjolnir);
-                self.tools.grant_one(ActiveTool::ThorBolt);
+        for perk in &def.upgrade_perks {
+            match *perk {
+                UpgradePerk::GrantTool(tool) => self.tools.grant_one(tool),
+                UpgradePerk::GainMaxEnergyBonus => {
+                    self.energy = self
+                        .energy
+                        .saturating_add(balance.great_hall_energy_per_tier);
+                }
+                UpgradePerk::RefillEnergy => {
+                    let cap = self.max_energy(balance);
+                    self.energy = self.energy.max(cap);
+                }
             }
-            "odin_shrine" => {
-                self.tools.grant_one(ActiveTool::BifrostPrism);
-                self.tools.grant_one(ActiveTool::DrakkarCharge);
-            }
-            "great_hall" => {
-                self.energy = self
-                    .energy
-                    .saturating_add(balance.great_hall_energy_per_tier);
-            }
-            "meadery" => {
-                let cap = self.max_energy(balance);
-                self.energy = self.energy.max(cap);
-            }
-            "watchtower" => {
-                self.tools.grant_one(ActiveTool::BifrostPrism);
-                self.tools.grant_one(ActiveTool::LokiShuffle);
-            }
-            _ => {}
         }
         Ok(new_tier)
     }
@@ -752,18 +780,23 @@ impl CityState {
     /// Scales an amulet's base effect to an explicit tier (`1..=3`).
     pub fn scaled_amulet_effect_for_tier(def: &AmuletDef, tier: u8) -> AmuletEffect {
         let extra_tiers = tier.max(1).saturating_sub(1) as u32;
+        let step = |default: u32| def.tier_step.unwrap_or(default);
         match def.effect {
-            AmuletEffect::ResourceBonusPct(base) => {
-                AmuletEffect::ResourceBonusPct(base + extra_tiers * 12)
+            AmuletEffect::ResourceBonusPct(base) => AmuletEffect::ResourceBonusPct(
+                base + extra_tiers * step(DEFAULT_AMULET_RESOURCE_PER_TIER),
+            ),
+            AmuletEffect::ExtraMoves(base) => {
+                AmuletEffect::ExtraMoves(base + extra_tiers * step(DEFAULT_AMULET_MOVES_PER_TIER))
             }
-            AmuletEffect::ExtraMoves(base) => AmuletEffect::ExtraMoves(base + extra_tiers),
-            AmuletEffect::ScoreBonusPct(base) => {
-                AmuletEffect::ScoreBonusPct(base + extra_tiers * 15)
+            AmuletEffect::ScoreBonusPct(base) => AmuletEffect::ScoreBonusPct(
+                base + extra_tiers * step(DEFAULT_AMULET_SCORE_PER_TIER),
+            ),
+            AmuletEffect::ExtraTimePct(base) => {
+                AmuletEffect::ExtraTimePct(base + extra_tiers * step(DEFAULT_AMULET_TIME_PER_TIER))
             }
-            AmuletEffect::ExtraTimePct(base) => AmuletEffect::ExtraTimePct(base + extra_tiers * 15),
-            AmuletEffect::StartingBoosters(base) => {
-                AmuletEffect::StartingBoosters(base + extra_tiers)
-            }
+            AmuletEffect::StartingBoosters(base) => AmuletEffect::StartingBoosters(
+                base + extra_tiers * step(DEFAULT_AMULET_BOOSTERS_PER_TIER),
+            ),
         }
     }
 
@@ -851,14 +884,11 @@ impl CityState {
         *wins = wins.saturating_add(1);
         let new_stars = self.building_mastery_stars(building_id);
         if new_stars > prev_stars {
-            let tool = match new_stars {
-                1 => ActiveTool::Mjolnir,
-                2 => ActiveTool::SurtrEmber,
-                3 => ActiveTool::ThorBolt,
-                4 => ActiveTool::BifrostPrism,
-                _ => ActiveTool::DrakkarCharge,
-            };
-            self.tools.grant_one(tool);
+            let ladder = &balance.mastery_star_tools;
+            let rung = usize::from(new_stars).saturating_sub(1);
+            if let Some(&tool) = ladder.get(rung).or_else(|| ladder.last()) {
+                self.tools.grant_one(tool);
+            }
         }
         self.glory = self.glory.saturating_add(balance.victory_glory);
         self.stats.total_victories = self.stats.total_victories.saturating_add(1);
@@ -870,9 +900,19 @@ impl CityState {
         self.stats.last_daily_day_index < day_index
     }
 
-    /// Applies the Daily Trial streak multiplier (`+10%` per consecutive day beyond day 1).
+    /// Applies the default Daily Trial streak multiplier (`+10%` per consecutive day beyond day 1).
     pub fn scale_daily_rewards(rewards: &ResourceBundle, streak: u32) -> ResourceBundle {
-        let streak_bonus_pct = u128::from(streak.saturating_sub(1)) * 10;
+        Self::scale_daily_rewards_with(rewards, streak, legacy_defaults())
+    }
+
+    /// Applies the Daily Trial streak multiplier using the balance percent per extra streak day.
+    pub fn scale_daily_rewards_with(
+        rewards: &ResourceBundle,
+        streak: u32,
+        balance: &BalanceConfig,
+    ) -> ResourceBundle {
+        let streak_bonus_pct = u128::from(streak.saturating_sub(1))
+            * u128::from(balance.daily_streak_bonus_pct_per_day);
         let scale = |base: u32| -> u32 {
             let bonus = u128::from(base) * streak_bonus_pct / 100;
             u32::try_from(u128::from(base) + bonus).unwrap_or(u32::MAX)
@@ -899,18 +939,16 @@ impl CityState {
         } else {
             1
         };
-        let scaled_rewards = Self::scale_daily_rewards(rewards, new_streak);
+        let scaled_rewards = Self::scale_daily_rewards_with(rewards, new_streak, balance);
         self.resources.add(&scaled_rewards);
         self.stats.last_daily_day_index = day_index;
         self.stats.daily_streak = new_streak;
         self.stats.daily_completions = self.stats.daily_completions.saturating_add(1);
         self.stats.total_victories = self.stats.total_victories.saturating_add(1);
-        self.tools.grant_one(ActiveTool::BifrostPrism);
-        if new_streak >= 3 {
-            self.tools.grant_one(ActiveTool::SurtrEmber);
-        }
-        if new_streak >= MAX_DAILY_STREAK_CYCLE {
-            self.tools.grant_one(ActiveTool::DrakkarCharge);
+        for reward in &balance.daily_streak_tool_rewards {
+            if new_streak >= reward.min_streak {
+                self.tools.grant_one(reward.tool);
+            }
         }
         self.glory = self.glory.saturating_add(balance.daily_glory);
         self.bump_win_streak();
@@ -1075,9 +1113,11 @@ impl CityState {
         self.stats.best_expedition_wave = self.stats.best_expedition_wave.max(wave);
         self.stats.total_victories = self.stats.total_victories.saturating_add(1);
         self.bump_win_streak();
-        self.glory = self
-            .glory
-            .saturating_add(balance.victory_glory.saturating_add(wave.saturating_mul(5)));
+        self.glory = self.glory.saturating_add(
+            balance
+                .victory_glory
+                .saturating_add(wave.saturating_mul(balance.expedition_glory_per_wave)),
+        );
     }
 
     /// Returns the number of unlocked Skalds' Feats ready to claim.
@@ -1091,7 +1131,7 @@ impl CityState {
             .iter()
             .filter(|ach| {
                 !self.claimed_achievements.contains(&ach.id)
-                    && is_achievement_unlocked(&ach.id, self, buildings, total_bosses)
+                    && is_achievement_unlocked(ach, self, buildings, total_bosses)
             })
             .count()
     }
@@ -1120,7 +1160,7 @@ impl CityState {
         let Some(ach) = achievements.iter().find(|a| a.id == ach_id) else {
             return false;
         };
-        if !is_achievement_unlocked(ach_id, self, buildings, total_bosses) {
+        if !is_achievement_unlocked(ach, self, buildings, total_bosses) {
             return false;
         }
         self.claimed_achievements.insert(ach_id.to_string());
@@ -1128,4 +1168,37 @@ impl CityState {
         self.glory = self.glory.saturating_add(ach.glory);
         true
     }
+}
+
+/// Checks structural invariants of the village content definitions and returns every problem found.
+pub fn validate_city_content(
+    buildings: &[BuildingDef],
+    amulets: &[AmuletDef],
+    achievements: &[AchievementDef],
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    if !buildings.iter().any(|b| b.id == HUB_BUILDING_ID) {
+        problems.push(format!(
+            "buildings: hub building '{HUB_BUILDING_ID}' is missing"
+        ));
+    }
+    for amulet in amulets {
+        if amulet.tier_step == Some(0) {
+            problems.push(format!("amulets: '{}' has a zero tier_step", amulet.id));
+        }
+    }
+    for ach in achievements {
+        match ach.condition {
+            None => problems.push(format!("achievements: '{}' has no condition", ach.id)),
+            Some(condition) => {
+                if condition.threshold() == Some(0) {
+                    problems.push(format!(
+                        "achievements: '{}' has a threshold below 1",
+                        ach.id
+                    ));
+                }
+            }
+        }
+    }
+    problems
 }

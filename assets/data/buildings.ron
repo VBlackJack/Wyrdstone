@@ -21,6 +21,7 @@
         ],
         glory_per_tier: 25,
         harvest_per_tier: ResourceBundle(wood: 10, stone: 0, gold: 15, mead: 0),
+        upgrade_perks: [GainMaxEnergyBonus],
     ),
     BuildingDef(
         id: "forge",
@@ -43,6 +44,7 @@
         ],
         glory_per_tier: 30,
         harvest_per_tier: ResourceBundle(wood: 0, stone: 15, gold: 12, mead: 0),
+        upgrade_perks: [GrantTool(Mjolnir), GrantTool(ThorBolt)],
     ),
     BuildingDef(
         id: "longship_dock",
@@ -65,6 +67,7 @@
         ],
         glory_per_tier: 35,
         harvest_per_tier: ResourceBundle(wood: 15, stone: 0, gold: 15, mead: 0),
+        upgrade_perks: [],
     ),
     BuildingDef(
         id: "odin_shrine",
@@ -87,6 +90,7 @@
         ],
         glory_per_tier: 45,
         harvest_per_tier: ResourceBundle(wood: 0, stone: 5, gold: 18, mead: 6),
+        upgrade_perks: [GrantTool(BifrostPrism), GrantTool(DrakkarCharge)],
     ),
     BuildingDef(
         id: "meadery",
@@ -109,6 +113,7 @@
         ],
         glory_per_tier: 25,
         harvest_per_tier: ResourceBundle(wood: 8, stone: 0, gold: 0, mead: 10),
+        upgrade_perks: [RefillEnergy],
     ),
     BuildingDef(
         id: "watchtower",
@@ -131,5 +136,6 @@
         ],
         glory_per_tier: 40,
         harvest_per_tier: ResourceBundle(wood: 6, stone: 10, gold: 16, mead: 4),
+        upgrade_perks: [GrantTool(BifrostPrism), GrantTool(LokiShuffle)],
     ),
 ]

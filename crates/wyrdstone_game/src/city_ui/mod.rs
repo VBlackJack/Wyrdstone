@@ -2113,8 +2113,13 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::ClaimLoginTribute => {
-                if let Some((day, res, _tool)) = ctx.city.try_claim_login_tribute(today_day_index())
-                {
+                let claim = {
+                    let state = &mut *ctx;
+                    state
+                        .city
+                        .try_claim_login_tribute_with(today_day_index(), &state.data.balance)
+                };
+                if let Some((day, res, _tool)) = claim {
                     let summary = modals::format_reward_summary(&ctx.data.i18n, res, 0);
                     let title = ctx
                         .data
