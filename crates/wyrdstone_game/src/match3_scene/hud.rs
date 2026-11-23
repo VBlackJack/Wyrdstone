@@ -17,8 +17,9 @@
 //! Match-3 HUD overlay: moves, live countdown timer, objectives, active tools bar, and Guide modal.
 
 use super::{
-    FuryReadyPulse, LowMovesPulse, Match3Cleanup, Match3HudRoot, Match3TimerText,
-    Match3TooltipText, Match3UiAction,
+    FuryReadyPulse, LowMovesPulse, Match3Cleanup, Match3ComboText, Match3FuryText, Match3HudRoot,
+    Match3MovesText, Match3ObjectiveText, Match3ScoreText, Match3TimerText, Match3TooltipText,
+    Match3UiAction, LOW_MOVES_THRESHOLD,
 };
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
@@ -30,9 +31,172 @@ use crate::ui_style::{
     display_font, gold_glow_shadow, modal_shadow, panel_shadow, sliced_panel_image, NoButtonScale,
 };
 use crate::vfx_art::VfxTextures;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
-use wyrdstone_core::{ActiveTool, Objective};
+use wyrdstone_core::{ActiveTool, I18nCatalog, LevelSession, Objective, ObjectiveProgress};
+
+fn moves_label(i18n: &I18nCatalog, session: &LevelSession) -> String {
+    i18n.t_fmt(
+        "match3.hud.moves",
+        &[("moves", session.moves_left.to_string())],
+    )
+}
+
+fn score_label(i18n: &I18nCatalog, session: &LevelSession) -> String {
+    i18n.t_fmt("match3.hud.score", &[("score", session.score.to_string())])
+}
+
+fn combo_label(i18n: &I18nCatalog, session: &LevelSession) -> String {
+    i18n.t_fmt(
+        "match3.hud.combo",
+        &[("combo", session.last_combo.to_string())],
+    )
+}
+
+/// Objective pill text; the compact layout uses the short shared "progress" template.
+fn objective_label(i18n: &I18nCatalog, prog: &ObjectiveProgress, is_compact: bool) -> String {
+    let counts = [
+        ("done", prog.done.to_string()),
+        ("target", prog.target.to_string()),
+    ];
+    if is_compact {
+        return i18n.t_fmt("match3.objective.progress", &counts);
+    }
+    match &prog.objective {
+        Objective::ClearIce { .. } => i18n.t_fmt("match3.objective.clear_ice", &counts),
+        Objective::CollectRune { rune, .. } => i18n.t_fmt(
+            "match3.objective.collect_rune",
+            &[
+                ("rune", i18n.t(rune.i18n_key()).to_string()),
+                ("done", prog.done.to_string()),
+                ("target", prog.target.to_string()),
+            ],
+        ),
+        Objective::ReachScore { .. } => i18n.t_fmt("match3.objective.reach_score", &counts),
+        Objective::DropRelics { .. } => i18n.t_fmt("match3.objective.drop_relics", &counts),
+    }
+}
+
+fn fury_label(i18n: &I18nCatalog, session: &LevelSession, is_compact: bool) -> String {
+    let fury_ready = session.can_trigger_fury();
+    let fury_pct = ((session.fury as f32 / session.fury_max.max(1) as f32) * 100.0).round() as u32;
+    let patron_name = i18n.t(session.patron.name_key()).to_string();
+    if is_compact {
+        if fury_ready {
+            i18n.t("match3.fury.ready_short").to_string()
+        } else {
+            i18n.t_fmt("match3.fury.pct_short", &[("pct", fury_pct.to_string())])
+        }
+    } else if fury_ready {
+        i18n.t_fmt("match3.fury.ready", &[("patron", patron_name)])
+    } else {
+        i18n.t_fmt(
+            "match3.fury.charge",
+            &[("patron", patron_name), ("pct", fury_pct.to_string())],
+        )
+    }
+}
+
+/// Which optional top-bar banner is showing next to the Undo button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HudBanner {
+    None,
+    FrostSpread,
+    Shuffled,
+    Combo,
+}
+
+/// Everything in the HUD that changes its structure, colours or widget set (not just a text).
+/// When the shape is unchanged between two states, the dynamic texts can be updated in place;
+/// otherwise the HUD must be rebuilt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HudShape {
+    low_moves: bool,
+    has_boss: bool,
+    banner: HudBanner,
+    fury_ready: bool,
+    objectives_complete: Vec<bool>,
+}
+
+pub(super) fn hud_shape(session: &LevelSession) -> HudShape {
+    let banner = if session.last_frost_spread.is_some() {
+        HudBanner::FrostSpread
+    } else if session.last_shuffled {
+        HudBanner::Shuffled
+    } else if session.last_combo >= 2 {
+        HudBanner::Combo
+    } else {
+        HudBanner::None
+    };
+    HudShape {
+        low_moves: session.moves_left <= LOW_MOVES_THRESHOLD,
+        has_boss: session.boss.is_some(),
+        banner,
+        fury_ready: session.can_trigger_fury(),
+        objectives_complete: session.objectives.iter().map(|o| o.is_complete()).collect(),
+    }
+}
+
+/// True when the HUD can follow `new` from `old` by rewriting texts only. Boss fights always
+/// rebuild: the boss panel carries an HP bar and portrait state that texts alone cannot express.
+pub(super) fn can_update_in_place(old: Option<&HudShape>, new: &HudShape) -> bool {
+    !new.has_boss && old == Some(new)
+}
+
+type HudTextItems = (
+    &'static mut Text,
+    Option<&'static Match3MovesText>,
+    Option<&'static Match3ScoreText>,
+    Option<&'static Match3ObjectiveText>,
+    Option<&'static Match3ComboText>,
+    Option<&'static Match3FuryText>,
+);
+
+type HudTextFilter = Or<(
+    With<Match3MovesText>,
+    With<Match3ScoreText>,
+    With<Match3ObjectiveText>,
+    With<Match3ComboText>,
+    With<Match3FuryText>,
+)>;
+
+/// Dynamic HUD texts that cascade steps rewrite in place instead of rebuilding the whole HUD.
+#[derive(SystemParam)]
+pub struct HudTextQueries<'w, 's> {
+    texts: Query<'w, 's, HudTextItems, HudTextFilter>,
+}
+
+impl HudTextQueries<'_, '_> {
+    /// Rewrites moves, score, objective, combo and fury texts from the live session.
+    pub(super) fn refresh(&mut self, ctx: &GameContext, is_compact: bool) {
+        let Some(session) = &ctx.active_session else {
+            return;
+        };
+        let i18n = &ctx.data.i18n;
+        for (mut text, moves, score, objective, combo, fury) in &mut self.texts {
+            let label = if moves.is_some() {
+                moves_label(i18n, session)
+            } else if score.is_some() {
+                score_label(i18n, session)
+            } else if let Some(Match3ObjectiveText(idx)) = objective {
+                match session.objectives.get(*idx) {
+                    Some(prog) => objective_label(i18n, prog, is_compact),
+                    None => continue,
+                }
+            } else if combo.is_some() {
+                combo_label(i18n, session)
+            } else if fury.is_some() {
+                fury_label(i18n, session, is_compact)
+            } else {
+                continue;
+            };
+            if text.0 != label {
+                text.0 = label;
+            }
+        }
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_match3_hud(
@@ -90,7 +254,7 @@ pub(super) fn spawn_match3_hud(
                     ..default()
                 })
                 .with_children(|stats| {
-                    let low_moves = session.moves_left <= 3;
+                    let low_moves = session.moves_left <= LOW_MOVES_THRESHOLD;
                     let mut moves_box = stats.spawn((
                         Node {
                             padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
@@ -114,10 +278,8 @@ pub(super) fn spawn_match3_hud(
                     }
                     moves_box.with_children(|mbox| {
                         mbox.spawn((
-                            Text::new(i18n.t_fmt(
-                                "match3.hud.moves",
-                                &[("moves", session.moves_left.to_string())],
-                            )),
+                            Match3MovesText,
+                            Text::new(moves_label(i18n, session)),
                             display_font(fjord_art, FONT_HEADING),
                             TextColor(if low_moves {
                                 COLOR_ACCENT_CRIMSON_TEXT
@@ -142,9 +304,8 @@ pub(super) fn spawn_match3_hud(
                         ));
                     }
                     stats.spawn((
-                        Text::new(
-                            i18n.t_fmt("match3.hud.score", &[("score", session.score.to_string())]),
-                        ),
+                        Match3ScoreText,
+                        Text::new(score_label(i18n, session)),
                         TextFont {
                             font_size: FONT_BODY,
                             ..default()
@@ -283,90 +444,16 @@ pub(super) fn spawn_match3_hud(
                             });
                         });
                     } else {
-                        for prog in &session.objectives {
-                            let (icon_opt, label) = match &prog.objective {
-                                Objective::ClearIce { .. } => (
-                                    Some(textures.ice_top_layer1.clone()),
-                                    if is_compact {
-                                        i18n.t_fmt(
-                                            "match3.objective.progress",
-                                            &[
-                                                ("done", prog.done.to_string()),
-                                                ("target", prog.target.to_string()),
-                                            ],
-                                        )
-                                    } else {
-                                        i18n.t_fmt(
-                                            "match3.objective.clear_ice",
-                                            &[
-                                                ("done", prog.done.to_string()),
-                                                ("target", prog.target.to_string()),
-                                            ],
-                                        )
-                                    },
-                                ),
-                                Objective::CollectRune { rune, .. } => (
-                                    textures.runes.get(rune).cloned(),
-                                    if is_compact {
-                                        i18n.t_fmt(
-                                            "match3.objective.progress",
-                                            &[
-                                                ("done", prog.done.to_string()),
-                                                ("target", prog.target.to_string()),
-                                            ],
-                                        )
-                                    } else {
-                                        i18n.t_fmt(
-                                            "match3.objective.collect_rune",
-                                            &[
-                                                ("rune", i18n.t(rune.i18n_key()).to_string()),
-                                                ("done", prog.done.to_string()),
-                                                ("target", prog.target.to_string()),
-                                            ],
-                                        )
-                                    },
-                                ),
-                                Objective::ReachScore { .. } => (
-                                    Some(vfx.icon_star.clone()),
-                                    if is_compact {
-                                        i18n.t_fmt(
-                                            "match3.objective.progress",
-                                            &[
-                                                ("done", prog.done.to_string()),
-                                                ("target", prog.target.to_string()),
-                                            ],
-                                        )
-                                    } else {
-                                        i18n.t_fmt(
-                                            "match3.objective.reach_score",
-                                            &[
-                                                ("done", prog.done.to_string()),
-                                                ("target", prog.target.to_string()),
-                                            ],
-                                        )
-                                    },
-                                ),
-                                Objective::DropRelics { .. } => (
-                                    Some(textures.relic_icon.clone()),
-                                    if is_compact {
-                                        i18n.t_fmt(
-                                            "match3.objective.progress",
-                                            &[
-                                                ("done", prog.done.to_string()),
-                                                ("target", prog.target.to_string()),
-                                            ],
-                                        )
-                                    } else {
-                                        i18n.t_fmt(
-                                            "match3.objective.drop_relics",
-                                            &[
-                                                ("done", prog.done.to_string()),
-                                                ("target", prog.target.to_string()),
-                                            ],
-                                        )
-                                    },
-                                ),
+                        for (obj_idx, prog) in session.objectives.iter().enumerate() {
+                            let icon_opt = match &prog.objective {
+                                Objective::ClearIce { .. } => Some(textures.ice_top_layer1.clone()),
+                                Objective::CollectRune { rune, .. } => {
+                                    textures.runes.get(rune).cloned()
+                                }
+                                Objective::ReachScore { .. } => Some(vfx.icon_star.clone()),
+                                Objective::DropRelics { .. } => Some(textures.relic_icon.clone()),
                             };
+                            let label = objective_label(i18n, prog, is_compact);
                             let complete = prog.is_complete();
                             objs.spawn((
                                 Node {
@@ -400,6 +487,7 @@ pub(super) fn spawn_match3_hud(
                                     ));
                                 }
                                 pill.spawn((
+                                    Match3ObjectiveText(obj_idx),
                                     Text::new(label),
                                     TextFont {
                                         font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
@@ -442,10 +530,8 @@ pub(super) fn spawn_match3_hud(
                         ));
                     } else if session.last_combo >= 2 {
                         right.spawn((
-                            Text::new(i18n.t_fmt(
-                                "match3.hud.combo",
-                                &[("combo", session.last_combo.to_string())],
-                            )),
+                            Match3ComboText,
+                            Text::new(combo_label(i18n, session)),
                             TextFont {
                                 font_size: FONT_BODY,
                                 ..default()
@@ -652,27 +738,7 @@ pub(super) fn spawn_match3_hud(
                     .with_children(|row| {
                         // Divine Fury Patron button
                         let fury_ready = session.can_trigger_fury();
-                        let fury_pct = ((session.fury as f32 / session.fury_max.max(1) as f32)
-                            * 100.0)
-                            .round() as u32;
-                        let patron_name = i18n.t(session.patron.name_key()).to_string();
-                        let fury_lbl = if is_compact {
-                            if fury_ready {
-                                i18n.t("match3.fury.ready_short").to_string()
-                            } else {
-                                i18n.t_fmt(
-                                    "match3.fury.pct_short",
-                                    &[("pct", fury_pct.to_string())],
-                                )
-                            }
-                        } else if fury_ready {
-                            i18n.t_fmt("match3.fury.ready", &[("patron", patron_name)])
-                        } else {
-                            i18n.t_fmt(
-                                "match3.fury.charge",
-                                &[("patron", patron_name), ("pct", fury_pct.to_string())],
-                            )
-                        };
+                        let fury_lbl = fury_label(i18n, session, is_compact);
                         let mut fury_btn = row.spawn((
                             Button,
                             Match3UiAction::TriggerFury,
@@ -718,6 +784,7 @@ pub(super) fn spawn_match3_hud(
                                 ));
                             }
                             btn.spawn((
+                                Match3FuryText,
                                 Text::new(fury_lbl),
                                 TextFont {
                                     font_size: FONT_SMALL,
@@ -1130,4 +1197,56 @@ pub(super) fn spawn_match3_hud(
                 });
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shape() -> HudShape {
+        HudShape {
+            low_moves: false,
+            has_boss: false,
+            banner: HudBanner::None,
+            fury_ready: false,
+            objectives_complete: vec![false, false],
+        }
+    }
+
+    #[test]
+    fn identical_shape_updates_in_place() {
+        assert!(can_update_in_place(Some(&shape()), &shape()));
+    }
+
+    #[test]
+    fn missing_previous_shape_forces_rebuild() {
+        assert!(!can_update_in_place(None, &shape()));
+    }
+
+    #[test]
+    fn objective_completion_forces_rebuild() {
+        let mut done = shape();
+        done.objectives_complete[1] = true;
+        assert!(!can_update_in_place(Some(&shape()), &done));
+    }
+
+    #[test]
+    fn low_moves_banner_and_fury_flips_force_rebuild() {
+        let mut low = shape();
+        low.low_moves = true;
+        assert!(!can_update_in_place(Some(&shape()), &low));
+        let mut combo = shape();
+        combo.banner = HudBanner::Combo;
+        assert!(!can_update_in_place(Some(&shape()), &combo));
+        let mut fury = shape();
+        fury.fury_ready = true;
+        assert!(!can_update_in_place(Some(&shape()), &fury));
+    }
+
+    #[test]
+    fn boss_fights_always_rebuild() {
+        let mut boss = shape();
+        boss.has_boss = true;
+        assert!(!can_update_in_place(Some(&boss), &boss));
+    }
 }

@@ -20,9 +20,10 @@ use super::{
     cell_to_world, grid_to_world_f, rebuild_board_now, BlastBeam, BoardAnimPhase, BoardTileVisual,
     BoosterPulse, BoosterShimmer, BurstParticle, FloatingScore, FlyingOrb, FuryReadyPulse,
     LowMovesPulse, Match3Backdrop, Match3Cleanup, Match3Entity, Match3InputState, Match3TimerText,
-    SanctuaryEmber, SanctuaryTorchGlow, FLOATING_TEXT_LIFETIME_SECS, FLOATING_TEXT_RISE_SPEED_PX,
-    HINT_IDLE_SECS, PARTICLES_PER_CLEARED_TILE, PARTICLE_GRAVITY_PX, PARTICLE_LIFETIME_SECS,
-    PARTICLE_SIZE_PX, PARTICLE_SPEED_PX, SHAKE_AMPLITUDE_PX, SHAKE_DURATION_SECS,
+    SanctuaryEmber, SanctuaryTorchGlow, UndoSnapshot, FLOATING_TEXT_LIFETIME_SECS,
+    FLOATING_TEXT_RISE_SPEED_PX, HINT_IDLE_SECS, PARTICLES_PER_CLEARED_TILE, PARTICLE_GRAVITY_PX,
+    PARTICLE_LIFETIME_SECS, PARTICLE_SIZE_PX, PARTICLE_SPEED_PX, SANCTUARY_EMBER_HALF_H_RATIO,
+    SANCTUARY_EMBER_HALF_W_RATIO, SHAKE_AMPLITUDE_PX, SHAKE_DURATION_SECS,
 };
 use crate::audio::{play_sfx, SfxKind, SoundBank};
 use crate::runes_art::RuneTextures;
@@ -858,9 +859,10 @@ pub fn tick_board_animation(
         }
     }
 
-    // Tick optional level countdown timer (paused during VictoryCelebration or Help modal).
-    let timer_paused = matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. })
-        || ctx.active_modal == ActiveModal::Help;
+    // Tick optional level countdown timer. It only runs while the board is idle: swap, clear,
+    // fall and celebration animation time no longer counts against a timed level, and the Help
+    // modal pauses it too.
+    let timer_paused = !input_state.is_idle() || ctx.active_modal == ActiveModal::Help;
     if !timer_paused {
         let timer_changed = ctx
             .active_session
@@ -939,7 +941,11 @@ pub fn tick_board_animation(
             }
 
             if elapsed >= duration {
-                let pre_swap = ctx.active_session.clone();
+                let pre_swap = ctx.active_session.clone().map(|session| UndoSnapshot {
+                    session,
+                    total_runes_cleared: ctx.city.stats.total_runes_cleared,
+                    best_combo: ctx.city.stats.best_combo,
+                });
                 let prepared = ctx
                     .active_session
                     .as_mut()
@@ -966,7 +972,7 @@ pub fn tick_board_animation(
                             ctx.colorblind_mode,
                         );
                     }
-                    input_state.dirty_hud = true;
+                    input_state.dirty_hud_soft = true;
                     if !prep.converted_boosters.is_empty() {
                         input_state.phase = BoardAnimPhase::SuperComboCharge {
                             prepared: prep,
@@ -1305,7 +1311,7 @@ pub fn tick_board_animation(
                 }
                 input_state.idle_secs = 0.0;
                 input_state.hint_pair = None;
-                input_state.dirty_hud = true;
+                input_state.dirty_hud_soft = true;
                 input_state.phase = BoardAnimPhase::Falling {
                     moves: fall_map,
                     combo,
@@ -1395,7 +1401,7 @@ pub fn tick_board_animation(
                             ctx.colorblind_mode,
                         );
                     }
-                    input_state.dirty_hud = true;
+                    input_state.dirty_hud_soft = true;
                     input_state.phase = BoardAnimPhase::Falling {
                         moves: relic_fall_map,
                         combo,
@@ -1415,7 +1421,7 @@ pub fn tick_board_animation(
                         session.last_combo = combo + 1;
                     }
                     let cleared_set: HashSet<CellPos> = next_prep.cells.iter().copied().collect();
-                    input_state.dirty_hud = true;
+                    input_state.dirty_hud_soft = true;
                     input_state.phase = BoardAnimPhase::Clearing {
                         prepared: next_prep,
                         cleared_set,
@@ -1929,6 +1935,14 @@ pub fn animate_particles(
         for (torch, mut tf, _) in &mut torches {
             tf.translation.x = torch.norm_x * bg_w;
             tf.translation.y = torch.norm_y * bg_h;
+        }
+        let ember_half_w = ev.width * SANCTUARY_EMBER_HALF_W_RATIO;
+        let ember_half_h = ev.height * SANCTUARY_EMBER_HALF_H_RATIO;
+        for (mut ember, _, _) in &mut embers {
+            ember.half_w = ember_half_w;
+            ember.half_h = ember_half_h;
+            ember.base_x = ember.lane * ember_half_w;
+            ember.y = ember.y.clamp(-ember_half_h, ember_half_h);
         }
         let now_compact = ev.width < 760.0;
         if now_compact != input_state.is_compact_hud {

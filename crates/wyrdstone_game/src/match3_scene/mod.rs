@@ -41,7 +41,13 @@ pub(super) const PARTICLE_SPEED_PX: f32 = 170.0;
 pub(super) const PARTICLE_SIZE_PX: f32 = 18.0;
 pub(super) const PARTICLE_GRAVITY_PX: f32 = 220.0;
 pub(super) const SANCTUARY_EMBER_COUNT: usize = 16;
+/// Ember drift band half width as a fraction of the window width.
+pub(super) const SANCTUARY_EMBER_HALF_W_RATIO: f32 = 0.48;
+/// Ember rise band half height as a fraction of the window height.
+pub(super) const SANCTUARY_EMBER_HALF_H_RATIO: f32 = 0.52;
 pub(super) const HINT_IDLE_SECS: f32 = 5.0;
+/// Moves left at or below which the moves counter switches to its warning style.
+pub(super) const LOW_MOVES_THRESHOLD: u32 = 3;
 pub(super) const FLOATING_TEXT_LIFETIME_SECS: f32 = 0.85;
 pub(super) const FLOATING_TEXT_RISE_SPEED_PX: f32 = 58.0;
 pub(super) const SHAKE_DURATION_SECS: f32 = 0.18;
@@ -67,6 +73,26 @@ pub struct Match3HudRoot;
 /// Marker on the HUD countdown text so timer ticks update in-place without rebuilding the HUD.
 #[derive(Component)]
 pub struct Match3TimerText;
+
+/// Marker on the HUD moves counter text so cascade steps update it in-place.
+#[derive(Component)]
+pub struct Match3MovesText;
+
+/// Marker on the HUD score text so cascade steps update it in-place.
+#[derive(Component)]
+pub struct Match3ScoreText;
+
+/// Marker on one objective pill text (index into the session objectives) for in-place updates.
+#[derive(Component)]
+pub struct Match3ObjectiveText(pub usize);
+
+/// Marker on the HUD combo banner text so cascade steps update it in-place.
+#[derive(Component)]
+pub struct Match3ComboText;
+
+/// Marker on the Patron Fury button label so fury charge updates in-place.
+#[derive(Component)]
+pub struct Match3FuryText;
 
 /// Marker on the bottom HUD tooltip/hint text so hovering tools/Fury updates in-place.
 #[derive(Component)]
@@ -143,6 +169,10 @@ pub struct SanctuaryEmber {
     pub speed_y: f32,
     pub phase: f32,
     pub half_h: f32,
+    /// Half width of the drift band used when the ember was spawned.
+    pub half_w: f32,
+    /// Normalized horizontal lane in `-1.0..=1.0` (side * lane), rescaled on window resize.
+    pub lane: f32,
 }
 
 /// Luminous orb flying along a quadratic Bezier curve from a cleared rune to the HUD objectives or Boss.
@@ -258,7 +288,12 @@ pub struct Match3InputState {
     pub dirty_static_board: bool,
     pub dirty_board: bool,
     pub dirty_hud: bool,
-    pub undo_snapshot: Option<LevelSession>,
+    /// Cascade-step HUD refresh: texts are rewritten in place when the HUD shape is unchanged,
+    /// otherwise the HUD is rebuilt. A raised `dirty_hud` always wins.
+    pub dirty_hud_soft: bool,
+    /// Shape of the HUD as last built or refreshed, used to decide between in-place and rebuild.
+    pub hud_shape: Option<hud::HudShape>,
+    pub undo_snapshot: Option<UndoSnapshot>,
     pub undo_used: bool,
     pub confirm_retreat: bool,
     pub confirm_loki_shuffle: bool,
@@ -272,7 +307,24 @@ pub struct Match3InputState {
     pub phase: BoardAnimPhase,
 }
 
+/// Session copy taken before a swap, plus the city stats that the swap may still change.
+#[derive(Clone)]
+pub struct UndoSnapshot {
+    pub session: LevelSession,
+    pub total_runes_cleared: u64,
+    pub best_combo: u32,
+}
+
 impl Match3InputState {
+    /// Drops the current hint and restarts the idle countdown. When a hint was showing, the board
+    /// is flagged dirty so the pulsing tiles are rebuilt with their normal scale and colour.
+    pub fn clear_hint(&mut self) {
+        if self.hint_pair.take().is_some() {
+            self.dirty_board = true;
+        }
+        self.idle_secs = 0.0;
+    }
+
     pub fn is_idle(&self) -> bool {
         matches!(self.phase, BoardAnimPhase::Idle)
     }
@@ -342,12 +394,13 @@ pub fn setup_match3_scene(
         }
 
         // Gentle floating runic embers/motes drifting up the sanctuary arches.
-        let half_w = window.width() * 0.48;
-        let half_h = window.height() * 0.52;
+        let half_w = window.width() * SANCTUARY_EMBER_HALF_W_RATIO;
+        let half_h = window.height() * SANCTUARY_EMBER_HALF_H_RATIO;
         for i in 0..SANCTUARY_EMBER_COUNT {
             let side = if i % 2 == 0 { -1.0 } else { 1.0 };
             let lane = 0.55 + ((i * 19) % 45) as f32 / 100.0;
-            let bx = side * half_w * lane;
+            let norm_lane = side * lane;
+            let bx = norm_lane * half_w;
             let by = -half_h + ((i * 73) % 100) as f32 / 100.0 * (half_h * 2.0);
             let is_aurora = i % 3 == 0;
             let color = if is_aurora {
@@ -364,6 +417,8 @@ pub fn setup_match3_scene(
                     speed_y: 16.0 + (i % 5) as f32 * 5.5,
                     phase: i as f32 * 1.17,
                     half_h,
+                    half_w,
+                    lane: norm_lane,
                 },
                 Sprite {
                     image: vfx.soft_orb.clone(),
@@ -862,6 +917,9 @@ pub(super) fn rebuild_board_now(
     for e in sprites {
         commands.entity(e).despawn_recursive();
     }
+    // Hover and drag overlays are Match3Entity, so they were just despawned: forget their cells.
+    input_state.hover_cell = None;
+    input_state.drag_highlight_cell = None;
     compute_board_layout(
         window.width(),
         window.height(),
@@ -958,14 +1016,16 @@ fn execute_undo(
     if !input_state.can_undo(ctx) {
         return;
     }
-    if let Some(mut snap) = input_state.undo_snapshot.take() {
-        snap.time_left_secs = ctx.active_session.as_ref().and_then(|s| s.time_left_secs);
-        ctx.active_session = Some(snap);
+    if let Some(snap) = input_state.undo_snapshot.take() {
+        let mut session = snap.session;
+        session.time_left_secs = ctx.active_session.as_ref().and_then(|s| s.time_left_secs);
+        ctx.active_session = Some(session);
+        ctx.city.stats.total_runes_cleared = snap.total_runes_cleared;
+        ctx.city.stats.best_combo = snap.best_combo;
         ctx.armed_tool = None;
         input_state.undo_used = true;
         input_state.selected = None;
-        input_state.hint_pair = None;
-        input_state.idle_secs = 0.0;
+        input_state.clear_hint();
         input_state.boss_hit_flash_secs = 0.0;
         input_state.dirty_board = true;
         input_state.dirty_hud = true;
@@ -993,6 +1053,7 @@ fn execute_loki_shuffle(
         ctx.armed_tool = None;
         ctx.persist();
         input_state.undo_snapshot = None;
+        input_state.clear_hint();
         play_sfx(commands, sound_bank, SfxKind::ToolBlast);
         anim::spawn_loki_vfx(commands, vfx, cols, rows, input_state);
         input_state.shake_secs = SHAKE_DURATION_SECS * 0.7;
@@ -1031,6 +1092,7 @@ fn execute_patron_fury(
         (None, Vec::new())
     };
     input_state.undo_snapshot = None;
+    input_state.clear_hint();
     play_sfx(commands, sound_bank, SfxKind::FuryUnleash);
     let vfx_targets: Vec<CellPos> = prepared
         .as_ref()
@@ -1182,6 +1244,7 @@ pub fn handle_match3_hud_buttons(
                             ctx.armed_tool = None;
                             ctx.persist();
                             input_state.undo_snapshot = None;
+                            input_state.clear_hint();
                             play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
                             anim::spawn_tool_vfx(
                                 &mut commands,
@@ -1271,6 +1334,7 @@ pub fn handle_match3_hud_buttons(
         && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
     {
+        input_state.clear_hint();
         input_state.idle_secs = HINT_IDLE_SECS;
         input_state.hint_pair = ctx
             .active_session
@@ -1611,6 +1675,7 @@ pub fn handle_board_pointer_input(
                 let w = cell_to_world(p, &input_state);
                 commands.spawn((
                     Match3Cleanup,
+                    Match3Entity,
                     ToolHoverOverlay,
                     Sprite {
                         color: Color::srgba(0.98, 0.82, 0.28, 0.36),
@@ -1632,6 +1697,7 @@ pub fn handle_board_pointer_input(
                 let w = cell_to_world(cell, &input_state);
                 commands.spawn((
                     Match3Cleanup,
+                    Match3Entity,
                     ToolHoverOverlay,
                     Sprite {
                         image: vfx.soft_orb.clone(),
@@ -1673,8 +1739,7 @@ pub fn handle_board_pointer_input(
     }
 
     if let Some(screen_pos) = pressed_screen {
-        input_state.idle_secs = 0.0;
-        input_state.hint_pair = None;
+        input_state.clear_hint();
         if input_state.kbd_cursor.is_some() {
             input_state.kbd_cursor = None;
             update_kbd_cursor_marker(&mut commands, &input_state, &kbd_markers);
@@ -1808,6 +1873,7 @@ pub fn handle_board_pointer_input(
                 let w = cell_to_world(hl, &input_state);
                 commands.spawn((
                     Match3Cleanup,
+                    Match3Entity,
                     DragTargetHighlight,
                     Sprite {
                         color: Color::srgba(0.45, 0.90, 1.0, 0.32),
@@ -1902,12 +1968,17 @@ pub fn sync_match3_visuals(
     static_sprites: Query<Entity, With<BoardStaticEntity>>,
     sprites: Query<Entity, With<Match3Entity>>,
     huds: Query<Entity, With<Match3HudRoot>>,
+    mut hud_texts: hud::HudTextQueries,
     mut was_idle: Local<bool>,
 ) {
     // The HUD derives Idle-dependent state (Undo, tools); refresh it on any Idle edge.
     let idle_now = input_state.is_idle();
     if idle_now != *was_idle {
         *was_idle = idle_now;
+        input_state.dirty_hud = true;
+    }
+    // The HUD shows the mute state and volume labels; refresh when the sound bank changes.
+    if sound_bank.is_changed() {
         input_state.dirty_hud = true;
     }
     if input_state.dirty_static_board {
@@ -1944,7 +2015,20 @@ pub fn sync_match3_visuals(
         input_state.dirty_board = false;
     }
 
+    if input_state.dirty_hud_soft && !input_state.dirty_hud {
+        input_state.dirty_hud_soft = false;
+        let new_shape = ctx.active_session.as_ref().map(hud::hud_shape);
+        match new_shape {
+            Some(shape) if hud::can_update_in_place(input_state.hud_shape.as_ref(), &shape) => {
+                hud_texts.refresh(&ctx, input_state.is_compact_hud);
+            }
+            _ => input_state.dirty_hud = true,
+        }
+    }
+    input_state.dirty_hud_soft = false;
+
     if input_state.dirty_hud {
+        input_state.hud_shape = ctx.active_session.as_ref().map(hud::hud_shape);
         for e in &huds {
             commands.entity(e).despawn_recursive();
         }
@@ -1963,5 +2047,29 @@ pub fn sync_match3_visuals(
             matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }),
         );
         input_state.dirty_hud = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_hint_flags_board_dirty_only_when_a_hint_was_showing() {
+        let mut state = Match3InputState {
+            hint_pair: Some((CellPos::new(0, 0), CellPos::new(1, 0))),
+            idle_secs: 7.0,
+            ..default()
+        };
+        state.clear_hint();
+        assert!(state.hint_pair.is_none());
+        assert!(state.dirty_board);
+        assert_eq!(state.idle_secs, 0.0);
+
+        state.dirty_board = false;
+        state.idle_secs = 3.0;
+        state.clear_hint();
+        assert!(!state.dirty_board, "no hint showing: nothing to rebuild");
+        assert_eq!(state.idle_secs, 0.0);
     }
 }
