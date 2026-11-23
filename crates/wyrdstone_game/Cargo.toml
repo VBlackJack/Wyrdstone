@@ -65,6 +65,7 @@ label = "Wyrdstone"
 icon = "@mipmap/ic_launcher"
 
 [package.metadata.android.application.activity]
+exported = true
 orientation = "fullUser"
 launch_mode = "singleTask"
 config_changes = "orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|locale|layoutDirection"

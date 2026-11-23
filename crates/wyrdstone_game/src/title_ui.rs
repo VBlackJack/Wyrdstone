@@ -76,8 +76,11 @@ pub fn cleanup_title_ui(
     mut ctx: ResMut<GameContext>,
     roots: Query<Entity, With<TitleRoot>>,
 ) {
-    // A notice shown on the Title screen has been seen: do not repeat it on the hub.
-    ctx.status_notice_key = None;
+    // A notice shown on the Title screen has been seen: do not repeat it on the hub. The
+    // read-only save warning stays until the player restarts.
+    if !ctx.save_read_only {
+        ctx.status_notice_key = None;
+    }
     for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
@@ -351,7 +354,8 @@ fn spawn_title_tree(
 
             // Save and recovery notices (restored from backup, read-only, unreadable save).
             if let Some(notice_key) = &ctx.status_notice_key {
-                spawn_notice_toast(bg, i18n.t(notice_key), Some(NOTICE_TOAST_DURATION_SECS));
+                let life = (!ctx.save_read_only).then_some(NOTICE_TOAST_DURATION_SECS);
+                spawn_notice_toast(bg, i18n.t(notice_key), life);
             }
         });
 }
@@ -444,7 +448,9 @@ pub fn handle_title_buttons(
         life.0 -= time.delta_secs();
         if life.0 <= 0.0 {
             commands.entity(entity).despawn_recursive();
-            ctx.status_notice_key = None;
+            if !ctx.save_read_only {
+                ctx.status_notice_key = None;
+            }
         }
     }
 
