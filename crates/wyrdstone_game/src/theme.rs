@@ -69,6 +69,21 @@ pub const COLOR_TEXT_PRIMARY: Color = Color::srgb(0.94, 0.95, 0.97);
 pub const COLOR_TEXT_MUTED: Color = Color::srgb(0.68, 0.75, 0.84);
 pub const COLOR_TEXT_DARK: Color = Color::srgb(0.08, 0.10, 0.14);
 pub const COLOR_BUTTON_DISABLED: Color = Color::srgb(0.24, 0.27, 0.32);
+/// Text drawn on green or teal accent backgrounds (same value as `COLOR_TEXT_DARK`).
+/// WCAG contrast: 5.56:1 on `COLOR_ACCENT_GREEN`, 5.57:1 on `COLOR_ACCENT_TEAL`.
+pub const COLOR_TEXT_ON_ACCENT: Color = COLOR_TEXT_DARK;
+/// Lighter crimson for text on `COLOR_PANEL_CARD` and `COLOR_PANEL_DARK`.
+/// WCAG contrast: 5.00:1 on `COLOR_PANEL_CARD`, 5.94:1 on `COLOR_PANEL_DARK`
+/// (the plain `COLOR_ACCENT_CRIMSON` only reaches 2.45:1 and 2.91:1).
+pub const COLOR_ACCENT_CRIMSON_TEXT: Color = Color::srgb(0.96, 0.50, 0.50);
+
+/// Minimum logical size in px for tappable controls.
+pub const MIN_TOUCH_TARGET_PX: f32 = 44.0;
+
+// Compile-time references keep the shared tokens alive until the UI call sites adopt them.
+const _: Color = COLOR_TEXT_ON_ACCENT;
+const _: Color = COLOR_ACCENT_CRIMSON_TEXT;
+const _: () = assert!(MIN_TOUCH_TARGET_PX > 0.0);
 
 /// Returns RGB tuple `[r, g, b]` in 0..=255 for procedural rune stone rendering.
 pub const fn rune_base_rgb(rune: RuneType) -> [u8; 3] {
