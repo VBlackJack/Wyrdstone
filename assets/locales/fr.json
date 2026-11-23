@@ -334,6 +334,7 @@
   "city.panel.backup.imported": "Sauvegarde restaurée avec succès !",
   "city.panel.backup.missing": "Aucun fichier wyrdstone_backup.json trouvé.",
   "city.panel.backup.error": "Échec de l'opération de sauvegarde.",
+  "city.panel.backup.read_only": "Rien à exporter : la sauvegarde existante n'a pas pu être chargée.",
   "boss.hel.name": "Hel",
   "boss.hel.title": "Reine de Helheim",
   "boss.hel.desc": "Enveloppée de Brouillard, Hel maudit 2 runes tous les 3 tours (3 en Phase 2).",

@@ -304,6 +304,15 @@ impl SaveData {
         Ok(Some(dest))
     }
 
+    /// Copies `path` to a `<file>.<tag>-<unix_secs>` sibling and returns its path. Unlike
+    /// [`Self::backup_unreadable`], the tag lets callers name what the copy holds (for example
+    /// a valid save from a newer game version). A missing source is an error.
+    pub fn preserve_copy(path: &Path, tag: &str) -> std::io::Result<PathBuf> {
+        let dest = path.with_extension(format!("json.{tag}-{}", unix_secs()));
+        std::fs::copy(path, &dest)?;
+        Ok(dest)
+    }
+
     /// Loads a save with recovery: retries transient read errors, preserves an unreadable file
     /// as a timestamped copy, then falls back to the `.bak` copy.
     pub fn load_with_recovery(path: &Path) -> LoadOutcome {

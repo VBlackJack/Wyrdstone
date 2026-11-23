@@ -26,7 +26,6 @@ use crate::fjord_art::FjordTextures;
 use crate::scroll::{PressArm, UiScrollMemory};
 use crate::state::{
     now_unix_secs, today_day_index, ActiveModal, AppState, ChapterDialogue, GameContext,
-    NOTICE_SAVE_READ_ONLY,
 };
 use crate::theme::*;
 use crate::ui_style::{
@@ -1912,8 +1911,9 @@ pub fn handle_city_buttons(
 
     // Hub toast: restart its timer on a new notice, clear the notice once the timer runs out.
     // The read-only save warning is persistent: it is re-asserted instead of timing out.
-    if ctx.save_read_only && ctx.status_notice_key.is_none() {
-        ctx.status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
+    let read_only_notice = ctx.save_read_only_notice();
+    if ctx.status_notice_key.is_none() {
+        ctx.status_notice_key = read_only_notice.map(str::to_string);
     }
     let hub_toast_shown = ctx.active_modal == ActiveModal::None && !layout_mode.inspector_open;
     if ctx.status_notice_key.is_some() && ctx.status_notice_key == layout_mode.last_notice_key {
@@ -1924,7 +1924,8 @@ pub fn handle_city_buttons(
         } else {
             layout_mode.notice_secs_left -= time.delta_secs();
             if layout_mode.notice_secs_left <= 0.0
-                && ctx.status_notice_key.as_deref() != Some(NOTICE_SAVE_READ_ONLY)
+                && (read_only_notice.is_none()
+                    || ctx.status_notice_key.as_deref() != read_only_notice)
             {
                 ctx.status_notice_key = None;
             }

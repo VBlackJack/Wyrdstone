@@ -37,9 +37,23 @@ const NOTICE_RECOVERED_FROM_BACKUP: &str = "save.notice.recovered_from_backup";
 /// Notice shown when the save is unreadable and cannot be copied, so saving is suspended.
 pub const NOTICE_SAVE_READ_ONLY: &str = "save.warning.read_only";
 /// Notice shown when the save was written by a newer game version, so saving is suspended.
-const NOTICE_SAVE_NEWER_VERSION: &str = "save.warning.newer_version";
+pub const NOTICE_SAVE_NEWER_VERSION: &str = "save.warning.newer_version";
 /// Notice shown when an unreadable save was preserved and a fresh city was started.
 const NOTICE_UNREADABLE_BACKED_UP: &str = "save.notice.unreadable_backed_up";
+
+/// Tag of the copy kept aside before a newer-version save is replaced on purpose.
+const NEWER_SAVE_COPY_TAG: &str = "newer";
+/// Notice shown when the export is refused because no progress was loaded.
+const NOTICE_BACKUP_READ_ONLY: &str = "city.panel.backup.read_only";
+
+/// Why the save is read-only, which decides the notice shown and how it may be lifted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadOnlyCause {
+    /// The save file exists but could not be read, and could not be preserved either.
+    Unreadable,
+    /// The save file was written by a newer game version.
+    NewerVersion,
+}
 
 /// Top-level scene states.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -120,6 +134,8 @@ pub struct GameContext {
     /// True while an existing save file could not be read or preserved: writing is suspended
     /// so the unreadable file is never overwritten.
     pub save_read_only: bool,
+    /// Why `save_read_only` is set (never serialized); `None` while saving is allowed.
+    pub save_read_only_cause: Option<ReadOnlyCause>,
     /// True once the primary file is known to be good this session (loaded or written by us),
     /// which is the only time its content may be rotated into the `.bak` copy.
     save_file_verified: bool,
@@ -143,6 +159,7 @@ impl GameContext {
         let mut active_expedition = None;
 
         let mut save_read_only = false;
+        let mut save_read_only_cause = None;
         let mut save_file_verified = false;
         let mut status_notice_key = None;
         let mut has_unreadable_save = false;
@@ -170,6 +187,7 @@ impl GameContext {
                 warn!("Wyrdstone save is unreadable and could not be preserved: {reason}");
                 has_unreadable_save = true;
                 save_read_only = true;
+                save_read_only_cause = Some(ReadOnlyCause::Unreadable);
                 status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
                 // A readable `.bak` starts the session; writes stay suspended.
                 backup.map(|saved| *saved)
@@ -178,6 +196,7 @@ impl GameContext {
                 warn!("Wyrdstone save was written by a newer version (schema {found}); read-only");
                 has_unreadable_save = true;
                 save_read_only = true;
+                save_read_only_cause = Some(ReadOnlyCause::NewerVersion);
                 status_notice_key = Some(NOTICE_SAVE_NEWER_VERSION.to_string());
                 // A readable older `.bak` starts the session; writes stay suspended.
                 backup.map(|saved| *saved)
@@ -269,6 +288,7 @@ impl GameContext {
             energy_regen_anchor_unix_secs: regen_anchor,
             save_path,
             save_read_only,
+            save_read_only_cause,
             save_file_verified,
             rng: StdRng::from_entropy(),
         }
@@ -284,6 +304,14 @@ impl GameContext {
         self.confirm_import_backup = false;
         self.confirm_end_expedition = false;
         self.status_notice_key = None;
+    }
+
+    /// Notice key describing why saving is suspended, `None` when saving is allowed.
+    pub fn save_read_only_notice(&self) -> Option<&'static str> {
+        if !self.save_read_only {
+            return None;
+        }
+        Some(read_only_notice(self.save_read_only_cause))
     }
 
     /// Persists current progression and audio settings to disk atomically.
@@ -302,7 +330,7 @@ impl GameContext {
                     warn!(
                         "Wyrdstone save is readable again; session stays read-only until restart"
                     );
-                    self.status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
+                    self.status_notice_key = self.save_read_only_notice().map(str::to_string);
                     return;
                 }
                 ReadOnlyResolution::StillBlocked => {
@@ -311,8 +339,12 @@ impl GameContext {
                 }
                 ReadOnlyResolution::Lift => {
                     info!("Wyrdstone unreadable save preserved, resuming writes");
+                    // A newer save that vanished mid-session was not backed up as unreadable.
+                    self.status_notice_key = (self.save_read_only_cause
+                        != Some(ReadOnlyCause::NewerVersion))
+                    .then(|| NOTICE_UNREADABLE_BACKED_UP.to_string());
                     self.save_read_only = false;
-                    self.status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
+                    self.save_read_only_cause = None;
                 }
             }
         }
@@ -328,20 +360,33 @@ impl GameContext {
         }
     }
 
-    /// Ends the read-only state after an explicit player action that replaces the save,
-    /// still trying to keep a copy of the unreadable file first.
-    fn lift_save_read_only(&mut self) {
+    /// Ends the read-only state after an explicit player action that replaces the save.
+    ///
+    /// An unreadable file is copied aside on a best-effort basis. A newer-version file is valid
+    /// data: it must be copied to a `newer` sibling first, and when that copy fails the
+    /// read-only state is kept (the notice is returned as the error) so it is never overwritten.
+    fn lift_save_read_only(&mut self) -> Result<(), &'static str> {
         if !self.save_read_only {
-            return;
+            return Ok(());
         }
         if let Some(path) = &self.save_path {
-            if let Err(err) = SaveData::backup_unreadable(path) {
+            if self.save_read_only_cause == Some(ReadOnlyCause::NewerVersion) {
+                if let Ok(true) = path.try_exists() {
+                    if let Err(err) = SaveData::preserve_copy(path, NEWER_SAVE_COPY_TAG) {
+                        warn!("Wyrdstone newer-version save could not be preserved: {err}");
+                        self.status_notice_key = Some(NOTICE_SAVE_NEWER_VERSION.to_string());
+                        return Err(NOTICE_SAVE_NEWER_VERSION);
+                    }
+                }
+            } else if let Err(err) = SaveData::backup_unreadable(path) {
                 warn!(
                     "Wyrdstone unreadable save could not be preserved before replacing it: {err}"
                 );
             }
         }
         self.save_read_only = false;
+        self.save_read_only_cause = None;
+        Ok(())
     }
 
     fn build_save_snapshot(&self) -> SaveData {
@@ -365,6 +410,10 @@ impl GameContext {
     /// Exports an atomic JSON backup to `wyrdstone_backup.json` next to the primary save file
     /// and returns the destination path string on success.
     pub fn export_backup(&self) -> Result<String, &'static str> {
+        if self.save_read_only {
+            // No saved progress was loaded, so there is nothing trustworthy to export.
+            return Err(NOTICE_BACKUP_READ_ONLY);
+        }
         let Some(backup_path) = self
             .save_path
             .as_ref()
@@ -396,6 +445,7 @@ impl GameContext {
             Ok(None) => return Err("city.panel.backup.missing"),
             Err(_) => return Err("city.panel.backup.error"),
         };
+        self.lift_save_read_only()?;
         self.data.i18n.set_language(saved.language);
         self.audio_muted = saved.muted;
         self.bgm_volume = if saved.bgm_volume.is_finite() {
@@ -415,7 +465,6 @@ impl GameContext {
         self.active_expedition = saved.active_expedition;
         self.city = saved.city;
         self.energy_regen_anchor_unix_secs = now_unix_secs();
-        self.lift_save_read_only();
         self.has_existing_save = true;
         self.persist();
         Ok(())
@@ -436,8 +485,13 @@ impl GameContext {
     }
 
     /// Resets player progression to a brand-new Saga and persists immediately.
-    pub fn reset_saga(&mut self) {
-        self.lift_save_read_only();
+    ///
+    /// Returns `false` (nothing changed, notice set) when a newer-version save could not be
+    /// preserved first.
+    pub fn reset_saga(&mut self) -> bool {
+        if self.lift_save_read_only().is_err() {
+            return false;
+        }
         self.city = CityState::new(&self.data.balance);
         self.selected_building_id = self
             .data
@@ -463,6 +517,7 @@ impl GameContext {
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
         self.persist();
+        true
     }
 
     /// Launches today's deterministic Daily Trial board (free of Endurance cost once per day).
@@ -657,7 +712,14 @@ pub fn today_day_index() -> u64 {
     now_unix_secs() / 86_400
 }
 
-/// Regeneration speed as a percentage (100 = base rate), raised by the Mead Hall tier.
+/// Maps a read-only cause to its notice key (unknown cause falls back to the unreadable one).
+fn read_only_notice(cause: Option<ReadOnlyCause>) -> &'static str {
+    match cause {
+        Some(ReadOnlyCause::NewerVersion) => NOTICE_SAVE_NEWER_VERSION,
+        Some(ReadOnlyCause::Unreadable) | None => NOTICE_SAVE_READ_ONLY,
+    }
+}
+
 /// True when a loaded save holds real progress, so the title offers Continue instead of Play.
 fn has_saved_progress(city: &CityState, tutorial_step: u8) -> bool {
     tutorial_step > 0
@@ -666,6 +728,7 @@ fn has_saved_progress(city: &CityState, tutorial_step: u8) -> bool {
         || !city.completed_levels.is_empty()
 }
 
+/// Regeneration speed as a percentage (100 = base rate), raised by the Mead Hall tier.
 fn regen_speed_pct(city: &CityState, balance: &BalanceConfig) -> u64 {
     100 + u64::from(city.compute_bonuses(balance).energy_regen_speed_pct)
 }
@@ -768,5 +831,23 @@ mod progress_tests {
         let mut city = fresh_city();
         city.completed_levels.insert("lvl_1".to_string());
         assert!(has_saved_progress(&city, 0));
+    }
+}
+
+#[cfg(test)]
+mod read_only_notice_tests {
+    use super::*;
+
+    #[test]
+    fn each_cause_maps_to_its_notice() {
+        assert_eq!(
+            read_only_notice(Some(ReadOnlyCause::NewerVersion)),
+            NOTICE_SAVE_NEWER_VERSION
+        );
+        assert_eq!(
+            read_only_notice(Some(ReadOnlyCause::Unreadable)),
+            NOTICE_SAVE_READ_ONLY
+        );
+        assert_eq!(read_only_notice(None), NOTICE_SAVE_READ_ONLY);
     }
 }

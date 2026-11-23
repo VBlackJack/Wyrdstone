@@ -334,6 +334,7 @@
   "city.panel.backup.imported": "Backup restored successfully!",
   "city.panel.backup.missing": "No wyrdstone_backup.json found.",
   "city.panel.backup.error": "Backup operation failed.",
+  "city.panel.backup.read_only": "Nothing to export: the existing save could not be loaded.",
   "boss.hel.name": "Hel",
   "boss.hel.title": "Queen of Helheim",
   "boss.hel.desc": "Shrouded in Niflheim Fog, Hel curses 2 runes every 3 turns (3 in Phase 2).",

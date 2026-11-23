@@ -498,8 +498,16 @@ pub fn handle_title_buttons(
             }
             TitleAction::NewSaga => {
                 if ctx.confirm_reset {
-                    ctx.reset_saga();
-                    next_state.set(AppState::FjordCity);
+                    if ctx.reset_saga() {
+                        next_state.set(AppState::FjordCity);
+                    } else {
+                        // The newer save could not be preserved: stay here, notice is set.
+                        ctx.confirm_reset = false;
+                        for entity in &roots {
+                            commands.entity(entity).despawn_recursive();
+                        }
+                        spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+                    }
                 } else {
                     ctx.confirm_reset = true;
                     for entity in &roots {
