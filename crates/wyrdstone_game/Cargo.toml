@@ -48,7 +48,7 @@ winit = "0.30"
 winresource = "0.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
-bevy = { version = "0.15", default-features = false, features = ["android-game-activity"] }
+bevy = { version = "0.15", default-features = false, features = ["android-native-activity"] }
 
 [package.metadata.android]
 package = "com.julienbombled.wyrdstone"
@@ -63,3 +63,16 @@ target_sdk_version = 35
 [package.metadata.android.application]
 label = "Wyrdstone"
 icon = "@mipmap/ic_launcher"
+
+[package.metadata.android.application.activity]
+orientation = "fullUser"
+launch_mode = "singleTask"
+config_changes = "orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|locale|layoutDirection"
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.touchscreen"
+required = false
+
+[[package.metadata.android.uses_feature]]
+opengles_version = [3, 0]
+required = true

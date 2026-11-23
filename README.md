@@ -13,7 +13,7 @@
 ## Architecture
 
 - `crates/wyrdstone_core`: Pure Rust game logic (Match-3 board, gravity, portals, frost spread, cascades, boosters, Patron Gods, Boss Raids, Endless Expedition, Clan Ranks & Feats, i18n EN/FR, atomic JSON save).
-- `crates/wyrdstone_game`: Bevy 2D presentation layer with painted Norse artwork, modular `city_ui/` and `match3_scene/` scenes, mouse-wheel + touch scrolling, procedural WAV audio (with dedicated Boss Raid BGM), responsive mouse + touch input, and Android `GameActivity` integration.
+- `crates/wyrdstone_game`: Bevy 2D presentation layer with painted Norse artwork, modular `city_ui/` and `match3_scene/` scenes, mouse-wheel + touch scrolling, procedural WAV audio (with dedicated Boss Raid BGM), responsive mouse + touch input, and Android `NativeActivity` integration (packaged with `cargo-apk`).
 - `assets/locales/`: English (`en.json`) and French (`fr.json`) localization tables.
 - `assets/data/`: Externalized RON data (`balance.ron`, `buildings.ron`, `levels.ron`, `quests.ron`, `amulets.ron`, `collections.ron`, `tool_shop.ron`, `bosses.ron`, `achievements.ron`).
 
@@ -40,6 +40,22 @@ rustup target add aarch64-linux-android
 cargo install cargo-apk
 cargo apk build -p wyrdstone_game --release
 ```
+
+### Release signing (Android)
+
+The release workflow signs the APK with a keystore stored in two GitHub repository secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: the keystore file, base64 encoded.
+- `ANDROID_KEYSTORE_PASSWORD`: the keystore password.
+
+Create the keystore once and keep it safe (losing it prevents updating installed apps):
+
+```powershell
+keytool -genkeypair -v -keystore release.keystore -alias wyrdstone -keyalg RSA -keysize 2048 -validity 10000
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore")) | Set-Clipboard
+```
+
+Paste the clipboard content into `ANDROID_KEYSTORE_BASE64`. The job fails with a clear error if either secret is missing. Locally, set `CARGO_APK_RELEASE_KEYSTORE` and `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` before `cargo apk build --release`.
 
 ## License
 

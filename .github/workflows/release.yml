@@ -7,7 +7,11 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  ANDROID_NDK_VERSION: 27.2.12479018
+  CARGO_APK_VERSION: 0.10.0
 
 jobs:
   build-windows:
@@ -16,13 +20,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --workspace
       - name: Build Windows release binary
         run: cargo build --release --bin wyrdstone
+      - name: Rename Windows binary
+        shell: bash
+        run: cp target/release/wyrdstone.exe "wyrdstone-${{ github.ref_name }}-windows-x64.exe"
       - name: Upload Windows binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: wyrdstone-windows-x64
-          path: target/release/wyrdstone.exe
+          path: wyrdstone-${{ github.ref_name }}-windows-x64.exe
 
   build-android:
     runs-on: ubuntu-latest
@@ -35,22 +44,49 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK 35, build-tools, and NDK
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
       - name: Install cargo-apk
-        run: cargo install cargo-apk --locked
+        run: cargo install cargo-apk --version "${CARGO_APK_VERSION}" --locked
+      - name: Prepare release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Secret ANDROID_KEYSTORE_BASE64 is empty or missing"
+            exit 1
+          fi
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::Secret ANDROID_KEYSTORE_PASSWORD is empty or missing"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          echo "CARGO_APK_RELEASE_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          echo "::add-mask::$KEYSTORE_PASSWORD"
+          echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
       - name: Build Android ARM64 APK
         run: cargo apk build --release -p wyrdstone_game --lib
+      - name: Rename Android APK
+        run: |
+          apk_files=(target/release/apk/*.apk)
+          if [ "${#apk_files[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one APK, found ${#apk_files[@]}"
+            exit 1
+          fi
+          cp "${apk_files[0]}" "wyrdstone-${{ github.ref_name }}-android-arm64.apk"
       - name: Upload Android APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: wyrdstone-android-arm64
-          path: target/release/apk/*.apk
+          path: wyrdstone-${{ github.ref_name }}-android-arm64.apk
 
   publish-release:
     needs: [build-windows, build-android]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -60,5 +96,5 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/wyrdstone-windows-x64/wyrdstone.exe
+            artifacts/wyrdstone-windows-x64/*.exe
             artifacts/wyrdstone-android-arm64/*.apk

@@ -13,7 +13,7 @@
 ## Architecture
 
 - `crates/wyrdstone_core` : logique pure en Rust (plateau Match-3, gravité, portails, givre rampant, cascades, boosters, Dieux Patrons, Raids Boss, Expédition Infinie, Rangs & Exploits, i18n EN/FR, sauvegarde JSON atomique).
-- `crates/wyrdstone_game` : couche graphique Bevy 2D avec illustrations nordiques peintes, modules `city_ui/` et `match3_scene/`, défilement molette + tactile, audio WAV procédural (avec BGM dédiée Boss Raid), contrôles souris et tactile Android, et point d'entrée Android `GameActivity`.
+- `crates/wyrdstone_game` : couche graphique Bevy 2D avec illustrations nordiques peintes, modules `city_ui/` et `match3_scene/`, défilement molette + tactile, audio WAV procédural (avec BGM dédiée Boss Raid), contrôles souris et tactile Android, et point d'entrée Android `NativeActivity` (empaqueté avec `cargo-apk`).
 - `assets/locales/` : fichiers de traduction anglais (`en.json`) et français (`fr.json`).
 - `assets/data/` : données de jeu externalisées au format RON (`balance.ron`, `buildings.ron`, `levels.ron`, `quests.ron`, `amulets.ron`, `collections.ron`, `tool_shop.ron`, `bosses.ron`, `achievements.ron`).
 
@@ -40,6 +40,22 @@ rustup target add aarch64-linux-android
 cargo install cargo-apk
 cargo apk build -p wyrdstone_game --release
 ```
+
+### Signature de release (Android)
+
+Le workflow de release signe l'APK avec un keystore stocké dans deux secrets du dépôt GitHub :
+
+- `ANDROID_KEYSTORE_BASE64` : le fichier keystore, encodé en base64.
+- `ANDROID_KEYSTORE_PASSWORD` : le mot de passe du keystore.
+
+Créer le keystore une seule fois et le conserver précieusement (le perdre empêche de mettre à jour les applications installées) :
+
+```powershell
+keytool -genkeypair -v -keystore release.keystore -alias wyrdstone -keyalg RSA -keysize 2048 -validity 10000
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore")) | Set-Clipboard
+```
+
+Coller le contenu du presse-papiers dans `ANDROID_KEYSTORE_BASE64`. Le job échoue avec un message clair si l'un des secrets est absent. En local, définir `CARGO_APK_RELEASE_KEYSTORE` et `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` avant `cargo apk build --release`.
 
 ## Licence
 
