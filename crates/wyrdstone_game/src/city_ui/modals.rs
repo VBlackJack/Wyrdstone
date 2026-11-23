@@ -19,17 +19,21 @@
 use super::{spawn_resource_pill, spawn_small_button, spawn_small_button_colored, CityAction};
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
+use crate::scroll::{ScrollPanelKind, ScrollablePanel};
 use crate::state::{ActiveModal, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
-use wyrdstone_core::{is_achievement_unlocked, PatronGod, ACHIEVEMENTS};
+use bevy::ui::RelativeCursorPosition;
+use wyrdstone_core::{achievement_progress, AmuletEffect, PatronGod};
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_modal_shell<F>(
     root: &mut ChildBuilder,
     width_px: f32,
     title: &str,
     close_label: &str,
-    close_modal: ActiveModal,
+    close_action: CityAction,
+    scroll_offset_y: f32,
     body_fn: F,
 ) where
     F: FnOnce(&mut ChildBuilder),
@@ -51,6 +55,14 @@ fn spawn_modal_shell<F>(
     .with_children(|backdrop| {
         backdrop
             .spawn((
+                ScrollablePanel {
+                    kind: ScrollPanelKind::Modal,
+                },
+                ScrollPosition {
+                    offset_x: 0.0,
+                    offset_y: scroll_offset_y,
+                },
+                RelativeCursorPosition::default(),
                 Node {
                     width: Val::Px(width_px),
                     max_width: Val::Percent(94.0),
@@ -82,12 +94,7 @@ fn spawn_modal_shell<F>(
                             },
                             TextColor(COLOR_ACCENT_GOLD),
                         ));
-                        spawn_small_button(
-                            hdr,
-                            close_label,
-                            CityAction::ToggleModal(close_modal),
-                            COLOR_ACCENT_CRIMSON,
-                        );
+                        spawn_small_button(hdr, close_label, close_action, COLOR_ACCENT_CRIMSON);
                     });
 
                 body_fn(modal);
@@ -95,14 +102,19 @@ fn spawn_modal_shell<F>(
     });
 }
 
-pub(super) fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+pub(super) fn spawn_amulets_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    scroll_offset_y: f32,
+) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
         560.0,
         i18n.t("city.panel.amulets.title"),
         i18n.t("city.panel.amulets.close"),
-        ActiveModal::Amulets,
+        CityAction::ToggleModal(ActiveModal::Amulets),
+        scroll_offset_y,
         |modal| {
             for amulet in &ctx.data.amulets {
                 let tier = ctx.city.amulet_tier(&amulet.id);
@@ -175,8 +187,30 @@ pub(super) fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
                                 },
                                 TextColor(COLOR_ACCENT_GOLD),
                             ));
+                            let effect_desc = match ctx.city.scaled_amulet_effect(amulet) {
+                                AmuletEffect::ResourceBonusPct(v) => i18n.t_fmt(
+                                    "city.panel.amulets.effect.resources",
+                                    &[("val", v.to_string())],
+                                ),
+                                AmuletEffect::ExtraMoves(v) => i18n.t_fmt(
+                                    "city.panel.amulets.effect.moves",
+                                    &[("val", v.to_string())],
+                                ),
+                                AmuletEffect::ScoreBonusPct(v) => i18n.t_fmt(
+                                    "city.panel.amulets.effect.score",
+                                    &[("val", v.to_string())],
+                                ),
+                                AmuletEffect::StartingBoosters(v) => i18n.t_fmt(
+                                    "city.panel.amulets.effect.boosters",
+                                    &[("val", v.to_string())],
+                                ),
+                                AmuletEffect::ExtraTimePct(v) => i18n.t_fmt(
+                                    "city.panel.amulets.effect.time",
+                                    &[("val", v.to_string())],
+                                ),
+                            };
                             info.spawn((
-                                Text::new(i18n.t(&amulet.desc_key)),
+                                Text::new(effect_desc),
                                 TextFont {
                                     font_size: FONT_SMALL,
                                     ..default()
@@ -235,14 +269,19 @@ pub(super) fn spawn_amulets_modal(root: &mut ChildBuilder, ctx: &GameContext) {
     );
 }
 
-pub(super) fn spawn_collections_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+pub(super) fn spawn_collections_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    scroll_offset_y: f32,
+) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
         580.0,
         i18n.t("city.panel.collections.title"),
         i18n.t("city.panel.amulets.close"),
-        ActiveModal::Collections,
+        CityAction::ToggleModal(ActiveModal::Collections),
+        scroll_offset_y,
         |modal| {
             for col in &ctx.data.collections {
                 let found = ctx.city.collection_found_count(col);
@@ -345,6 +384,7 @@ pub(super) fn spawn_tool_shop_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -352,7 +392,8 @@ pub(super) fn spawn_tool_shop_modal(
         620.0,
         i18n.t("city.panel.shop.title"),
         i18n.t("city.panel.amulets.close"),
-        ActiveModal::Shop,
+        CityAction::ToggleModal(ActiveModal::Shop),
+        scroll_offset_y,
         |modal| {
             for recipe in &ctx.data.tool_shop {
                 let count = ctx.city.tools.count(recipe.tool);
@@ -464,6 +505,7 @@ pub(super) fn spawn_stats_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     sound_bank: &SoundBank,
+    scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     let st = ctx.city.stats;
@@ -472,7 +514,8 @@ pub(super) fn spawn_stats_modal(
         460.0,
         i18n.t("city.panel.stats.title"),
         i18n.t("city.panel.amulets.close"),
-        ActiveModal::Stats,
+        CityAction::ToggleModal(ActiveModal::Stats),
+        scroll_offset_y,
         |card| {
             let rows = [
                 i18n.t_fmt(
@@ -560,14 +603,15 @@ pub(super) fn spawn_stats_modal(
     );
 }
 
-pub(super) fn spawn_help_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+pub(super) fn spawn_help_modal(root: &mut ChildBuilder, ctx: &GameContext, scroll_offset_y: f32) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
         560.0,
         i18n.t("city.panel.help.title"),
         i18n.t("city.panel.amulets.close"),
-        ActiveModal::Help,
+        CityAction::ToggleModal(ActiveModal::Help),
+        scroll_offset_y,
         |card| {
             for (t_key, b_key) in [
                 (
@@ -608,6 +652,7 @@ pub(super) fn spawn_patrons_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -615,7 +660,8 @@ pub(super) fn spawn_patrons_modal(
         620.0,
         i18n.t("city.panel.patrons.title"),
         i18n.t("city.panel.amulets.close"),
-        ActiveModal::Patrons,
+        CityAction::ToggleModal(ActiveModal::Patrons),
+        scroll_offset_y,
         |modal| {
             for god in PatronGod::ALL {
                 let active = ctx.city.selected_patron == god;
@@ -717,6 +763,7 @@ pub(super) fn spawn_raids_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -724,7 +771,8 @@ pub(super) fn spawn_raids_modal(
         650.0,
         i18n.t("city.panel.raids.title"),
         i18n.t("city.panel.amulets.close"),
-        ActiveModal::Raids,
+        CityAction::ToggleModal(ActiveModal::Raids),
+        scroll_offset_y,
         |modal| {
             for boss in &ctx.data.bosses {
                 let unlocked = ctx.city.glory >= boss.required_glory;
@@ -852,23 +900,29 @@ pub(super) fn spawn_raids_modal(
     );
 }
 
-pub(super) fn spawn_achievements_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+pub(super) fn spawn_achievements_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    scroll_offset_y: f32,
+) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
         620.0,
         i18n.t("city.panel.feats.title"),
         i18n.t("city.panel.amulets.close"),
-        ActiveModal::Achievements,
+        CityAction::ToggleModal(ActiveModal::Achievements),
+        scroll_offset_y,
         |modal| {
-            for ach in ACHIEVEMENTS {
-                let claimed = ctx.city.claimed_achievements.contains(ach.id);
-                let unlocked = is_achievement_unlocked(
-                    ach.id,
+            for ach in &ctx.data.achievements {
+                let claimed = ctx.city.claimed_achievements.contains(&ach.id);
+                let (done, target) = achievement_progress(
+                    &ach.id,
                     &ctx.city,
                     &ctx.data.buildings,
                     ctx.data.bosses.len(),
                 );
+                let unlocked = target > 0 && done >= target;
                 let ready = unlocked && !claimed;
 
                 modal
@@ -900,7 +954,7 @@ pub(super) fn spawn_achievements_modal(root: &mut ChildBuilder, ctx: &GameContex
                         })
                         .with_children(|info| {
                             info.spawn((
-                                Text::new(i18n.t(ach.title_key)),
+                                Text::new(i18n.t(&ach.title_key)),
                                 TextFont {
                                     font_size: FONT_BODY,
                                     ..default()
@@ -912,7 +966,7 @@ pub(super) fn spawn_achievements_modal(root: &mut ChildBuilder, ctx: &GameContex
                                 }),
                             ));
                             info.spawn((
-                                Text::new(i18n.t(ach.desc_key)),
+                                Text::new(i18n.t(&ach.desc_key)),
                                 TextFont {
                                     font_size: 12.0,
                                     ..default()
@@ -925,7 +979,7 @@ pub(super) fn spawn_achievements_modal(root: &mut ChildBuilder, ctx: &GameContex
                             spawn_small_button(
                                 row,
                                 i18n.t("city.panel.feats.claim"),
-                                CityAction::ClaimAchievement(ach.id.to_string()),
+                                CityAction::ClaimAchievement(ach.id.clone()),
                                 COLOR_ACCENT_GREEN,
                             );
                         } else if claimed {
@@ -935,11 +989,11 @@ pub(super) fn spawn_achievements_modal(root: &mut ChildBuilder, ctx: &GameContex
                                 COLOR_ACCENT_GOLD,
                             );
                         } else {
-                            spawn_resource_pill(
-                                row,
-                                i18n.t("city.panel.feats.locked"),
-                                COLOR_TEXT_MUTED,
+                            let prog_lbl = i18n.t_fmt(
+                                "city.panel.feats.progress",
+                                &[("done", done.to_string()), ("target", target.to_string())],
                             );
+                            spawn_resource_pill(row, &prog_lbl, COLOR_TEXT_MUTED);
                         }
                     });
             }
@@ -947,7 +1001,11 @@ pub(super) fn spawn_achievements_modal(root: &mut ChildBuilder, ctx: &GameContex
     );
 }
 
-pub(super) fn spawn_expedition_boons_modal(root: &mut ChildBuilder, ctx: &GameContext) {
+pub(super) fn spawn_expedition_boons_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    scroll_offset_y: f32,
+) {
     let i18n = &ctx.data.i18n;
     let Some(run) = &ctx.active_expedition else {
         return;
@@ -961,7 +1019,8 @@ pub(super) fn spawn_expedition_boons_modal(root: &mut ChildBuilder, ctx: &GameCo
         580.0,
         &title,
         i18n.t("city.panel.expedition.cashout"),
-        ActiveModal::ExpeditionBoons,
+        CityAction::EndExpedition,
+        scroll_offset_y,
         |modal| {
             for (idx, boon) in run.pending_boons.iter().enumerate() {
                 modal

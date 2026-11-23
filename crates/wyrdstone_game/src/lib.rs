@@ -22,6 +22,7 @@ mod fjord_art;
 mod match3_scene;
 mod result_ui;
 mod runes_art;
+mod scroll;
 mod state;
 mod theme;
 mod title_ui;
@@ -57,6 +58,7 @@ pub fn run_app() {
     app.add_plugins(DefaultPlugins.set(window_plugin))
         .insert_resource(ClearColor(COLOR_BG_DEEP))
         .insert_resource(ctx)
+        .init_resource::<scroll::UiScrollMemory>()
         .init_state::<AppState>()
         .add_systems(
             PreStartup,
@@ -68,7 +70,14 @@ pub fn run_app() {
             ),
         )
         .add_systems(Startup, enter_title_after_boot)
-        .add_systems(Update, (tick_energy_regen, handle_global_shortcuts))
+        .add_systems(
+            Update,
+            (
+                tick_energy_regen,
+                handle_global_shortcuts,
+                scroll::handle_ui_scroll,
+            ),
+        )
         // Title screen
         .add_systems(OnEnter(AppState::Title), title_ui::setup_title_ui)
         .add_systems(

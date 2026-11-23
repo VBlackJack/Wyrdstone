@@ -295,6 +295,17 @@ pub fn tick_board_animation(
     };
     let dt = time.delta_secs();
 
+    // Clear boss portrait hit-flash shortly after damage lands.
+    if input_state.boss_hit_flash_secs > 0.0 {
+        input_state.boss_hit_flash_secs = (input_state.boss_hit_flash_secs - dt).max(0.0);
+        if input_state.boss_hit_flash_secs == 0.0 {
+            if let Some(boss) = ctx.active_session.as_mut().and_then(|s| s.boss.as_mut()) {
+                boss.last_damage_dealt = 0;
+            }
+            input_state.dirty_hud = true;
+        }
+    }
+
     // Tick optional level countdown timer (paused during VictoryCelebration or Help modal).
     let timer_paused = matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. })
         || ctx.active_modal == ActiveModal::Help;
@@ -398,16 +409,27 @@ pub fn tick_board_animation(
                             ctx.colorblind_mode,
                         );
                     }
-                    let cleared_set: HashSet<CellPos> = prep.cells.iter().copied().collect();
                     input_state.dirty_hud = true;
-                    input_state.phase = BoardAnimPhase::Clearing {
-                        prepared: prep,
-                        cleared_set,
-                        combo: 1,
-                        elapsed: 0.0,
-                        duration: ctx.data.balance.clear_anim_seconds,
-                        particles_spawned: false,
-                    };
+                    if !prep.converted_boosters.is_empty() {
+                        input_state.phase = BoardAnimPhase::SuperComboCharge {
+                            prepared: prep,
+                            consumes_turn: true,
+                            elapsed: 0.0,
+                            duration: 0.36,
+                            beams_spawned: false,
+                        };
+                    } else {
+                        let cleared_set: HashSet<CellPos> = prep.cells.iter().copied().collect();
+                        input_state.phase = BoardAnimPhase::Clearing {
+                            prepared: prep,
+                            cleared_set,
+                            combo: 1,
+                            consumes_turn: true,
+                            elapsed: 0.0,
+                            duration: ctx.data.balance.clear_anim_seconds,
+                            particles_spawned: false,
+                        };
+                    }
                 } else {
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     input_state.phase = BoardAnimPhase::SwapRevert {
@@ -460,10 +482,71 @@ pub fn tick_board_animation(
                 };
             }
         }
+        BoardAnimPhase::SuperComboCharge {
+            prepared,
+            consumes_turn,
+            mut elapsed,
+            duration,
+            mut beams_spawned,
+        } => {
+            if !beams_spawned {
+                play_sfx(&mut commands, &sound_bank, SfxKind::FuryUnleash);
+                let colors = [
+                    Color::srgba(0.98, 0.84, 0.32, 0.88),
+                    Color::srgba(0.42, 0.92, 1.0, 0.88),
+                    Color::srgba(0.98, 0.45, 0.68, 0.88),
+                ];
+                for (idx, &(pos, _)) in prepared.converted_boosters.iter().enumerate() {
+                    let w = cell_to_world(pos, &input_state);
+                    spawn_blast_beam(
+                        &mut commands,
+                        w,
+                        Vec2::splat(input_state.cell_step * 1.25),
+                        colors[idx % colors.len()],
+                    );
+                }
+                input_state.shake_secs = SHAKE_DURATION_SECS;
+                beams_spawned = true;
+            }
+            elapsed += dt;
+            let pulse =
+                1.0 + 0.18 * ((elapsed / duration).clamp(0.0, 1.0) * std::f32::consts::PI).sin();
+            for (tile, mut tf, mut sprite) in &mut tile_q {
+                if prepared
+                    .converted_boosters
+                    .iter()
+                    .any(|&(p, _)| p == tile.pos)
+                {
+                    tf.scale = Vec3::splat(pulse);
+                    sprite.color = Color::srgb(1.4, 1.28, 0.72);
+                }
+            }
+            if elapsed >= duration {
+                let cleared_set: HashSet<CellPos> = prepared.cells.iter().copied().collect();
+                input_state.phase = BoardAnimPhase::Clearing {
+                    prepared,
+                    cleared_set,
+                    combo: 1,
+                    consumes_turn,
+                    elapsed: 0.0,
+                    duration: ctx.data.balance.clear_anim_seconds,
+                    particles_spawned: false,
+                };
+            } else {
+                input_state.phase = BoardAnimPhase::SuperComboCharge {
+                    prepared,
+                    consumes_turn,
+                    elapsed,
+                    duration,
+                    beams_spawned,
+                };
+            }
+        }
         BoardAnimPhase::Clearing {
             prepared,
             cleared_set,
             combo,
+            consumes_turn,
             mut elapsed,
             duration,
             mut particles_spawned,
@@ -496,6 +579,7 @@ pub fn tick_board_animation(
                 let balance = ctx.data.balance.clone();
                 let mut gained_score = 0u32;
                 let mut cleared_total = 0u64;
+                let mut boss_damaged = false;
                 let mut fall_map = HashMap::new();
                 {
                     let ctx_ref = ctx.as_mut();
@@ -504,6 +588,11 @@ pub fn tick_board_animation(
                         gained_score = step.score_gained;
                         cleared_total = step.cleared_runes.values().map(|&v| v as u64).sum();
                         session.apply_step_progress(&step);
+                        boss_damaged = session
+                            .boss
+                            .as_ref()
+                            .map(|b| b.last_damage_dealt > 0)
+                            .unwrap_or(false);
                         let fall_moves: Vec<FallMove> = session
                             .board
                             .apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
@@ -513,6 +602,9 @@ pub fn tick_board_animation(
                     }
                     ctx_ref.city.stats.total_runes_cleared += cleared_total;
                     ctx_ref.city.stats.best_combo = ctx_ref.city.stats.best_combo.max(combo);
+                }
+                if boss_damaged {
+                    input_state.boss_hit_flash_secs = 0.38;
                 }
                 if gained_score > 0 {
                     let i18n = &ctx.data.i18n;
@@ -564,6 +656,7 @@ pub fn tick_board_animation(
                 input_state.phase = BoardAnimPhase::Falling {
                     moves: fall_map,
                     combo,
+                    consumes_turn,
                     elapsed: 0.0,
                     duration: ctx.data.balance.fall_anim_seconds,
                 };
@@ -572,6 +665,7 @@ pub fn tick_board_animation(
                     prepared,
                     cleared_set,
                     combo,
+                    consumes_turn,
                     elapsed,
                     duration,
                     particles_spawned,
@@ -581,6 +675,7 @@ pub fn tick_board_animation(
         BoardAnimPhase::Falling {
             moves,
             combo,
+            consumes_turn,
             mut elapsed,
             duration,
         } => {
@@ -640,6 +735,7 @@ pub fn tick_board_animation(
                     input_state.phase = BoardAnimPhase::Falling {
                         moves: relic_fall_map,
                         combo,
+                        consumes_turn,
                         elapsed: 0.0,
                         duration: ctx.data.balance.fall_anim_seconds,
                     };
@@ -660,6 +756,7 @@ pub fn tick_board_animation(
                         prepared: next_prep,
                         cleared_set,
                         combo: combo + 1,
+                        consumes_turn,
                         elapsed: 0.0,
                         duration: ctx.data.balance.clear_anim_seconds,
                         particles_spawned: false,
@@ -672,13 +769,16 @@ pub fn tick_board_animation(
                     let mut boss_riposte_hits = Vec::new();
                     let mut boss_riposte_name: Option<String> = None;
                     if let Some(session) = ctx_ref.active_session.as_mut() {
-                        frost_pos = session.apply_frost_spread_if_needed(&mut ctx_ref.rng);
-                        boss_riposte_hits = session.tick_boss_riposte_if_needed(&mut ctx_ref.rng);
-                        if !boss_riposte_hits.is_empty() {
-                            boss_riposte_name = session
-                                .boss
-                                .as_ref()
-                                .map(|b| ctx_ref.data.i18n.t(&b.def.name_key).to_string());
+                        if consumes_turn {
+                            frost_pos = session.apply_frost_spread_if_needed(&mut ctx_ref.rng);
+                            boss_riposte_hits =
+                                session.tick_boss_riposte_if_needed(&mut ctx_ref.rng);
+                            if !boss_riposte_hits.is_empty() {
+                                boss_riposte_name = session
+                                    .boss
+                                    .as_ref()
+                                    .map(|b| ctx_ref.data.i18n.t(&b.def.name_key).to_string());
+                            }
                         }
                         if !session.board.has_valid_moves() {
                             session.board.shuffle_free_runes(&mut ctx_ref.rng);
@@ -688,7 +788,7 @@ pub fn tick_board_animation(
                         session.finalize_turn(&balance);
                     }
                     if !boss_riposte_hits.is_empty() {
-                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
                         for &rp in &boss_riposte_hits {
                             let w = cell_to_world(rp, &input_state);
                             spawn_blast_beam(
@@ -773,6 +873,7 @@ pub fn tick_board_animation(
                 input_state.phase = BoardAnimPhase::Falling {
                     moves,
                     combo,
+                    consumes_turn,
                     elapsed,
                     duration,
                 };
@@ -888,8 +989,8 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
         ctx.city.stats.best_score = ctx.city.stats.best_score.max(score);
         if outcome == LevelOutcome::Victory {
             if let Some(boss) = boss_def {
-                ctx.city.record_boss_victory(&boss);
-                ctx.last_rewards = boss.reward_resources;
+                ctx.city.record_boss_victory_with_rewards(&boss, &rewards);
+                ctx.last_rewards = rewards;
             } else if building_id == "expedition" {
                 let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
                 ctx.city.record_expedition_wave(wave, &rewards, &balance);
@@ -907,6 +1008,7 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                     &rewards,
                     &balance,
                 );
+                ctx.last_rewards = wyrdstone_core::CityState::scale_daily_rewards(&rewards, streak);
                 ctx.last_daily_streak = Some(streak);
             } else {
                 ctx.city
@@ -917,7 +1019,9 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                 .city
                 .discover_next_relic_for_building(&building_id, &collections);
         } else {
-            ctx.active_expedition = None;
+            if building_id == "expedition" {
+                ctx.active_expedition = None;
+            }
             ctx.last_discovered_relic_key = None;
         }
         ctx.active_modal = ActiveModal::None;

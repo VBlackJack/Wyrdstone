@@ -18,9 +18,11 @@
 
 use super::{spawn_full_button, spawn_resource_pill, spawn_small_button_colored, CityAction};
 use crate::fjord_art::FjordTextures;
+use crate::scroll::{ScrollPanelKind, ScrollablePanel};
 use crate::state::GameContext;
 use crate::theme::*;
 use bevy::prelude::*;
+use bevy::ui::RelativeCursorPosition;
 use wyrdstone_core::{BuildingDef, Objective};
 
 pub(super) fn spawn_building_inspector(
@@ -28,6 +30,7 @@ pub(super) fn spawn_building_inspector(
     b: &BuildingDef,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     let tier = ctx.city.building_tier(&b.id);
@@ -56,15 +59,25 @@ pub(super) fn spawn_building_inspector(
     };
 
     inspector
-        .spawn(Node {
-            flex_direction: FlexDirection::Column,
-            flex_grow: 1.0,
-            flex_shrink: 1.0,
-            min_height: Val::Px(0.0),
-            overflow: Overflow::scroll_y(),
-            row_gap: Val::Px(6.0),
-            ..default()
-        })
+        .spawn((
+            ScrollablePanel {
+                kind: ScrollPanelKind::Inspector,
+            },
+            ScrollPosition {
+                offset_x: 0.0,
+                offset_y: scroll_offset_y,
+            },
+            RelativeCursorPosition::default(),
+            Node {
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                min_height: Val::Px(0.0),
+                overflow: Overflow::scroll_y(),
+                row_gap: Val::Px(6.0),
+                ..default()
+            },
+        ))
         .with_children(|top| {
             if let Some(img) = fjord_art.building_image(&b.id) {
                 let tint = if !unlocked {

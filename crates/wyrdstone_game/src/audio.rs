@@ -33,6 +33,8 @@ pub enum SfxKind {
     Invalid,
     MatchCombo(u32),
     ToolBlast,
+    FuryUnleash,
+    BossRiposte,
     RelicDrop,
     Upgrade,
     Victory,
@@ -53,12 +55,15 @@ pub struct SoundBank {
     pub invalid: Handle<AudioSource>,
     pub combo_chimes: Vec<Handle<AudioSource>>,
     pub tool_blast: Handle<AudioSource>,
+    pub fury_unleash: Handle<AudioSource>,
+    pub boss_riposte: Handle<AudioSource>,
     pub relic_drop: Handle<AudioSource>,
     pub upgrade: Handle<AudioSource>,
     pub victory: Handle<AudioSource>,
     pub defeat: Handle<AudioSource>,
     pub bgm_fjord: Handle<AudioSource>,
     pub bgm_match3: Handle<AudioSource>,
+    pub bgm_boss: Handle<AudioSource>,
 }
 
 /// Synthesizes all Nordic SFX and ambient music at startup and begins the BGM loop.
@@ -81,6 +86,8 @@ pub fn init_sound_bank(
         .collect();
 
     let tool_blast = add_wav(&mut audio_assets, synth_thunder_strike(0.38));
+    let fury_unleash = add_wav(&mut audio_assets, synth_fury_horn(0.62));
+    let boss_riposte = add_wav(&mut audio_assets, synth_boss_roar(0.46));
     let relic_drop = add_wav(
         &mut audio_assets,
         synth_arpeggio(0.45, &[440.0, 523.25, 659.25, 880.0]),
@@ -99,6 +106,7 @@ pub fn init_sound_bank(
     );
     let bgm_fjord = add_wav(&mut audio_assets, synth_nordic_ambient_loop(8.0));
     let bgm_match3 = add_wav(&mut audio_assets, synth_nordic_battle_loop(6.4));
+    let bgm_boss = add_wav(&mut audio_assets, synth_nordic_boss_loop(6.4));
 
     let initial_vol = if ctx.audio_muted { 0.0 } else { ctx.bgm_volume };
     commands.spawn((
@@ -119,28 +127,36 @@ pub fn init_sound_bank(
         invalid,
         combo_chimes,
         tool_blast,
+        fury_unleash,
+        boss_riposte,
         relic_drop,
         upgrade,
         victory,
         defeat,
         bgm_fjord,
         bgm_match3,
+        bgm_boss,
     });
 }
 
-/// Switches background music to the rhythmic Norse drum track when entering Match-3.
+/// Switches background music to the battle or Boss Raid track when entering Match-3.
 pub fn switch_bgm_to_match3(
     mut commands: Commands,
+    ctx: Res<GameContext>,
     bank: Res<SoundBank>,
     tracks: Query<Entity, With<BgmTrack>>,
 ) {
-    replace_bgm(
-        &mut commands,
-        &tracks,
-        bank.bgm_match3.clone(),
-        bank.muted,
-        bank.bgm_volume,
-    );
+    let is_boss = ctx
+        .active_session
+        .as_ref()
+        .and_then(|s| s.boss.as_ref())
+        .is_some();
+    let track = if is_boss {
+        bank.bgm_boss.clone()
+    } else {
+        bank.bgm_match3.clone()
+    };
+    replace_bgm(&mut commands, &tracks, track, bank.muted, bank.bgm_volume);
 }
 
 /// Restores the calm Fjord ambient loop when leaving Match-3.
@@ -194,6 +210,8 @@ pub fn play_sfx(commands: &mut Commands, bank: &SoundBank, kind: SfxKind) {
             bank.combo_chimes[idx].clone()
         }
         SfxKind::ToolBlast => bank.tool_blast.clone(),
+        SfxKind::FuryUnleash => bank.fury_unleash.clone(),
+        SfxKind::BossRiposte => bank.boss_riposte.clone(),
         SfxKind::RelicDrop => bank.relic_drop.clone(),
         SfxKind::Upgrade => bank.upgrade.clone(),
         SfxKind::Victory => bank.victory.clone(),
@@ -420,6 +438,82 @@ fn synth_nordic_battle_loop(duration_secs: f32) -> Vec<f32> {
             1.0
         };
         out.push(((drum + harp + bass) * fade).clamp(-0.9, 0.9));
+    }
+    out
+}
+
+fn synth_fury_horn(duration_secs: f32) -> Vec<f32> {
+    let n = (duration_secs * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let norm = i as f32 / n as f32;
+        let env = (norm * 10.0).min(1.0) * (1.0 - norm).powf(1.25);
+        let f1 = 146.83 + 22.0 * (norm * 2.0).min(1.0); // Rising D3 brass war-horn
+        let f2 = f1 * 1.5; // Perfect fifth
+        let f3 = f1 * 2.0; // Octave shimmer
+        let s =
+            (TAU * f1 * t).sin() * 0.50 + (TAU * f2 * t).sin() * 0.30 + (TAU * f3 * t).sin() * 0.20;
+        out.push((s * env * 0.72).clamp(-0.95, 0.95));
+    }
+    out
+}
+
+fn synth_boss_roar(duration_secs: f32) -> Vec<f32> {
+    let n = (duration_secs * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    let mut seed: u32 = 0xB055_7777;
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let norm = i as f32 / n as f32;
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let noise = ((seed >> 16) as f32 / 32768.0) - 1.0;
+        let growl = (TAU * (82.0 - 34.0 * norm) * t).sin() * 0.55
+            + (TAU * (116.5 - 40.0 * norm) * t).sin() * 0.30;
+        let env = (norm * 18.0).min(1.0) * (1.0 - norm).powf(1.5);
+        out.push(((growl + noise * 0.28) * env * 0.70).clamp(-0.95, 0.95));
+    }
+    out
+}
+
+fn synth_nordic_boss_loop(duration_secs: f32) -> Vec<f32> {
+    let n = (duration_secs * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    let beat_secs = 0.2f32; // Double-time war drums
+    let melody: [f32; 16] = [
+        293.66, 311.13, 293.66, 220.00, 349.23, 311.13, 293.66, 261.63, 440.00, 415.30, 349.23,
+        311.13, 293.66, 261.63, 220.00, 293.66,
+    ];
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let beat_idx = (t / beat_secs) as usize;
+        let beat_t = t - (beat_idx as f32) * beat_secs;
+
+        let heavy = beat_idx.is_multiple_of(4);
+        let drum_freq = if heavy {
+            76.0 - 32.0 * (beat_t / beat_secs).min(1.0)
+        } else {
+            118.0 - 40.0 * (beat_t / beat_secs).min(1.0)
+        };
+        let drum_env = (1.0 - (beat_t / 0.16).min(1.0)).powf(2.0);
+        let drum = (TAU * drum_freq * beat_t).sin() * drum_env * if heavy { 0.48 } else { 0.26 };
+
+        let note_hz = melody[(beat_idx / 2) % melody.len()];
+        let horn_env = (1.0 - (beat_t / beat_secs).min(1.0)).powf(1.3);
+        let horn = ((TAU * note_hz * t).sin() * 0.55 + (TAU * note_hz * 0.5 * t).sin() * 0.35)
+            * horn_env
+            * 0.28;
+        let sub = (TAU * 55.0 * t).sin() * 0.18;
+
+        let edge = 0.08;
+        let fade = if t < edge {
+            t / edge
+        } else if t > duration_secs - edge {
+            (duration_secs - t) / edge
+        } else {
+            1.0
+        };
+        out.push(((drum + horn + sub) * fade).clamp(-0.9, 0.9));
     }
     out
 }

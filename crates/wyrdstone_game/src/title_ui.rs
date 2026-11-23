@@ -250,6 +250,14 @@ pub fn handle_title_buttons(
     roots: Query<Entity, With<TitleRoot>>,
     mut buttons: Query<(&Interaction, &TitleAction, &mut BackgroundColor), Changed<Interaction>>,
 ) {
+    if sound_bank.is_changed() && !sound_bank.is_added() {
+        for entity in &roots {
+            commands.entity(entity).despawn_recursive();
+        }
+        spawn_title_tree(&mut commands, &ctx, &fjord_art, sound_bank.muted);
+        return;
+    }
+
     for (interaction, action, mut bg) in &mut buttons {
         match *interaction {
             Interaction::Pressed => match action {

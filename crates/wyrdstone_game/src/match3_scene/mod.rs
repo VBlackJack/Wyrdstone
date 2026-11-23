@@ -21,9 +21,12 @@ mod hud;
 
 pub use anim::{animate_particles, tick_board_animation};
 
-use crate::audio::{play_sfx, SfxKind, SoundBank};
+use crate::audio::{
+    cycle_bgm_volume, cycle_sfx_volume, play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank,
+};
 use crate::fjord_art::FjordTextures;
 use crate::runes_art::RuneTextures;
+use crate::scroll::UiScrollMemory;
 use crate::state::{ActiveModal, AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
@@ -103,6 +106,10 @@ pub enum Match3UiAction {
     ToggleHelp,
     SelectTool(ActiveTool),
     TriggerFury,
+    ToggleAudio,
+    CycleBgmVolume,
+    CycleSfxVolume,
+    ToggleColorblind,
 }
 
 /// Stepped animation phase machine so every swap, match, clear, fall, and cascade is readable.
@@ -122,10 +129,18 @@ pub enum BoardAnimPhase {
         elapsed: f32,
         duration: f32,
     },
+    SuperComboCharge {
+        prepared: PreparedClear,
+        consumes_turn: bool,
+        elapsed: f32,
+        duration: f32,
+        beams_spawned: bool,
+    },
     Clearing {
         prepared: PreparedClear,
         cleared_set: HashSet<CellPos>,
         combo: u32,
+        consumes_turn: bool,
         elapsed: f32,
         duration: f32,
         particles_spawned: bool,
@@ -133,6 +148,7 @@ pub enum BoardAnimPhase {
     Falling {
         moves: HashMap<CellPos, i32>,
         combo: u32,
+        consumes_turn: bool,
         elapsed: f32,
         duration: f32,
     },
@@ -160,6 +176,7 @@ pub struct Match3InputState {
     pub hint_pair: Option<(CellPos, CellPos)>,
     pub hover_cell: Option<CellPos>,
     pub shake_secs: f32,
+    pub boss_hit_flash_secs: f32,
     pub phase: BoardAnimPhase,
 }
 
@@ -175,6 +192,8 @@ pub fn setup_match3_scene(
     ctx: Res<GameContext>,
     textures: Res<RuneTextures>,
     fjord_art: Res<FjordTextures>,
+    sound_bank: Res<SoundBank>,
+    scroll_mem: Res<UiScrollMemory>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let mut input_state = Match3InputState::default();
@@ -212,7 +231,13 @@ pub fn setup_match3_scene(
         }
     }
 
-    hud::spawn_match3_hud(&mut commands, &ctx, &fjord_art);
+    hud::spawn_match3_hud(
+        &mut commands,
+        &ctx,
+        &fjord_art,
+        &sound_bank,
+        scroll_mem.modal_offset_y,
+    );
     commands.insert_resource(input_state);
 }
 
@@ -494,6 +519,27 @@ pub(super) fn spawn_board_sprites(
         }
     }
 
+    // Highlight adjacent booster pairs so super-combo opportunities stand out clearly.
+    let mut combo_cells = HashSet::new();
+    for (a, b) in session.board.find_booster_combo_pairs() {
+        combo_cells.insert(a);
+        combo_cells.insert(b);
+    }
+    for pos in combo_cells {
+        let w = cell_to_world(pos, layout);
+        commands.spawn((
+            Match3Cleanup,
+            Match3Entity,
+            BoosterPulse,
+            Sprite {
+                color: Color::srgba(1.0, 0.86, 0.34, 0.34),
+                custom_size: Some(Vec2::splat(layout.cell_step * 0.96)),
+                ..default()
+            },
+            Transform::from_xyz(w.x, w.y, Z_CELL_BG + 0.7),
+        ));
+    }
+
     if let Some(sel) = layout.selected {
         let w = cell_to_world(sel, layout);
         commands.spawn((
@@ -612,7 +658,7 @@ fn execute_patron_fury(
     } else {
         None
     };
-    play_sfx(commands, sound_bank, SfxKind::ToolBlast);
+    play_sfx(commands, sound_bank, SfxKind::FuryUnleash);
     input_state.shake_secs = SHAKE_DURATION_SECS;
     input_state.dirty_hud = true;
     if let Some(prep) = prepared {
@@ -623,6 +669,7 @@ fn execute_patron_fury(
             prepared: prep,
             cleared_set,
             combo: 1,
+            consumes_turn: false,
             elapsed: 0.0,
             duration: clear_dur,
             particles_spawned: false,
@@ -634,11 +681,14 @@ fn execute_patron_fury(
 }
 
 /// Handles HUD button interactions and keyboard shortcuts (`1-6` tools, `Space` Fury, `H` Hint, `Escape`).
+#[allow(clippy::too_many_arguments)]
 pub fn handle_match3_hud_buttons(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
-    sound_bank: Res<SoundBank>,
+    mut sound_bank: ResMut<SoundBank>,
+    mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
+    mut scroll_mem: ResMut<UiScrollMemory>,
     mut input_state: ResMut<Match3InputState>,
     mut next_state: ResMut<NextState<AppState>>,
     buttons: Query<(&Interaction, &Match3UiAction), Changed<Interaction>>,
@@ -646,6 +696,7 @@ pub fn handle_match3_hud_buttons(
     if keys.just_pressed(KeyCode::Escape) {
         if ctx.active_modal == ActiveModal::Help {
             ctx.active_modal = ActiveModal::None;
+            scroll_mem.modal_offset_y = 0.0;
             input_state.dirty_hud = true;
             return;
         }
@@ -710,14 +761,45 @@ pub fn handle_match3_hud_buttons(
         }
         match *action {
             Match3UiAction::Retreat => {
+                let was_expedition = ctx
+                    .active_session
+                    .as_ref()
+                    .map(|s| s.level.building_id == "expedition")
+                    .unwrap_or(false);
+                if was_expedition {
+                    ctx.active_expedition = None;
+                    ctx.persist();
+                }
                 ctx.active_session = None;
                 ctx.armed_tool = None;
                 ctx.active_modal = ActiveModal::None;
+                scroll_mem.modal_offset_y = 0.0;
                 next_state.set(AppState::FjordCity);
                 return;
             }
             Match3UiAction::ToggleHelp => {
                 ctx.toggle_modal(ActiveModal::Help);
+                scroll_mem.modal_offset_y = 0.0;
+                input_state.dirty_hud = true;
+            }
+            Match3UiAction::ToggleAudio => {
+                toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
+                input_state.dirty_hud = true;
+            }
+            Match3UiAction::CycleBgmVolume => {
+                cycle_bgm_volume(&mut ctx, &mut sound_bank, &mut bgm_sinks);
+                input_state.dirty_hud = true;
+            }
+            Match3UiAction::CycleSfxVolume => {
+                cycle_sfx_volume(&mut ctx, &mut sound_bank);
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                input_state.dirty_hud = true;
+            }
+            Match3UiAction::ToggleColorblind => {
+                ctx.colorblind_mode = !ctx.colorblind_mode;
+                ctx.persist();
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                input_state.dirty_board = true;
                 input_state.dirty_hud = true;
             }
             Match3UiAction::TriggerFury => {
@@ -870,6 +952,7 @@ pub fn handle_board_pointer_input(
                                 prepared: prep,
                                 cleared_set,
                                 combo: 1,
+                                consumes_turn: false,
                                 elapsed: 0.0,
                                 duration: clear_dur,
                                 particles_spawned: false,
@@ -949,8 +1032,20 @@ pub fn handle_board_pointer_input(
             input_state.drag_origin_screen = None;
             if let Some(nb) = target {
                 if start_swap_animation(origin_cell, nb, &ctx, &mut input_state) {
+                    update_selection_marker(
+                        &mut commands,
+                        &textures,
+                        &input_state,
+                        &selection_markers,
+                    );
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 } else {
+                    update_selection_marker(
+                        &mut commands,
+                        &textures,
+                        &input_state,
+                        &selection_markers,
+                    );
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                 }
             }
@@ -978,7 +1073,6 @@ fn start_swap_animation(
     input_state.drag_origin_cell = None;
     input_state.drag_origin_screen = None;
     if !can_swap {
-        input_state.dirty_board = true;
         return false;
     }
     input_state.phase = BoardAnimPhase::Swapping {
@@ -997,6 +1091,8 @@ pub fn sync_match3_visuals(
     ctx: Res<GameContext>,
     textures: Res<RuneTextures>,
     fjord_art: Res<FjordTextures>,
+    sound_bank: Res<SoundBank>,
+    scroll_mem: Res<UiScrollMemory>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut input_state: ResMut<Match3InputState>,
     sprites: Query<Entity, With<Match3Entity>>,
@@ -1022,7 +1118,13 @@ pub fn sync_match3_visuals(
         for e in &huds {
             commands.entity(e).despawn_recursive();
         }
-        hud::spawn_match3_hud(&mut commands, &ctx, &fjord_art);
+        hud::spawn_match3_hud(
+            &mut commands,
+            &ctx,
+            &fjord_art,
+            &sound_bank,
+            scroll_mem.modal_offset_y,
+        );
         input_state.dirty_hud = false;
     }
 }

@@ -23,6 +23,7 @@ use crate::audio::{
     cycle_bgm_volume, cycle_sfx_volume, play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank,
 };
 use crate::fjord_art::FjordTextures;
+use crate::scroll::UiScrollMemory;
 use crate::state::{now_unix_secs, today_day_index, ActiveModal, AppState, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
@@ -57,12 +58,13 @@ pub struct FjordSnowflake {
     pub phase: f32,
 }
 
-/// Tracks City layout mode, displayed endurance, and periodic harvest readiness checks.
+/// Tracks City layout mode, displayed endurance, audio state, and periodic harvest readiness checks.
 #[derive(Resource)]
 pub struct CityLayoutMode {
     pub is_portrait: bool,
     pub last_displayed_energy: u32,
     pub last_ready_harvests: usize,
+    pub last_muted: bool,
     pub harvest_poll_timer: Timer,
 }
 
@@ -103,6 +105,7 @@ pub fn setup_city_ui(
     ctx: Res<GameContext>,
     fjord_art: Res<FjordTextures>,
     sound_bank: Res<SoundBank>,
+    scroll_mem: Res<UiScrollMemory>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let is_portrait = windows
@@ -114,9 +117,17 @@ pub fn setup_city_ui(
         is_portrait,
         last_displayed_energy: ctx.city.energy,
         last_ready_harvests: ready_harvests,
+        last_muted: sound_bank.muted,
         harvest_poll_timer: Timer::from_seconds(HARVEST_POLL_SECS, TimerMode::Repeating),
     });
-    spawn_city_tree(&mut commands, &ctx, &fjord_art, &sound_bank, is_portrait);
+    spawn_city_tree(
+        &mut commands,
+        &ctx,
+        &fjord_art,
+        &sound_bank,
+        &scroll_mem,
+        is_portrait,
+    );
 }
 
 /// Cleans up the Fjord City UI on state exit.
@@ -140,6 +151,7 @@ fn spawn_city_tree(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     sound_bank: &SoundBank,
+    scroll_mem: &UiScrollMemory,
     is_portrait: bool,
 ) {
     let i18n = &ctx.data.i18n;
@@ -198,15 +210,18 @@ fn spawn_city_tree(
                         },
                         TextColor(COLOR_ACCENT_GOLD),
                     ));
-                    let rank_label = i18n.t(ctx.city.clan_rank().i18n_key());
+                    let rank = ctx.city.clan_rank_with_balance(&ctx.data.balance);
+                    let rank_label = i18n.t(rank.i18n_key());
+                    let perk_label = i18n.t(rank.perk_key());
                     col.spawn((
                         Text::new(format!(
-                            "{}  -  {}",
+                            "{}  -  {}  ({})",
                             rank_label,
                             i18n.t_fmt(
                                 "city.header.mastery",
                                 &[("glory", ctx.city.glory.to_string())],
-                            )
+                            ),
+                            perk_label
                         )),
                         TextFont {
                             font_size: FONT_SMALL,
@@ -334,11 +349,23 @@ fn spawn_city_tree(
                         CityAction::ToggleModal(ActiveModal::Raids),
                         COLOR_ACCENT_CRIMSON,
                     );
+                    let exp_lbl = if let Some(run) = &ctx.active_expedition {
+                        i18n.t_fmt(
+                            "city.panel.expedition.resume",
+                            &[("wave", run.wave.to_string())],
+                        )
+                    } else {
+                        i18n.t("city.panel.expedition.button").to_string()
+                    };
                     spawn_small_button(
                         btns,
-                        i18n.t("city.panel.expedition.button"),
+                        &exp_lbl,
                         CityAction::StartExpedition,
-                        COLOR_ACCENT_TEAL,
+                        if ctx.active_expedition.is_some() {
+                            COLOR_ACCENT_GREEN
+                        } else {
+                            COLOR_ACCENT_TEAL
+                        },
                     );
                     spawn_small_button(
                         btns,
@@ -351,6 +378,7 @@ fn spawn_city_tree(
                         i18n.t("city.panel.feats.button"),
                         CityAction::ToggleModal(ActiveModal::Achievements),
                         if ctx.city.has_any_claimable_achievement(
+                            &ctx.data.achievements,
                             &ctx.data.buildings,
                             ctx.data.bosses.len(),
                         ) {
@@ -708,7 +736,9 @@ fn spawn_city_tree(
                                     .map(|l| l.building_id.as_str()),
                                 QuestCondition::CraftAnyAmulet
                                 | QuestCondition::ClaimAnyCollection
-                                | QuestCondition::CompleteDailyTrials { .. } => None,
+                                | QuestCondition::CompleteDailyTrials { .. }
+                                | QuestCondition::DefeatBosses { .. }
+                                | QuestCondition::ReachExpeditionWave { .. } => None,
                             });
                     for b in &ctx.data.buildings {
                         let is_quest_target = quest_target_bldg == Some(b.id.as_str());
@@ -744,7 +774,13 @@ fn spawn_city_tree(
                 ))
                 .with_children(|insp| {
                     if let Some(selected) = ctx.data.building_by_id(&ctx.selected_building_id) {
-                        inspector::spawn_building_inspector(insp, selected, ctx, fjord_art);
+                        inspector::spawn_building_inspector(
+                            insp,
+                            selected,
+                            ctx,
+                            fjord_art,
+                            scroll_mem.inspector_offset_y,
+                        );
                     } else {
                         insp.spawn((
                             Text::new(i18n.t("city.panel.building.select_hint")),
@@ -759,17 +795,20 @@ fn spawn_city_tree(
             });
 
             // 4. Exclusive Modal Overlay
+            let m_scroll = scroll_mem.modal_offset_y;
             match ctx.active_modal {
                 ActiveModal::None => {}
-                ActiveModal::Amulets => modals::spawn_amulets_modal(root, ctx),
-                ActiveModal::Collections => modals::spawn_collections_modal(root, ctx),
-                ActiveModal::Shop => modals::spawn_tool_shop_modal(root, ctx, fjord_art),
-                ActiveModal::Stats => modals::spawn_stats_modal(root, ctx, sound_bank),
-                ActiveModal::Help => modals::spawn_help_modal(root, ctx),
-                ActiveModal::Raids => modals::spawn_raids_modal(root, ctx, fjord_art),
-                ActiveModal::Patrons => modals::spawn_patrons_modal(root, ctx, fjord_art),
-                ActiveModal::Achievements => modals::spawn_achievements_modal(root, ctx),
-                ActiveModal::ExpeditionBoons => modals::spawn_expedition_boons_modal(root, ctx),
+                ActiveModal::Amulets => modals::spawn_amulets_modal(root, ctx, m_scroll),
+                ActiveModal::Collections => modals::spawn_collections_modal(root, ctx, m_scroll),
+                ActiveModal::Shop => modals::spawn_tool_shop_modal(root, ctx, fjord_art, m_scroll),
+                ActiveModal::Stats => modals::spawn_stats_modal(root, ctx, sound_bank, m_scroll),
+                ActiveModal::Help => modals::spawn_help_modal(root, ctx, m_scroll),
+                ActiveModal::Raids => modals::spawn_raids_modal(root, ctx, fjord_art, m_scroll),
+                ActiveModal::Patrons => modals::spawn_patrons_modal(root, ctx, fjord_art, m_scroll),
+                ActiveModal::Achievements => modals::spawn_achievements_modal(root, ctx, m_scroll),
+                ActiveModal::ExpeditionBoons => {
+                    modals::spawn_expedition_boons_modal(root, ctx, m_scroll)
+                }
             }
         });
 }
@@ -1046,6 +1085,7 @@ pub fn handle_city_buttons(
     mut sound_bank: ResMut<SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut layout_mode: ResMut<CityLayoutMode>,
+    mut scroll_mem: ResMut<UiScrollMemory>,
     mut resize_events: EventReader<WindowResized>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<CityRoot>>,
@@ -1054,7 +1094,17 @@ pub fn handle_city_buttons(
     let mut rebuild = false;
 
     if keys.just_pressed(KeyCode::Escape) && ctx.active_modal != ActiveModal::None {
+        if ctx.active_modal == ActiveModal::ExpeditionBoons {
+            ctx.active_expedition = None;
+            ctx.persist();
+        }
         ctx.active_modal = ActiveModal::None;
+        scroll_mem.modal_offset_y = 0.0;
+        rebuild = true;
+    }
+
+    if layout_mode.last_muted != sound_bank.muted {
+        layout_mode.last_muted = sound_bank.muted;
         rebuild = true;
     }
 
@@ -1091,15 +1141,23 @@ pub fn handle_city_buttons(
         }
     }
 
+    let has_harvest_press = buttons
+        .iter()
+        .any(|(i, a)| *i == Interaction::Pressed && matches!(a, CityAction::CollectHarvest(_)));
+
     for (interaction, action) in &buttons {
         if *interaction != Interaction::Pressed {
             continue;
         }
         match action {
             CityAction::SelectBuilding(id) => {
+                if has_harvest_press {
+                    continue;
+                }
                 ctx.selected_building_id = id.clone();
                 ctx.selected_difficulty = 0;
                 ctx.status_notice_key = None;
+                scroll_mem.inspector_offset_y = 0.0;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
@@ -1109,28 +1167,22 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::CollectHarvest(building_id) => {
-                let balance = ctx.data.balance.clone();
-                let now = now_unix_secs();
-                if ctx
-                    .city
-                    .try_collect_harvest(building_id, now, &balance)
-                    .is_some()
-                {
-                    let bname = ctx
-                        .data
-                        .building_by_id(building_id)
-                        .map(|b| ctx.data.i18n.t(&b.name_key).to_string())
-                        .unwrap_or_else(|| building_id.clone());
-                    ctx.celebration_message = Some(
-                        ctx.data
-                            .i18n
-                            .t_fmt("city.harvest.collected", &[("building", bname)]),
-                    );
-                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
-                    layout_mode.last_ready_harvests = count_ready_harvests(&ctx, now);
-                    ctx.persist();
-                    play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
-                    rebuild = true;
+                if let Some(def) = ctx.data.building_by_id(building_id).cloned() {
+                    let balance = ctx.data.balance.clone();
+                    let now = now_unix_secs();
+                    if ctx.city.try_collect_harvest(&def, now, &balance).is_some() {
+                        let bname = ctx.data.i18n.t(&def.name_key).to_string();
+                        ctx.celebration_message = Some(
+                            ctx.data
+                                .i18n
+                                .t_fmt("city.harvest.collected", &[("building", bname)]),
+                        );
+                        ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                        layout_mode.last_ready_harvests = count_ready_harvests(&ctx, now);
+                        ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                        rebuild = true;
+                    }
                 }
             }
             CityAction::CollectAllHarvests => {
@@ -1150,10 +1202,14 @@ pub fn handle_city_buttons(
                     rebuild = true;
                 }
             }
-            CityAction::StartExpedition => match ctx.start_expedition() {
-                Ok(()) => {
+            CityAction::StartExpedition => match ctx.start_or_resume_expedition() {
+                Ok(true) => {
                     next_state.set(AppState::Match3);
                     return;
+                }
+                Ok(false) => {
+                    scroll_mem.modal_offset_y = 0.0;
+                    rebuild = true;
                 }
                 Err(err_key) => {
                     ctx.status_notice_key = Some(err_key.to_string());
@@ -1167,11 +1223,14 @@ pub fn handle_city_buttons(
                     return;
                 }
                 ctx.active_modal = ActiveModal::None;
+                scroll_mem.modal_offset_y = 0.0;
                 rebuild = true;
             }
             CityAction::EndExpedition => {
                 ctx.active_expedition = None;
                 ctx.active_modal = ActiveModal::None;
+                scroll_mem.modal_offset_y = 0.0;
+                ctx.persist();
                 rebuild = true;
             }
             CityAction::FightBoss(boss_id) => match ctx.start_boss_raid(boss_id) {
@@ -1192,11 +1251,12 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::ClaimAchievement(ach_id) => {
+                let achievements = ctx.data.achievements.clone();
                 let buildings = ctx.data.buildings.clone();
                 let boss_count = ctx.data.bosses.len();
                 if ctx
                     .city
-                    .try_claim_achievement(ach_id, &buildings, boss_count)
+                    .try_claim_achievement(ach_id, &achievements, &buildings, boss_count)
                 {
                     ctx.persist();
                     play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
@@ -1289,6 +1349,7 @@ pub fn handle_city_buttons(
             }
             CityAction::ToggleModal(modal) => {
                 ctx.toggle_modal(*modal);
+                scroll_mem.modal_offset_y = 0.0;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
@@ -1405,6 +1466,7 @@ pub fn handle_city_buttons(
             &ctx,
             &fjord_art,
             &sound_bank,
+            &scroll_mem,
             layout_mode.is_portrait,
         );
     }

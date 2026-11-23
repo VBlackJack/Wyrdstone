@@ -99,6 +99,7 @@ impl GameContext {
         let mut sfx_volume = DEFAULT_SFX_VOLUME;
         let mut colorblind_mode = false;
         let mut tutorial_step = 0u8;
+        let mut active_expedition = None;
 
         let loaded_save = save_path
             .as_ref()
@@ -117,6 +118,7 @@ impl GameContext {
                 bgm_volume = saved.bgm_volume.clamp(0.0, 1.0);
                 sfx_volume = saved.sfx_volume.clamp(0.0, 1.0);
                 colorblind_mode = saved.colorblind_mode;
+                active_expedition = saved.active_expedition;
                 tutorial_step = if saved.city.stats.total_victories > 0 && saved.tutorial_step == 0
                 {
                     3
@@ -162,7 +164,7 @@ impl GameContext {
             tutorial_step,
             active_session: None,
             active_level_id: None,
-            active_expedition: None,
+            active_expedition,
             armed_tool: None,
             last_outcome: None,
             last_rewards: ResourceBundle::default(),
@@ -201,6 +203,7 @@ impl GameContext {
                 sfx_volume: self.sfx_volume,
                 colorblind_mode: self.colorblind_mode,
                 tutorial_step: self.tutorial_step,
+                active_expedition: self.active_expedition.clone(),
                 city: self.city.clone(),
             };
             if let Err(err) = snapshot.save_to_path(path) {
@@ -314,6 +317,32 @@ impl GameContext {
         self.status_notice_key = None;
         self.persist();
         Ok(())
+    }
+
+    /// Starts a fresh Endless Drakkar Expedition from Wave 1, or resumes a saved run without extra energy.
+    pub fn start_or_resume_expedition(&mut self) -> Result<bool, &'static str> {
+        if let Some(run) = self.active_expedition.clone() {
+            if !run.pending_boons.is_empty() {
+                self.active_modal = ActiveModal::ExpeditionBoons;
+                return Ok(false);
+            }
+            let amulet = self.city.active_amulet_effect(&self.data.amulets);
+            let city_bonuses = self.city.compute_bonuses(&self.data.balance);
+            let session = LevelSession::start_expedition_wave(
+                &run,
+                amulet,
+                city_bonuses,
+                self.city.selected_patron,
+                &mut self.rng,
+            );
+            self.active_level_id = Some(session.level.id.clone());
+            self.active_session = Some(session);
+            self.active_modal = ActiveModal::None;
+            self.armed_tool = None;
+            self.status_notice_key = None;
+            return Ok(true);
+        }
+        self.start_expedition().map(|()| true)
     }
 
     /// Starts a fresh Endless Drakkar Expedition from Wave 1.

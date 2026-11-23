@@ -17,16 +17,21 @@
 //! Match-3 HUD overlay: moves, live countdown timer, objectives, active tools bar, and Guide modal.
 
 use super::{Match3Cleanup, Match3HudRoot, Match3TimerText, Match3UiAction};
+use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
+use crate::scroll::{ScrollPanelKind, ScrollablePanel};
 use crate::state::{ActiveModal, GameContext};
 use crate::theme::*;
 use bevy::prelude::*;
+use bevy::ui::RelativeCursorPosition;
 use wyrdstone_core::{ActiveTool, Objective};
 
 pub(super) fn spawn_match3_hud(
     commands: &mut Commands,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
+    sound_bank: &SoundBank,
+    modal_scroll_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     let Some(session) = &ctx.active_session else {
@@ -537,6 +542,14 @@ pub(super) fn spawn_match3_hud(
                 ))
                 .with_children(|bg| {
                     bg.spawn((
+                        ScrollablePanel {
+                            kind: ScrollPanelKind::Modal,
+                        },
+                        ScrollPosition {
+                            offset_x: 0.0,
+                            offset_y: modal_scroll_y,
+                        },
+                        RelativeCursorPosition::default(),
                         Node {
                             width: Val::Px(540.0),
                             max_width: Val::Percent(94.0),
@@ -587,6 +600,91 @@ pub(super) fn spawn_match3_hud(
                                     TextColor(COLOR_TEXT_PRIMARY),
                                 ));
                             });
+                        });
+
+                        // Quick Pause Settings (Audio + Colorblind) right inside Match-3
+                        card.spawn((
+                            Text::new(i18n.t("match3.pause.settings_title")),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                        card.spawn(Node {
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: Val::Px(8.0),
+                            row_gap: Val::Px(6.0),
+                            ..default()
+                        })
+                        .with_children(|srow| {
+                            let mute_lbl = if sound_bank.muted {
+                                i18n.t("app.audio.off")
+                            } else {
+                                i18n.t("app.audio.on")
+                            };
+                            let bgm_pct = (sound_bank.bgm_volume * 200.0).round() as u32;
+                            let sfx_pct = (sound_bank.sfx_volume * 100.0).round() as u32;
+                            let cb_lbl = if ctx.colorblind_mode {
+                                i18n.t("city.panel.colorblind.on")
+                            } else {
+                                i18n.t("city.panel.colorblind.off")
+                            };
+                            for (lbl, act, bg_col) in [
+                                (
+                                    mute_lbl.to_string(),
+                                    Match3UiAction::ToggleAudio,
+                                    COLOR_PANEL_CARD,
+                                ),
+                                (
+                                    i18n.t_fmt(
+                                        "city.panel.audio.bgm",
+                                        &[("pct", bgm_pct.to_string())],
+                                    ),
+                                    Match3UiAction::CycleBgmVolume,
+                                    COLOR_PANEL_CARD,
+                                ),
+                                (
+                                    i18n.t_fmt(
+                                        "city.panel.audio.sfx",
+                                        &[("pct", sfx_pct.to_string())],
+                                    ),
+                                    Match3UiAction::CycleSfxVolume,
+                                    COLOR_PANEL_CARD,
+                                ),
+                                (
+                                    cb_lbl.to_string(),
+                                    Match3UiAction::ToggleColorblind,
+                                    if ctx.colorblind_mode {
+                                        COLOR_ACCENT_TEAL
+                                    } else {
+                                        COLOR_PANEL_CARD
+                                    },
+                                ),
+                            ] {
+                                srow.spawn((
+                                    Button,
+                                    act,
+                                    Node {
+                                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(bg_col),
+                                    BorderColor(COLOR_PANEL_BORDER),
+                                    BorderRadius::all(Val::Px(6.0)),
+                                ))
+                                .with_children(|b| {
+                                    b.spawn((
+                                        Text::new(lbl),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_TEXT_PRIMARY),
+                                    ));
+                                });
+                            }
                         });
 
                         for (t_key, b_key) in [

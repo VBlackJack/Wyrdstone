@@ -29,6 +29,7 @@ const BLDG_FORGE_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_forge
 const BLDG_DOCK_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_dock.png");
 const BLDG_SHRINE_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_shrine.png");
 const BLDG_MEADERY_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_meadery.png");
+const BLDG_WATCHTOWER_PNG: &[u8] = include_bytes!("../../../assets/sprites/bldg_watchtower.png");
 const PORTRAIT_JARL_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_jarl.png");
 const PORTRAIT_BROKK_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_brokk.png");
 const PORTRAIT_VOLVA_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_volva.png");
@@ -129,6 +130,10 @@ pub fn init_fjord_textures(
     buildings.insert(
         "meadery".to_string(),
         images.add(decode_png(BLDG_MEADERY_PNG)),
+    );
+    buildings.insert(
+        "watchtower".to_string(),
+        images.add(decode_png(BLDG_WATCHTOWER_PNG)),
     );
 
     let mut portraits = HashMap::new();
