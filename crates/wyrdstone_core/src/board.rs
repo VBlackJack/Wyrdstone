@@ -1451,6 +1451,11 @@ impl Board {
             .unwrap_or_default()
     }
 
+    /// Returns true if any cell on the board currently has an active Cursed Rune countdown.
+    pub fn has_cursed_runes(&self) -> bool {
+        self.cells.iter().any(|c| c.curse_turns > 0)
+    }
+
     /// Decrements all active Cursed Rune timers; any rune reaching 0 detonates and chains/freezes orthogonal neighbors.
     pub fn tick_cursed_runes(&mut self) -> Vec<CellPos> {
         let mut detonated = Vec::new();
@@ -1653,6 +1658,27 @@ impl Board {
                     let idx = self.idx(pos);
                     self.cells[idx].crate_layers = 1;
                     self.cells[idx].rune = None;
+                    hit.push(pos);
+                }
+            }
+            BossRiposteKind::CurseRunes(count) => {
+                let mut cands: Vec<CellPos> = (0..self.rows)
+                    .flat_map(|r| (0..self.cols).map(move |c| CellPos::new(c, r)))
+                    .filter(|&p| {
+                        let c = self.cells[self.idx(p)];
+                        !c.blocked
+                            && !c.fog
+                            && !c.chained
+                            && c.crate_layers == 0
+                            && !c.relic
+                            && c.curse_turns == 0
+                            && c.rune.is_some()
+                    })
+                    .collect();
+                cands.shuffle(rng);
+                for pos in cands.into_iter().take(count) {
+                    let idx = self.idx(pos);
+                    self.cells[idx].curse_turns = 5;
                     hit.push(pos);
                 }
             }

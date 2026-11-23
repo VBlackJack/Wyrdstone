@@ -33,6 +33,7 @@ pub enum BossRiposteKind {
     ChainRunes(usize),
     FreezeCells(usize),
     DropCrates(usize),
+    CurseRunes(usize),
 }
 
 /// Static Mythological Boss definition loaded from `assets/data/bosses.ron`.
@@ -60,10 +61,11 @@ pub struct BossDef {
 impl BossDef {
     /// Builds a playable 8x8 boss raid board tailored to this mythological foe.
     pub fn to_level_def(&self) -> LevelDef {
-        let (ice_cells, chained_cells, crate_cells, blocked_cells) = match self.riposte {
+        let (ice_cells, chained_cells, crate_cells, fog_cells, blocked_cells) = match self.riposte {
             BossRiposteKind::ChainRunes(_) => (
                 vec![(2, 2, 1), (5, 2, 1), (2, 5, 1), (5, 5, 1)],
                 vec![(3, 3), (4, 3), (3, 4), (4, 4)],
+                vec![],
                 vec![],
                 vec![(0, 0), (7, 0), (0, 7), (7, 7)],
             ),
@@ -80,12 +82,21 @@ impl BossDef {
                 ],
                 vec![(3, 4), (4, 3)],
                 vec![],
+                vec![],
                 vec![(0, 3), (0, 4), (7, 3), (7, 4)],
             ),
             BossRiposteKind::DropCrates(_) => (
                 vec![(1, 2, 1), (6, 2, 1), (1, 5, 1), (6, 5, 1)],
                 vec![(2, 3), (5, 4)],
                 vec![(3, 3, 2), (4, 4, 2)],
+                vec![],
+                vec![(0, 0), (7, 0), (0, 7), (7, 7)],
+            ),
+            BossRiposteKind::CurseRunes(_) => (
+                vec![(2, 2, 1), (5, 2, 1), (2, 5, 1), (5, 5, 1)],
+                vec![(3, 4), (4, 3)],
+                vec![],
+                vec![(1, 3), (2, 3), (5, 3), (6, 3), (2, 4), (5, 4)],
                 vec![(0, 0), (7, 0), (0, 7), (7, 7)],
             ),
         };
@@ -107,7 +118,7 @@ impl BossDef {
             relic_cells: vec![],
             portals: vec![],
             frost_spread: false,
-            fog_cells: vec![],
+            fog_cells,
             cursed_cells: vec![],
             blocked_cells,
             base_reward: self.reward_resources,

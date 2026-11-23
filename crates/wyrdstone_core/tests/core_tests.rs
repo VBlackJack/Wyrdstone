@@ -19,9 +19,9 @@ use rand::SeedableRng;
 use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME, SAVE_SCHEMA_VERSION};
 use wyrdstone_core::{
     achievement_progress, ActiveTool, AmuletEffect, Board, Booster, Cell, CellPos, CityBonuses,
-    CityState, ClanRank, ExpeditionBoon, ExpeditionRun, GameDataBundle, Language, LevelDef,
-    LevelOutcome, LevelSession, PatronGod, QuestCondition, ResourceBundle, RuneType, SaveData,
-    FURY_CHARGE_MAX,
+    CityState, ClanRank, DailyBlessing, ExpeditionBoon, ExpeditionRun, GameDataBundle, Language,
+    LevelDef, LevelOutcome, LevelSession, PatronGod, QuestCondition, ResourceBundle, RuneType,
+    SaveData, FURY_CHARGE_MAX,
 };
 
 #[test]
@@ -354,6 +354,7 @@ fn city_upgrades_quests_and_save_roundtrip() {
         bgm_volume: DEFAULT_BGM_VOLUME,
         sfx_volume: DEFAULT_SFX_VOLUME,
         colorblind_mode: true,
+        fast_animations: true,
         tutorial_step: 3,
         active_expedition: None,
         city,
@@ -534,7 +535,7 @@ fn patron_fury_boss_raids_expedition_and_achievements_work() {
     let mut rng = StdRng::seed_from_u64(9001);
 
     // 1. All Boss definitions and Patron / Achievement i18n keys resolve.
-    assert_eq!(data.bosses.len(), 3);
+    assert_eq!(data.bosses.len(), 4);
     for boss in &data.bosses {
         assert_ne!(data.i18n.t(&boss.name_key), boss.name_key);
         assert_ne!(data.i18n.t(&boss.title_key), boss.title_key);
@@ -966,4 +967,47 @@ fn win_streak_two_phase_boss_and_cursed_runes_work() {
             && board.get(CellPos::new(1, 0)).unwrap().ice_layers == 0,
         "Cursed rune detonation must never freeze or chain a relic"
     );
+}
+
+#[test]
+fn hel_boss_daily_blessing_and_fast_anim_save_work() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(31415);
+
+    // 1. All 4 bosses spawn playable boards; Hel curses non-fogged runes on riposte.
+    for boss in &data.bosses {
+        let board = Board::new_for_level(&boss.to_level_def(), &mut rng);
+        assert!(
+            board.has_valid_moves(),
+            "Boss {} must spawn a playable board",
+            boss.id
+        );
+    }
+    let hel = data.boss_by_id("boss_hel").unwrap().clone();
+    let mut hel_session =
+        LevelSession::start_boss(hel, None, CityBonuses::default(), PatronGod::Odin, &mut rng);
+    assert!(!hel_session.board.has_cursed_runes());
+    assert!(hel_session.tick_boss_riposte_if_needed(&mut rng).is_empty());
+    assert!(hel_session.tick_boss_riposte_if_needed(&mut rng).is_empty());
+    let hits = hel_session.tick_boss_riposte_if_needed(&mut rng);
+    assert!(!hits.is_empty(), "Hel must curse runes on turn 3");
+    assert!(hel_session.board.has_cursed_runes());
+    for pos in hits {
+        let cell = hel_session.board.get(pos).unwrap();
+        assert!(!cell.fog, "Hel must never curse an invisible fogged cell");
+        assert!(cell.curse_turns > 0);
+    }
+
+    // 2. Daily Fjord Blessings resolve i18n and apply all 4 modifiers accurately.
+    for (idx, blessing) in DailyBlessing::ALL.iter().enumerate() {
+        assert_eq!(DailyBlessing::for_day(idx as u64), *blessing);
+        assert_ne!(data.i18n.t(blessing.name_key()), blessing.name_key());
+        assert_ne!(data.i18n.t(blessing.desc_key()), blessing.desc_key());
+    }
+    let base_moves = hel_session.moves_left;
+    hel_session.apply_daily_blessing(DailyBlessing::IdunnGrace);
+    assert_eq!(hel_session.moves_left, base_moves + 1);
+    assert_eq!(hel_session.initial_moves, base_moves + 1);
+    hel_session.apply_daily_blessing(DailyBlessing::FenrirEclipse);
+    assert_eq!(hel_session.boss_damage_bonus_pct, 25);
 }

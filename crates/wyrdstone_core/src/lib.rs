@@ -39,6 +39,8 @@ pub use city::{
 };
 pub use expedition::{ExpeditionBoon, ExpeditionRun};
 pub use i18n::{I18nCatalog, Language};
-pub use level::{LevelDef, LevelOutcome, LevelSession, Objective, ObjectiveProgress};
+pub use level::{
+    DailyBlessing, LevelDef, LevelOutcome, LevelSession, Objective, ObjectiveProgress,
+};
 pub use patron::{PatronGod, FURY_CHARGE_MAX};
 pub use save::{GameDataBundle, SaveData};

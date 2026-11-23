@@ -30,6 +30,51 @@ use serde::{Deserialize, Serialize};
 
 const DAILY_SEED_SALT: u64 = 0x5759_5244_5354_4F4E;
 
+/// Daily deterministic Fjord Blessing active for all Match-3 boards on a given UTC day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DailyBlessing {
+    /// +20% Divine Fury charge rate.
+    OdinFavor,
+    /// +15% resource spoils on victory.
+    NjordBreeze,
+    /// +25% damage dealt to Mythological Bosses.
+    FenrirEclipse,
+    /// +1 extra move on every board.
+    IdunnGrace,
+}
+
+impl DailyBlessing {
+    pub const ALL: [DailyBlessing; 4] = [
+        DailyBlessing::OdinFavor,
+        DailyBlessing::NjordBreeze,
+        DailyBlessing::FenrirEclipse,
+        DailyBlessing::IdunnGrace,
+    ];
+
+    /// Deterministically picks today's Fjord Blessing from the UTC day index.
+    pub const fn for_day(day_index: u64) -> Self {
+        Self::ALL[(day_index as usize) % Self::ALL.len()]
+    }
+
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            DailyBlessing::OdinFavor => "blessing.odin.name",
+            DailyBlessing::NjordBreeze => "blessing.njord.name",
+            DailyBlessing::FenrirEclipse => "blessing.fenrir.name",
+            DailyBlessing::IdunnGrace => "blessing.idunn.name",
+        }
+    }
+
+    pub const fn desc_key(self) -> &'static str {
+        match self {
+            DailyBlessing::OdinFavor => "blessing.odin.desc",
+            DailyBlessing::NjordBreeze => "blessing.njord.desc",
+            DailyBlessing::FenrirEclipse => "blessing.fenrir.desc",
+            DailyBlessing::IdunnGrace => "blessing.idunn.desc",
+        }
+    }
+}
+
 /// Win condition attached to a Match-3 level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Objective {
@@ -266,6 +311,8 @@ pub struct LevelSession {
     pub fury_max: u32,
     pub fury_charge_bonus_pct: u32,
     pub fury_resource_bonus_pct: u32,
+    pub boss_damage_bonus_pct: u32,
+    pub daily_blessing: Option<DailyBlessing>,
     pub boss: Option<BossState>,
 }
 
@@ -408,7 +455,29 @@ impl LevelSession {
             fury_max: FURY_CHARGE_MAX,
             fury_charge_bonus_pct: city_bonuses.fury_charge_bonus_pct,
             fury_resource_bonus_pct: 0,
+            boss_damage_bonus_pct: 0,
+            daily_blessing: None,
             boss,
+        }
+    }
+
+    /// Applies today's Daily Fjord Blessing modifier onto this session.
+    pub fn apply_daily_blessing(&mut self, blessing: DailyBlessing) {
+        self.daily_blessing = Some(blessing);
+        match blessing {
+            DailyBlessing::OdinFavor => {
+                self.fury_charge_bonus_pct += 20;
+            }
+            DailyBlessing::NjordBreeze => {
+                self.resource_bonus_pct += 15;
+            }
+            DailyBlessing::FenrirEclipse => {
+                self.boss_damage_bonus_pct += 25;
+            }
+            DailyBlessing::IdunnGrace => {
+                self.initial_moves += 1;
+                self.moves_left += 1;
+            }
         }
     }
 
@@ -531,7 +600,7 @@ impl LevelSession {
         self.fury = (self.fury + fury_gain).min(self.fury_max);
 
         if let Some(boss) = self.boss.as_mut() {
-            boss.apply_step_damage(step, self.score_bonus_pct);
+            boss.apply_step_damage(step, self.score_bonus_pct + self.boss_damage_bonus_pct);
         }
 
         for prog in &mut self.objectives {
