@@ -302,6 +302,10 @@ pub struct Match3InputState {
     pub idle_secs: f32,
     pub hint_pair: Option<(CellPos, CellPos)>,
     pub hover_cell: Option<CellPos>,
+    /// Raised when the board was rebuilt: the hover and drag overlay entities (not Match3Entity)
+    /// may still exist for a cell that no longer matches, so the pointer handler, their only
+    /// despawner, must clear and redraw them on its next idle frame, then lower the flag.
+    pub overlays_stale: bool,
     pub shake_secs: f32,
     pub boss_hit_flash_secs: f32,
     pub phase: BoardAnimPhase,
@@ -921,6 +925,7 @@ pub(super) fn rebuild_board_now(
     // rebuild never double-despawns them): forget their cells so the handler redraws them.
     input_state.hover_cell = None;
     input_state.drag_highlight_cell = None;
+    input_state.overlays_stale = true;
     compute_board_layout(
         window.width(),
         window.height(),
@@ -1636,6 +1641,7 @@ pub fn handle_board_pointer_input(
         }
         input_state.hover_cell = None;
         input_state.drag_highlight_cell = None;
+        input_state.overlays_stale = false;
         return;
     }
     // A HUD button pressed this frame owns the click: never let it fall through to the board.
@@ -1664,7 +1670,15 @@ pub fn handle_board_pointer_input(
     } else {
         pointer_hovered
     };
-    if hovered != input_state.hover_cell {
+    // A board rebuild leaves overlays behind even when the hovered cell did not change (or is
+    // now empty): redraw them from scratch and drop any stale drag highlight.
+    let overlays_stale = std::mem::take(&mut input_state.overlays_stale);
+    if overlays_stale {
+        for e in &drag_highlights {
+            commands.entity(e).despawn();
+        }
+    }
+    if hovered != input_state.hover_cell || overlays_stale {
         input_state.hover_cell = hovered;
         for e in &hover_overlays {
             commands.entity(e).despawn();
@@ -2069,5 +2083,16 @@ mod tests {
         state.clear_hint();
         assert!(!state.dirty_board, "no hint showing: nothing to rebuild");
         assert_eq!(state.idle_secs, 0.0);
+    }
+
+    #[test]
+    fn overlays_stale_flag_is_consumed_exactly_once() {
+        let mut state = Match3InputState::default();
+        assert!(!state.overlays_stale);
+        state.overlays_stale = true;
+        let hover_changed = false;
+        assert!(hover_changed || std::mem::take(&mut state.overlays_stale));
+        assert!(!state.overlays_stale, "flag must be lowered after use");
+        assert!(!std::mem::take(&mut state.overlays_stale));
     }
 }
