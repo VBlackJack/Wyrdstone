@@ -36,6 +36,8 @@ const SAVE_FILE_NAME: &str = "wyrdstone_save.json";
 const NOTICE_RECOVERED_FROM_BACKUP: &str = "save.notice.recovered_from_backup";
 /// Notice shown when the save is unreadable and cannot be copied, so saving is suspended.
 pub const NOTICE_SAVE_READ_ONLY: &str = "save.warning.read_only";
+/// Notice shown when the save was written by a newer game version, so saving is suspended.
+const NOTICE_SAVE_NEWER_VERSION: &str = "save.warning.newer_version";
 /// Notice shown when an unreadable save was preserved and a fresh city was started.
 const NOTICE_UNREADABLE_BACKED_UP: &str = "save.notice.unreadable_backed_up";
 
@@ -170,6 +172,14 @@ impl GameContext {
                 save_read_only = true;
                 status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
                 // A readable `.bak` starts the session; writes stay suspended.
+                backup.map(|saved| *saved)
+            }
+            Some(LoadOutcome::NewerVersion { found, backup }) => {
+                warn!("Wyrdstone save was written by a newer version (schema {found}); read-only");
+                has_unreadable_save = true;
+                save_read_only = true;
+                status_notice_key = Some(NOTICE_SAVE_NEWER_VERSION.to_string());
+                // A readable older `.bak` starts the session; writes stay suspended.
                 backup.map(|saved| *saved)
             }
             Some(LoadOutcome::NotFound) | None => None,

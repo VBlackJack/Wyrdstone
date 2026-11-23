@@ -58,6 +58,13 @@ pub enum LoadOutcome {
         reason: String,
         backup: Option<Box<SaveData>>,
     },
+    /// The primary file was written by a newer game version. It is never copied aside or
+    /// overwritten: the caller must keep the session read-only. When the `.bak` copy is readable
+    /// and not newer itself it is provided so the session can start from it.
+    NewerVersion {
+        found: u32,
+        backup: Option<Box<SaveData>>,
+    },
     /// No save file exists.
     NotFound,
 }
@@ -79,6 +86,20 @@ pub enum ReadOnlyResolution {
 pub struct SaveReport {
     /// Set when the `.bak` rotation failed while the primary file was still written correctly.
     pub backup_rotation_error: Option<String>,
+}
+
+/// Minimal view of a save used to read its schema version before the full parse.
+#[derive(Deserialize)]
+struct VersionProbe {
+    #[serde(default)]
+    schema_version: u32,
+}
+
+/// Reads only the schema version of a raw save, `None` when the JSON is not readable at all.
+fn probe_schema_version(raw: &str) -> Option<u32> {
+    serde_json::from_str::<VersionProbe>(raw)
+        .ok()
+        .map(|p| p.schema_version)
 }
 
 fn default_bgm_volume() -> f32 {
@@ -290,10 +311,22 @@ impl SaveData {
             return LoadOutcome::NotFound;
         }
         let failure = match read_with_retries(path) {
-            Ok(raw) => match Self::from_json(&raw) {
-                Ok(parsed) => return LoadOutcome::Loaded(Box::new(parsed.normalized())),
-                Err(e) => format!("Failed to parse save file: {e}"),
-            },
+            Ok(raw) => {
+                // A save from a newer game version must never be treated as corrupt or replaced.
+                if let Some(found) = probe_schema_version(&raw).filter(|v| *v > SAVE_SCHEMA_VERSION)
+                {
+                    return LoadOutcome::NewerVersion {
+                        found,
+                        backup: Self::read_backup(path),
+                    };
+                }
+                match Self::from_json(&raw) {
+                    Ok(parsed) => {
+                        return LoadOutcome::Loaded(Box::new(parsed.migrate().normalized()))
+                    }
+                    Err(e) => format!("Failed to parse save file: {e}"),
+                }
+            }
             Err(e) => format!("Failed to read save file: {e}"),
         };
         match Self::backup_unreadable(path) {
@@ -313,8 +346,9 @@ impl SaveData {
     fn read_backup(path: &Path) -> Option<Box<SaveData>> {
         read_with_retries(&Self::backup_path(path))
             .ok()
+            .filter(|raw| probe_schema_version(raw).is_none_or(|v| v <= SAVE_SCHEMA_VERSION))
             .and_then(|raw| Self::from_json(&raw).ok())
-            .map(|parsed| Box::new(parsed.normalized()))
+            .map(|parsed| Box::new(parsed.migrate().normalized()))
     }
 
     /// Decides how a read-only session proceeds, re-checking the primary file first so that a
@@ -322,10 +356,24 @@ impl SaveData {
     pub fn resolve_read_only(path: &Path) -> ReadOnlyResolution {
         match Self::load_with_recovery(path) {
             LoadOutcome::Loaded(_) => ReadOnlyResolution::KeepReadOnly,
-            LoadOutcome::ReadOnly { .. } => ReadOnlyResolution::StillBlocked,
+            LoadOutcome::ReadOnly { .. } | LoadOutcome::NewerVersion { .. } => {
+                ReadOnlyResolution::StillBlocked
+            }
             LoadOutcome::RecoveredFromBackup(_)
             | LoadOutcome::FreshAfterBackup(_)
             | LoadOutcome::NotFound => ReadOnlyResolution::Lift,
+        }
+    }
+
+    /// Upgrades a save written by an older schema to the current layout. Must run before
+    /// [`Self::normalized`], which stamps the current schema version.
+    pub fn migrate(self) -> Self {
+        match self.schema_version {
+            // Versions 0 to 4 only differ from the current layout by fields that are all
+            // `#[serde(default)]`, so deserialization already fills them: nothing to rewrite.
+            0..=4 => self,
+            // Current version, or a newer one that never reaches this point on load: unchanged.
+            _ => self,
         }
     }
 
@@ -346,8 +394,14 @@ impl SaveData {
         }
         let raw =
             std::fs::read_to_string(path).map_err(|e| format!("Failed to read save file: {e}"))?;
+        if let Some(found) = probe_schema_version(&raw).filter(|v| *v > SAVE_SCHEMA_VERSION) {
+            // Never preserve it as corrupt: it is valid data from a newer game version.
+            return Err(format!(
+                "Save file was written by a newer version (schema {found}, supported {SAVE_SCHEMA_VERSION})"
+            ));
+        }
         match Self::from_json(&raw) {
-            Ok(parsed) => Ok(Some(parsed.normalized())),
+            Ok(parsed) => Ok(Some(parsed.migrate().normalized())),
             Err(e) => {
                 let corrupt_path = path.with_extension("json.corrupt");
                 let _ = std::fs::copy(path, &corrupt_path);
