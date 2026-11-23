@@ -51,10 +51,26 @@ pub enum LoadOutcome {
     /// The primary file was unreadable and preserved at the given path; no usable `.bak` existed.
     FreshAfterBackup(PathBuf),
     /// The primary file exists but cannot be read, and it could not be preserved either.
-    /// The caller must not overwrite it.
-    ReadOnly { reason: String },
+    /// The caller must not overwrite it. When the `.bak` copy is readable it is provided so the
+    /// session can start from it (writes stay suspended).
+    ReadOnly {
+        reason: String,
+        backup: Option<Box<SaveData>>,
+    },
     /// No save file exists.
     NotFound,
+}
+
+/// What a read-only session should do when it retries to preserve an unreadable save.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadOnlyResolution {
+    /// The primary file is readable and valid now (a transient lock ended): keep the session
+    /// read-only, since writing would overwrite the player's real progress.
+    KeepReadOnly,
+    /// The primary file is still unreadable and could not be preserved: keep waiting.
+    StillBlocked,
+    /// The primary file is genuinely unparsable (a copy was kept) or gone: writing is safe.
+    Lift,
 }
 
 /// Non-fatal details of a successful save.
@@ -282,17 +298,33 @@ impl SaveData {
         match Self::backup_unreadable(path) {
             Err(copy_err) => LoadOutcome::ReadOnly {
                 reason: format!("{failure}; {copy_err}"),
+                backup: Self::read_backup(path),
             },
             Ok(None) => LoadOutcome::NotFound,
-            Ok(Some(copied)) => {
-                let backup = read_with_retries(&Self::backup_path(path))
-                    .ok()
-                    .and_then(|raw| Self::from_json(&raw).ok());
-                match backup {
-                    Some(parsed) => LoadOutcome::RecoveredFromBackup(Box::new(parsed.normalized())),
-                    None => LoadOutcome::FreshAfterBackup(copied),
-                }
-            }
+            Ok(Some(copied)) => match Self::read_backup(path) {
+                Some(parsed) => LoadOutcome::RecoveredFromBackup(parsed),
+                None => LoadOutcome::FreshAfterBackup(copied),
+            },
+        }
+    }
+
+    /// Reads and parses the `.bak` companion of `path`, if usable.
+    fn read_backup(path: &Path) -> Option<Box<SaveData>> {
+        read_with_retries(&Self::backup_path(path))
+            .ok()
+            .and_then(|raw| Self::from_json(&raw).ok())
+            .map(|parsed| Box::new(parsed.normalized()))
+    }
+
+    /// Decides how a read-only session proceeds, re-checking the primary file first so that a
+    /// save that became readable again (transient lock released) is never overwritten.
+    pub fn resolve_read_only(path: &Path) -> ReadOnlyResolution {
+        match Self::load_with_recovery(path) {
+            LoadOutcome::Loaded(_) => ReadOnlyResolution::KeepReadOnly,
+            LoadOutcome::ReadOnly { .. } => ReadOnlyResolution::StillBlocked,
+            LoadOutcome::RecoveredFromBackup(_)
+            | LoadOutcome::FreshAfterBackup(_)
+            | LoadOutcome::NotFound => ReadOnlyResolution::Lift,
         }
     }
 

@@ -22,7 +22,9 @@ use rand::SeedableRng;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wyrdstone_core::save::{LoadOutcome, DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME};
+use wyrdstone_core::save::{
+    LoadOutcome, ReadOnlyResolution, DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME,
+};
 use wyrdstone_core::{
     ActiveTool, BalanceConfig, CityState, DailyBlessing, ExpeditionRun, GameDataBundle, Language,
     LevelOutcome, LevelSession, ResourceBundle, SaveData,
@@ -33,7 +35,7 @@ const SAVE_FILE_NAME: &str = "wyrdstone_save.json";
 /// Notice shown when the primary save was unreadable and the `.bak` copy was restored.
 const NOTICE_RECOVERED_FROM_BACKUP: &str = "save.notice.recovered_from_backup";
 /// Notice shown when the save is unreadable and cannot be copied, so saving is suspended.
-const NOTICE_SAVE_READ_ONLY: &str = "save.warning.read_only";
+pub const NOTICE_SAVE_READ_ONLY: &str = "save.warning.read_only";
 /// Notice shown when an unreadable save was preserved and a fresh city was started.
 const NOTICE_UNREADABLE_BACKED_UP: &str = "save.notice.unreadable_backed_up";
 
@@ -162,12 +164,13 @@ impl GameContext {
                 status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
                 None
             }
-            Some(LoadOutcome::ReadOnly { reason }) => {
+            Some(LoadOutcome::ReadOnly { reason, backup }) => {
                 warn!("Wyrdstone save is unreadable and could not be preserved: {reason}");
                 has_unreadable_save = true;
                 save_read_only = true;
                 status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
-                None
+                // A readable `.bak` starts the session; writes stay suspended.
+                backup.map(|saved| *saved)
             }
             Some(LoadOutcome::NotFound) | None => None,
         };
@@ -282,20 +285,24 @@ impl GameContext {
             return;
         };
         if self.save_read_only {
-            match SaveData::backup_unreadable(&path) {
-                Ok(copied) => {
-                    if let Some(copied) = copied {
-                        info!(
-                            "Wyrdstone unreadable save preserved at {}",
-                            copied.display()
-                        );
-                    }
+            // Re-check the primary file first: a transient lock may have ended, in which case
+            // the readable save must not be overwritten by this session's progress.
+            match SaveData::resolve_read_only(&path) {
+                ReadOnlyResolution::KeepReadOnly => {
+                    warn!(
+                        "Wyrdstone save is readable again; session stays read-only until restart"
+                    );
+                    self.status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
+                    return;
+                }
+                ReadOnlyResolution::StillBlocked => {
+                    warn!("Wyrdstone save write skipped, unreadable save not preserved");
+                    return;
+                }
+                ReadOnlyResolution::Lift => {
+                    info!("Wyrdstone unreadable save preserved, resuming writes");
                     self.save_read_only = false;
                     self.status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
-                }
-                Err(err) => {
-                    warn!("Wyrdstone save write skipped, unreadable save not preserved: {err}");
-                    return;
                 }
             }
         }

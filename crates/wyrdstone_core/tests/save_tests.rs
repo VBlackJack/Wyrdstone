@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use wyrdstone_core::save::LoadOutcome;
+use wyrdstone_core::save::{LoadOutcome, ReadOnlyResolution};
 use wyrdstone_core::{GameDataBundle, Language, SaveData};
 
 static DIR_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -146,11 +146,64 @@ fn unreadable_and_uncopyable_file_reports_read_only() {
     // A directory at the save path exists but can neither be read nor copied as a file.
     std::fs::create_dir_all(&path).unwrap();
     match SaveData::load_with_recovery(&path) {
-        LoadOutcome::ReadOnly { reason } => assert!(!reason.is_empty()),
+        LoadOutcome::ReadOnly { reason, backup } => {
+            assert!(!reason.is_empty());
+            assert!(backup.is_none());
+        }
         other => panic!("expected ReadOnly, got {other:?}"),
     }
     assert!(path.is_dir(), "the unreadable entry must not be touched");
     assert!(SaveData::backup_unreadable(&path).is_err());
+}
+
+#[test]
+fn read_only_with_readable_backup_provides_the_backup() {
+    let dir = TempDir::new("readonly_bak");
+    let path = dir.save_path();
+    sample_save(4, Language::En)
+        .save_to_path(&SaveData::backup_path(&path))
+        .unwrap();
+    std::fs::create_dir_all(&path).unwrap();
+    match SaveData::load_with_recovery(&path) {
+        LoadOutcome::ReadOnly { backup, .. } => {
+            assert_eq!(backup.expect("backup must be provided").tutorial_step, 4);
+        }
+        other => panic!("expected ReadOnly, got {other:?}"),
+    }
+    assert!(path.is_dir(), "the unreadable entry must not be touched");
+}
+
+#[test]
+fn lock_then_unlock_keeps_session_read_only_and_never_overwrites() {
+    let dir = TempDir::new("lock_unlock");
+    let path = dir.save_path();
+    // Locked: a directory at the save path cannot be read or copied.
+    std::fs::create_dir_all(&path).unwrap();
+    assert_eq!(
+        SaveData::resolve_read_only(&path),
+        ReadOnlyResolution::StillBlocked
+    );
+    // Unlocked: the real save is readable again.
+    std::fs::remove_dir_all(&path).unwrap();
+    sample_save(7, Language::En).save_to_path(&path).unwrap();
+    assert_eq!(
+        SaveData::resolve_read_only(&path),
+        ReadOnlyResolution::KeepReadOnly
+    );
+    assert!(corrupt_copies(&path).is_empty());
+    match SaveData::load_with_recovery(&path) {
+        LoadOutcome::Loaded(save) => assert_eq!(save.tutorial_step, 7),
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+}
+
+#[test]
+fn genuinely_corrupt_primary_is_copied_then_lifted() {
+    let dir = TempDir::new("lift");
+    let path = dir.save_path();
+    std::fs::write(&path, "{ invalid json").unwrap();
+    assert_eq!(SaveData::resolve_read_only(&path), ReadOnlyResolution::Lift);
+    assert_eq!(corrupt_copies(&path).len(), 1);
 }
 
 #[test]
