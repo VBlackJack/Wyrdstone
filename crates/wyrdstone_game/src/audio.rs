@@ -244,17 +244,32 @@ pub fn toggle_mute(
     ctx.persist();
 }
 
-/// Cycles BGM volume in 25% steps (0% -> 25% -> 50% -> 75% -> 100%) and persists.
+/// Selectable BGM volumes, quietest first; the last step is the BGM maximum (shown as 100%).
+pub const BGM_VOLUME_STEPS: [f32; 5] = [0.0, 0.12, 0.22, 0.35, 0.50];
+/// Selectable SFX volumes, quietest first.
+pub const SFX_VOLUME_STEPS: [f32; 5] = [0.0, 0.25, 0.55, 0.80, 1.0];
+/// Tolerance when matching the current volume against a step.
+const VOLUME_STEP_EPSILON: f32 = 0.02;
+/// Percentage scale used when displaying a volume.
+const PERCENT_SCALE: f32 = 100.0;
+
+/// BGM volume as a percentage of the BGM maximum (the last step), clamped to 100.
+pub fn bgm_volume_percent(v: f32) -> u32 {
+    let max = BGM_VOLUME_STEPS[BGM_VOLUME_STEPS.len() - 1];
+    ((v / max * PERCENT_SCALE).round() as u32).min(PERCENT_SCALE as u32)
+}
+
+/// Cycles BGM volume through `BGM_VOLUME_STEPS` and persists.
 pub fn cycle_bgm_volume(
     ctx: &mut GameContext,
     bank: &mut SoundBank,
     bgm_sinks: &mut Query<&mut AudioSink, With<BgmTrack>>,
 ) {
-    let steps = [0.0f32, 0.12, 0.22, 0.35, 0.50];
+    let steps = BGM_VOLUME_STEPS;
     let next = steps
         .iter()
         .copied()
-        .find(|&v| v > bank.bgm_volume + 0.02)
+        .find(|&v| v > bank.bgm_volume + VOLUME_STEP_EPSILON)
         .unwrap_or(steps[0]);
     bank.bgm_volume = next;
     ctx.bgm_volume = next;
@@ -267,11 +282,11 @@ pub fn cycle_bgm_volume(
 
 /// Cycles SFX volume in steps and persists.
 pub fn cycle_sfx_volume(ctx: &mut GameContext, bank: &mut SoundBank) {
-    let steps = [0.0f32, 0.25, 0.55, 0.80, 1.0];
+    let steps = SFX_VOLUME_STEPS;
     let next = steps
         .iter()
         .copied()
-        .find(|&v| v > bank.sfx_volume + 0.02)
+        .find(|&v| v > bank.sfx_volume + VOLUME_STEP_EPSILON)
         .unwrap_or(steps[0]);
     bank.sfx_volume = next;
     ctx.sfx_volume = next;
@@ -569,5 +584,31 @@ pub fn handle_app_lifecycle(
             }
             AppLifecycle::Idle | AppLifecycle::WillSuspend => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod volume_tests {
+    use super::*;
+
+    #[test]
+    fn bgm_percent_spans_zero_to_hundred() {
+        assert_eq!(bgm_volume_percent(0.0), 0);
+        assert_eq!(bgm_volume_percent(0.25), 50);
+        assert_eq!(bgm_volume_percent(0.50), 100);
+    }
+
+    #[test]
+    fn bgm_percent_never_exceeds_hundred() {
+        assert_eq!(bgm_volume_percent(2.0), 100);
+    }
+
+    #[test]
+    fn every_bgm_step_has_distinct_percent() {
+        let pcts: Vec<u32> = BGM_VOLUME_STEPS
+            .iter()
+            .map(|&v| bgm_volume_percent(v))
+            .collect();
+        assert_eq!(pcts, vec![0, 24, 44, 70, 100]);
     }
 }
