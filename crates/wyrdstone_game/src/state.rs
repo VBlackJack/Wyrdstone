@@ -140,6 +140,11 @@ pub struct GameContext {
     /// True once the primary file is known to be good this session (loaded or written by us),
     /// which is the only time its content may be rotated into the `.bak` copy.
     save_file_verified: bool,
+    /// True once the unreadable primary was copied aside this session, so no further
+    /// `.corrupt-<unix_secs>` copy is made while resolving the read-only state.
+    primary_copied_aside: bool,
+    /// True once a newer-version `.bak` was preserved by `prepare_replace` this session.
+    newer_backup_preserved: bool,
     pub rng: StdRng,
 }
 
@@ -163,6 +168,8 @@ impl GameContext {
         let mut save_read_only_cause = None;
         let mut save_read_only_has_progress = false;
         let mut save_file_verified = false;
+        let mut primary_copied_aside = false;
+        let mut newer_backup_preserved = false;
         let mut status_notice_key = None;
         let mut has_unreadable_save = false;
         let loaded_save = match save_path.as_deref().map(SaveData::load_with_recovery) {
@@ -182,7 +189,23 @@ impl GameContext {
                     copied.display()
                 );
                 has_unreadable_save = true;
+                primary_copied_aside = true;
                 status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
+                // Writes resume on a fresh city, and the second write would rotate over a
+                // newer-version `.bak`: keep it first, or stay read-only.
+                if let Some(path) = save_path.as_deref() {
+                    if SaveData::must_preserve_backup(path) {
+                        match SaveData::prepare_replace(path, false) {
+                            Ok(_) => newer_backup_preserved = true,
+                            Err(err) => {
+                                error!("Wyrdstone newer backup could not be preserved: {err}");
+                                save_read_only = true;
+                                save_read_only_cause = Some(ReadOnlyCause::Unreadable);
+                                status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
+                            }
+                        }
+                    }
+                }
                 None
             }
             Some(LoadOutcome::ReadOnly { reason, backup }) => {
@@ -295,6 +318,8 @@ impl GameContext {
             save_read_only_cause,
             save_read_only_has_progress,
             save_file_verified,
+            primary_copied_aside,
+            newer_backup_preserved,
             rng: StdRng::from_entropy(),
         }
     }
@@ -328,9 +353,25 @@ impl GameContext {
             return;
         };
         if self.save_read_only {
+            // A newer-version `.bak` must be copied aside before anything can replace it. Do it
+            // before resolving: resolving copies an unreadable primary aside, and a failure after
+            // that would repeat the copy on every later persist.
+            if !self.newer_backup_preserved {
+                if let Err(err) = SaveData::prepare_replace(&path, false) {
+                    error!("Wyrdstone newer backup could not be preserved: {err}");
+                    self.status_notice_key = self.save_read_only_notice().map(str::to_string);
+                    return;
+                }
+                self.newer_backup_preserved = true;
+            }
             // Re-check the primary file first: a transient lock may have ended, in which case
-            // the readable save must not be overwritten by this session's progress.
-            let (resolution, copied_aside) = SaveData::resolve_read_only_detailed(&path);
+            // the readable save must not be overwritten by this session's progress. An
+            // unreadable primary already copied aside is not examined (and copied) again.
+            let (resolution, copied_aside) = if self.primary_copied_aside {
+                (ReadOnlyResolution::Lift, true)
+            } else {
+                SaveData::resolve_read_only_detailed(&path)
+            };
             match resolution {
                 ReadOnlyResolution::KeepReadOnly => {
                     warn!(
@@ -344,12 +385,6 @@ impl GameContext {
                     return;
                 }
                 ReadOnlyResolution::Lift => {
-                    // The primary is gone or was copied aside; a newer `.bak` would still be
-                    // overwritten by the next backup rotation, so keep it first.
-                    if let Err(err) = SaveData::prepare_replace(&path, false) {
-                        error!("Wyrdstone newer backup could not be preserved: {err}");
-                        return;
-                    }
                     info!("Wyrdstone unreadable save resolved, resuming writes");
                     if copied_aside {
                         self.status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());

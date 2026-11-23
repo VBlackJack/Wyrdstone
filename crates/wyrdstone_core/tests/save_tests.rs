@@ -618,3 +618,42 @@ fn resolve_read_only_detailed_reports_the_corrupt_copy() {
         (ReadOnlyResolution::Lift, false)
     );
 }
+
+#[test]
+fn must_preserve_backup_only_for_a_newer_backup() {
+    let dir = TempDir::new("must_preserve");
+    let path = dir.save_path();
+    let bak = SaveData::backup_path(&path);
+    assert!(!SaveData::must_preserve_backup(&path));
+    std::fs::write(&bak, versioned_json(1, SAVE_SCHEMA_VERSION, false)).unwrap();
+    assert!(!SaveData::must_preserve_backup(&path));
+    std::fs::write(&bak, "{ not json").unwrap();
+    assert!(!SaveData::must_preserve_backup(&path));
+    std::fs::write(&bak, newer_json(1)).unwrap();
+    assert!(SaveData::must_preserve_backup(&path));
+}
+
+#[test]
+fn prepare_replace_removes_the_first_copy_when_the_second_fails() {
+    let dir = TempDir::new("prep_partial");
+    let path = dir.save_path();
+    std::fs::write(&path, newer_json(1)).unwrap();
+    std::fs::write(SaveData::backup_path(&path), newer_json(2)).unwrap();
+    // Directories squat on every `.bak-newer-<secs>` name the second copy could pick (the
+    // clock may tick during the call), so the primary copy succeeds and the backup copy fails.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for offset in 0..5 {
+        let blocker = path.with_extension(format!("json.bak-newer-{}", now + offset));
+        std::fs::create_dir_all(&blocker).unwrap();
+    }
+    let before = dir_entries(&dir.0);
+    assert!(SaveData::prepare_replace(&path, true).is_err());
+    assert!(
+        tagged_copies(&path, "newer").is_empty(),
+        "the first copy is rolled back"
+    );
+    assert_eq!(dir_entries(&dir.0), before);
+}

@@ -327,6 +327,12 @@ impl SaveData {
             .is_some_and(|v| v > SAVE_SCHEMA_VERSION)
     }
 
+    /// True when the `.bak` companion of `path` is a newer-version file, which the next backup
+    /// rotation would overwrite: it must be copied aside by [`Self::prepare_replace`] first.
+    pub fn must_preserve_backup(path: &Path) -> bool {
+        Self::is_newer_version(&Self::backup_path(path))
+    }
+
     /// Preserves every newer-version file that an explicit replacement of the save would
     /// destroy, and returns the copies made.
     ///
