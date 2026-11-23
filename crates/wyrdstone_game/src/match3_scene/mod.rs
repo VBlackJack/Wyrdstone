@@ -1104,6 +1104,7 @@ pub fn handle_match3_hud_buttons(
             return;
         }
         ctx.active_modal = ActiveModal::Help;
+        ctx.armed_tool = None;
         scroll_mem.modal_offset_y = 0.0;
         input_state.dirty_hud = true;
         return;
@@ -1423,6 +1424,10 @@ pub fn handle_match3_hud_buttons(
                 input_state.confirm_retreat = false;
                 input_state.confirm_loki_shuffle = false;
                 ctx.toggle_modal(ActiveModal::Help);
+                if ctx.active_modal == ActiveModal::Help {
+                    ctx.armed_tool = None;
+                    input_state.dirty_board = true;
+                }
                 scroll_mem.modal_offset_y = 0.0;
                 input_state.dirty_hud = true;
             }
@@ -1549,6 +1554,7 @@ pub fn handle_board_pointer_input(
     drag_highlights: Query<Entity, With<DragTargetHighlight>>,
     selection_markers: Query<Entity, With<SelectionMarker>>,
     kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
+    ui_buttons: Query<&Interaction, (Changed<Interaction>, With<Button>)>,
 ) {
     if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
         if mouse.just_pressed(MouseButton::Left) || touches.iter_just_pressed().next().is_some() {
@@ -1565,6 +1571,10 @@ pub fn handle_board_pointer_input(
         }
         input_state.hover_cell = None;
         input_state.drag_highlight_cell = None;
+        return;
+    }
+    // A HUD button pressed this frame owns the click: never let it fall through to the board.
+    if ui_buttons.iter().any(|i| *i == Interaction::Pressed) {
         return;
     }
     let Ok(window) = windows.get_single() else {
@@ -1892,7 +1902,14 @@ pub fn sync_match3_visuals(
     static_sprites: Query<Entity, With<BoardStaticEntity>>,
     sprites: Query<Entity, With<Match3Entity>>,
     huds: Query<Entity, With<Match3HudRoot>>,
+    mut was_idle: Local<bool>,
 ) {
+    // The HUD derives Idle-dependent state (Undo, tools); refresh it on any Idle edge.
+    let idle_now = input_state.is_idle();
+    if idle_now != *was_idle {
+        *was_idle = idle_now;
+        input_state.dirty_hud = true;
+    }
     if input_state.dirty_static_board {
         if let (Some(session), Ok(window)) = (&ctx.active_session, windows.get_single()) {
             for e in &static_sprites {

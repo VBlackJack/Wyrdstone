@@ -120,7 +120,7 @@ pub(super) fn spawn_match3_hud(
                             )),
                             display_font(fjord_art, FONT_HEADING),
                             TextColor(if low_moves {
-                                COLOR_ACCENT_CRIMSON
+                                COLOR_ACCENT_CRIMSON_TEXT
                             } else {
                                 COLOR_ACCENT_GOLD
                             }),
@@ -135,7 +135,7 @@ pub(super) fn spawn_match3_hud(
                             ),
                             display_font(fjord_art, FONT_HEADING),
                             TextColor(if whole <= 15 {
-                                COLOR_ACCENT_CRIMSON
+                                COLOR_ACCENT_CRIMSON_TEXT
                             } else {
                                 COLOR_ACCENT_TEAL
                             }),
@@ -255,7 +255,7 @@ pub(super) fn spawn_match3_hud(
                                     TextColor(if boss.is_phase2() {
                                         COLOR_ACCENT_GOLD
                                     } else {
-                                        COLOR_ACCENT_CRIMSON
+                                        COLOR_ACCENT_CRIMSON_TEXT
                                     }),
                                 ));
                                 bcol.spawn((
@@ -288,7 +288,13 @@ pub(super) fn spawn_match3_hud(
                                 Objective::ClearIce { .. } => (
                                     Some(textures.ice_top_layer1.clone()),
                                     if is_compact {
-                                        format!("{}/{}", prog.done, prog.target)
+                                        i18n.t_fmt(
+                                            "match3.objective.progress",
+                                            &[
+                                                ("done", prog.done.to_string()),
+                                                ("target", prog.target.to_string()),
+                                            ],
+                                        )
                                     } else {
                                         i18n.t_fmt(
                                             "match3.objective.clear_ice",
@@ -302,7 +308,13 @@ pub(super) fn spawn_match3_hud(
                                 Objective::CollectRune { rune, .. } => (
                                     textures.runes.get(rune).cloned(),
                                     if is_compact {
-                                        format!("{}/{}", prog.done, prog.target)
+                                        i18n.t_fmt(
+                                            "match3.objective.progress",
+                                            &[
+                                                ("done", prog.done.to_string()),
+                                                ("target", prog.target.to_string()),
+                                            ],
+                                        )
                                     } else {
                                         i18n.t_fmt(
                                             "match3.objective.collect_rune",
@@ -317,7 +329,13 @@ pub(super) fn spawn_match3_hud(
                                 Objective::ReachScore { .. } => (
                                     Some(vfx.icon_star.clone()),
                                     if is_compact {
-                                        format!("{}/{}", prog.done, prog.target)
+                                        i18n.t_fmt(
+                                            "match3.objective.progress",
+                                            &[
+                                                ("done", prog.done.to_string()),
+                                                ("target", prog.target.to_string()),
+                                            ],
+                                        )
                                     } else {
                                         i18n.t_fmt(
                                             "match3.objective.reach_score",
@@ -331,7 +349,13 @@ pub(super) fn spawn_match3_hud(
                                 Objective::DropRelics { .. } => (
                                     Some(textures.relic_icon.clone()),
                                     if is_compact {
-                                        format!("{}/{}", prog.done, prog.target)
+                                        i18n.t_fmt(
+                                            "match3.objective.progress",
+                                            &[
+                                                ("done", prog.done.to_string()),
+                                                ("target", prog.target.to_string()),
+                                            ],
+                                        )
                                     } else {
                                         i18n.t_fmt(
                                             "match3.objective.drop_relics",
@@ -435,6 +459,10 @@ pub(super) fn spawn_match3_hud(
                         Match3UiAction::Undo,
                         Node {
                             padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                            min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
                         BackgroundColor(if can_undo {
@@ -455,7 +483,7 @@ pub(super) fn spawn_match3_hud(
                                 ..default()
                             },
                             TextColor(if can_undo {
-                                COLOR_TEXT_DARK
+                                COLOR_TEXT_ON_ACCENT
                             } else {
                                 COLOR_TEXT_MUTED
                             }),
@@ -468,6 +496,10 @@ pub(super) fn spawn_match3_hud(
                             Match3UiAction::ToggleHelp,
                             Node {
                                 padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
                                 ..default()
                             },
                             BackgroundColor(COLOR_PANEL_CARD),
@@ -490,6 +522,10 @@ pub(super) fn spawn_match3_hud(
                             Match3UiAction::Retreat,
                             Node {
                                 padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
                                 border: UiRect::all(Val::Px(if confirm_retreat {
                                     1.5
                                 } else {
@@ -582,6 +618,10 @@ pub(super) fn spawn_match3_hud(
                                     Match3UiAction::CancelTool,
                                     Node {
                                         padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                        min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
                                         ..default()
                                     },
                                     BackgroundColor(COLOR_ACCENT_CRIMSON),
@@ -618,9 +658,12 @@ pub(super) fn spawn_match3_hud(
                         let patron_name = i18n.t(session.patron.name_key()).to_string();
                         let fury_lbl = if is_compact {
                             if fury_ready {
-                                "!".to_string()
+                                i18n.t("match3.fury.ready_short").to_string()
                             } else {
-                                format!("{fury_pct}%")
+                                i18n.t_fmt(
+                                    "match3.fury.pct_short",
+                                    &[("pct", fury_pct.to_string())],
+                                )
                             }
                         } else if fury_ready {
                             i18n.t_fmt("match3.fury.ready", &[("patron", patron_name)])
@@ -641,6 +684,8 @@ pub(super) fn spawn_match3_hud(
                                 },
                                 column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
                                 align_items: AlignItems::Center,
+                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
                                 border: UiRect::all(Val::Px(2.0)),
                                 ..default()
                             },
@@ -714,7 +759,10 @@ pub(super) fn spawn_match3_hud(
                                 if tool == ActiveTool::LokiShuffle && confirm_loki_shuffle {
                                     i18n.t("match3.tool.confirm_loki").to_string()
                                 } else if is_compact {
-                                    format!("x{count}")
+                                    i18n.t_fmt(
+                                        "match3.tool.count_short",
+                                        &[("count", count.to_string())],
+                                    )
                                 } else {
                                     i18n.t_fmt(key, &[("count", count.to_string())])
                                 };
@@ -729,6 +777,8 @@ pub(super) fn spawn_match3_hud(
                                     },
                                     column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
                                     align_items: AlignItems::Center,
+                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                    min_width: Val::Px(MIN_TOUCH_TARGET_PX),
                                     border: UiRect::all(Val::Px(1.5)),
                                     ..default()
                                 },
@@ -982,6 +1032,10 @@ pub(super) fn spawn_match3_hud(
                                                         Val::Px(10.0),
                                                         Val::Px(6.0),
                                                     ),
+                                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                                    min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
                                                     border: UiRect::all(Val::Px(1.0)),
                                                     ..default()
                                                 },
@@ -996,7 +1050,11 @@ pub(super) fn spawn_match3_hud(
                                                         font_size: FONT_SMALL,
                                                         ..default()
                                                     },
-                                                    TextColor(COLOR_TEXT_PRIMARY),
+                                                    TextColor(if bg_col == COLOR_ACCENT_TEAL {
+                                                        COLOR_TEXT_ON_ACCENT
+                                                    } else {
+                                                        COLOR_TEXT_PRIMARY
+                                                    }),
                                                 ));
                                             });
                                         }

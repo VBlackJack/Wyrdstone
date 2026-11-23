@@ -1265,7 +1265,7 @@ pub fn tick_board_animation(
                             &[("score", gained_score.to_string())],
                         )
                     } else {
-                        format!("+{gained_score}")
+                        i18n.t_fmt("match3.popup.score", &[("n", gained_score.to_string())])
                     };
                     let popup_color = if combo >= 2 {
                         COLOR_ACCENT_GOLD
@@ -1711,7 +1711,9 @@ pub fn tick_board_animation(
                         spawn_floating_score(
                             &mut commands,
                             &[b_pos],
-                            format!("+{gained_pts}"),
+                            ctx.data
+                                .i18n
+                                .t_fmt("match3.popup.score", &[("n", gained_pts.to_string())]),
                             COLOR_ACCENT_GOLD,
                             34.0,
                             &input_state,
@@ -1768,7 +1770,9 @@ pub fn tick_board_animation(
                                     &[("pts", (session.moves_left * bonus_pts).to_string())],
                                 )
                             } else {
-                                format!("+{bonus_pts}")
+                                ctx.data
+                                    .i18n
+                                    .t_fmt("match3.popup.score", &[("n", bonus_pts.to_string())])
                             };
                             spawn_floating_score(
                                 &mut commands,
