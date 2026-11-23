@@ -352,6 +352,7 @@ fn city_upgrades_quests_and_save_roundtrip() {
         schema_version: SAVE_SCHEMA_VERSION,
         language: Language::Fr,
         last_saved_unix_secs: 1000,
+        energy_regen_anchor_unix_secs: 0,
         muted: true,
         bgm_volume: DEFAULT_BGM_VOLUME,
         sfx_volume: DEFAULT_SFX_VOLUME,

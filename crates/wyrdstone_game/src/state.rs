@@ -21,11 +21,20 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME};
+use wyrdstone_core::save::{LoadOutcome, DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME};
 use wyrdstone_core::{
     ActiveTool, CityState, DailyBlessing, ExpeditionRun, GameDataBundle, Language, LevelOutcome,
     LevelSession, ResourceBundle, SaveData,
 };
+
+/// File name of the primary save inside the platform data directory.
+const SAVE_FILE_NAME: &str = "wyrdstone_save.json";
+/// Notice shown when the primary save was unreadable and the `.bak` copy was restored.
+const NOTICE_RECOVERED_FROM_BACKUP: &str = "save.notice.recovered_from_backup";
+/// Notice shown when the save is unreadable and cannot be copied, so saving is suspended.
+const NOTICE_SAVE_READ_ONLY: &str = "save.warning.read_only";
+/// Notice shown when an unreadable save was preserved and a fresh city was started.
+const NOTICE_UNREADABLE_BACKED_UP: &str = "save.notice.unreadable_backed_up";
 
 /// Top-level scene states.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -101,6 +110,12 @@ pub struct GameContext {
     pub pending_dialogue: Option<ChapterDialogue>,
     pub energy_regen_timer: Timer,
     pub save_path: Option<PathBuf>,
+    /// True while an existing save file could not be read or preserved: writing is suspended
+    /// so the unreadable file is never overwritten.
+    pub save_read_only: bool,
+    /// True once the primary file is known to be good this session (loaded or written by us),
+    /// which is the only time its content may be rotated into the `.bak` copy.
+    save_file_verified: bool,
     pub rng: StdRng,
 }
 
@@ -120,15 +135,39 @@ impl GameContext {
         let mut tutorial_step = 0u8;
         let mut active_expedition = None;
 
-        let loaded_save = save_path
-            .as_ref()
-            .and_then(|p| match SaveData::load_from_path(p) {
-                Ok(opt) => opt,
-                Err(err) => {
-                    warn!("Wyrdstone save load error: {err}");
-                    None
-                }
-            });
+        let mut save_read_only = false;
+        let mut save_file_verified = false;
+        let mut status_notice_key = None;
+        let mut has_unreadable_save = false;
+        let loaded_save = match save_path.as_deref().map(SaveData::load_with_recovery) {
+            Some(LoadOutcome::Loaded(saved)) => {
+                save_file_verified = true;
+                Some(*saved)
+            }
+            Some(LoadOutcome::RecoveredFromBackup(saved)) => {
+                warn!("Wyrdstone save was unreadable; restored from backup copy");
+                has_unreadable_save = true;
+                status_notice_key = Some(NOTICE_RECOVERED_FROM_BACKUP.to_string());
+                Some(*saved)
+            }
+            Some(LoadOutcome::FreshAfterBackup(copied)) => {
+                warn!(
+                    "Wyrdstone save was unreadable; preserved at {}",
+                    copied.display()
+                );
+                has_unreadable_save = true;
+                status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
+                None
+            }
+            Some(LoadOutcome::ReadOnly { reason }) => {
+                warn!("Wyrdstone save is unreadable and could not be preserved: {reason}");
+                has_unreadable_save = true;
+                save_read_only = true;
+                status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
+                None
+            }
+            Some(LoadOutcome::NotFound) | None => None,
+        };
 
         let (city, has_existing_save) = match loaded_save {
             Some(mut saved) => {
@@ -160,7 +199,7 @@ impl GameContext {
                 }
                 (saved.city, true)
             }
-            None => (CityState::new(&data.balance), false),
+            None => (CityState::new(&data.balance), has_unreadable_save),
         };
 
         let default_bldg = data
@@ -197,12 +236,14 @@ impl GameContext {
             last_stars: 0,
             last_daily_streak: None,
             last_discovered_relic_key: None,
-            status_notice_key: None,
+            status_notice_key,
             celebration_message: None,
             celebration_timer_secs: 0.0,
             pending_dialogue: None,
             energy_regen_timer: Timer::from_seconds(regen_secs, TimerMode::Repeating),
             save_path,
+            save_read_only,
+            save_file_verified,
             rng: StdRng::from_entropy(),
         }
     }
@@ -220,14 +261,58 @@ impl GameContext {
     }
 
     /// Persists current progression and audio settings to disk atomically.
+    ///
+    /// While the existing save is unreadable (`save_read_only`), nothing is written until the
+    /// unreadable file has been copied aside.
     pub fn persist(&mut self) {
         self.has_existing_save = true;
-        if let Some(path) = &self.save_path {
-            let snapshot = self.build_save_snapshot();
-            if let Err(err) = snapshot.save_to_path(path) {
-                warn!("Wyrdstone save write error: {err}");
+        let Some(path) = self.save_path.clone() else {
+            return;
+        };
+        if self.save_read_only {
+            match SaveData::backup_unreadable(&path) {
+                Ok(copied) => {
+                    if let Some(copied) = copied {
+                        info!(
+                            "Wyrdstone unreadable save preserved at {}",
+                            copied.display()
+                        );
+                    }
+                    self.save_read_only = false;
+                    self.status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
+                }
+                Err(err) => {
+                    warn!("Wyrdstone save write skipped, unreadable save not preserved: {err}");
+                    return;
+                }
             }
         }
+        let snapshot = self.build_save_snapshot();
+        match snapshot.save_with_options(&path, self.save_file_verified) {
+            Ok(report) => {
+                self.save_file_verified = true;
+                if let Some(err) = report.backup_rotation_error {
+                    warn!("Wyrdstone save backup rotation error: {err}");
+                }
+            }
+            Err(err) => warn!("Wyrdstone save write error: {err}"),
+        }
+    }
+
+    /// Ends the read-only state after an explicit player action that replaces the save,
+    /// still trying to keep a copy of the unreadable file first.
+    fn lift_save_read_only(&mut self) {
+        if !self.save_read_only {
+            return;
+        }
+        if let Some(path) = &self.save_path {
+            if let Err(err) = SaveData::backup_unreadable(path) {
+                warn!(
+                    "Wyrdstone unreadable save could not be preserved before replacing it: {err}"
+                );
+            }
+        }
+        self.save_read_only = false;
     }
 
     fn build_save_snapshot(&self) -> SaveData {
@@ -235,6 +320,7 @@ impl GameContext {
             schema_version: wyrdstone_core::save::SAVE_SCHEMA_VERSION,
             language: self.data.i18n.language(),
             last_saved_unix_secs: now_unix_secs(),
+            energy_regen_anchor_unix_secs: 0,
             muted: self.audio_muted,
             bgm_volume: self.bgm_volume,
             sfx_volume: self.sfx_volume,
@@ -299,6 +385,7 @@ impl GameContext {
         self.tutorial_step = saved.tutorial_step;
         self.active_expedition = saved.active_expedition;
         self.city = saved.city;
+        self.lift_save_read_only();
         self.persist();
         Ok(())
     }
@@ -319,6 +406,7 @@ impl GameContext {
 
     /// Resets player progression to a brand-new Saga and persists immediately.
     pub fn reset_saga(&mut self) {
+        self.lift_save_read_only();
         self.city = CityState::new(&self.data.balance);
         self.selected_building_id = self
             .data
@@ -513,7 +601,7 @@ fn resolve_save_path() -> Option<PathBuf> {
     #[cfg(not(target_os = "android"))]
     {
         directories::ProjectDirs::from("com", "julienbombled", "Wyrdstone")
-            .map(|dirs| dirs.data_local_dir().join("wyrdstone_save.json"))
+            .map(|dirs| dirs.data_local_dir().join(SAVE_FILE_NAME))
     }
     #[cfg(target_os = "android")]
     {

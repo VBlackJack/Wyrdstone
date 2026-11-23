@@ -24,7 +24,9 @@ use crate::expedition::ExpeditionRun;
 use crate::i18n::{I18nCatalog, Language};
 use crate::level::LevelDef;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Current save format version for forward-safe migrations.
 pub const SAVE_SCHEMA_VERSION: u32 = 5;
@@ -33,6 +35,34 @@ pub const SAVE_SCHEMA_VERSION: u32 = 5;
 pub const DEFAULT_BGM_VOLUME: f32 = 0.22;
 /// Default sound effects volume (0.0..=1.0).
 pub const DEFAULT_SFX_VOLUME: f32 = 0.55;
+
+/// Maximum number of read attempts before a save file is considered unreadable.
+pub const SAVE_READ_MAX_ATTEMPTS: u32 = 3;
+/// Delay between two read attempts, absorbing transient file locks (antivirus, sync tools).
+pub const SAVE_READ_RETRY_DELAY_MS: u64 = 80;
+
+/// Result of a recovery-aware save load (see [`SaveData::load_with_recovery`]).
+#[derive(Debug, Clone)]
+pub enum LoadOutcome {
+    /// The primary save file was read successfully.
+    Loaded(Box<SaveData>),
+    /// The primary file was unreadable, preserved as a timestamped copy, and the `.bak` was used.
+    RecoveredFromBackup(Box<SaveData>),
+    /// The primary file was unreadable and preserved at the given path; no usable `.bak` existed.
+    FreshAfterBackup(PathBuf),
+    /// The primary file exists but cannot be read, and it could not be preserved either.
+    /// The caller must not overwrite it.
+    ReadOnly { reason: String },
+    /// No save file exists.
+    NotFound,
+}
+
+/// Non-fatal details of a successful save.
+#[derive(Debug, Clone, Default)]
+pub struct SaveReport {
+    /// Set when the `.bak` rotation failed while the primary file was still written correctly.
+    pub backup_rotation_error: Option<String>,
+}
 
 fn default_bgm_volume() -> f32 {
     DEFAULT_BGM_VOLUME
@@ -135,6 +165,9 @@ pub struct SaveData {
     pub language: Language,
     #[serde(default)]
     pub last_saved_unix_secs: u64,
+    /// Wall-clock instant from which the next endurance point is being earned.
+    #[serde(default)]
+    pub energy_regen_anchor_unix_secs: u64,
     #[serde(default)]
     pub muted: bool,
     #[serde(default = "default_bgm_volume")]
@@ -161,6 +194,7 @@ impl SaveData {
             schema_version: SAVE_SCHEMA_VERSION,
             language,
             last_saved_unix_secs: 0,
+            energy_regen_anchor_unix_secs: 0,
             muted: false,
             bgm_volume: DEFAULT_BGM_VOLUME,
             sfx_volume: DEFAULT_SFX_VOLUME,
@@ -182,9 +216,19 @@ impl SaveData {
     pub fn from_json(raw: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(raw)
     }
-
-    /// Atomically writes save data to disk using a temporary file and rename.
+    /// Atomically writes save data to disk without rotating the `.bak` copy.
     pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
+        self.save_with_options(path, false).map(|_| ())
+    }
+
+    /// Atomically writes save data: temporary file, flush to disk, rename, then directory sync
+    /// on Unix. When `rotate_backup` is set, the current primary file is first copied to `.bak`;
+    /// callers must only request it when that file is known to be good.
+    pub fn save_with_options(
+        &self,
+        path: &Path,
+        rotate_backup: bool,
+    ) -> Result<SaveReport, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create save directory: {e}"))?;
@@ -193,10 +237,70 @@ impl SaveData {
             .to_json()
             .map_err(|e| format!("Failed to serialize save: {e}"))?;
         let tmp_path = path.with_extension("json.tmp");
-        std::fs::write(&tmp_path, &json)
+        write_synced(&tmp_path, json.as_bytes())
             .map_err(|e| format!("Failed to write temporary save file: {e}"))?;
+        let mut report = SaveReport::default();
+        if rotate_backup {
+            report.backup_rotation_error = rotate_backup_copy(path).err();
+        }
         std::fs::rename(&tmp_path, path)
-            .map_err(|e| format!("Failed to commit atomic save rename: {e}"))
+            .map_err(|e| format!("Failed to commit atomic save rename: {e}"))?;
+        sync_parent_dir(path)?;
+        Ok(report)
+    }
+
+    /// Returns the `.bak` companion path of a primary save file.
+    pub fn backup_path(path: &Path) -> PathBuf {
+        path.with_extension("json.bak")
+    }
+
+    /// Copies an unreadable primary file to a timestamped `.corrupt-<unix_secs>` sibling.
+    /// Returns `Ok(None)` when the file no longer exists.
+    pub fn backup_unreadable(path: &Path) -> Result<Option<PathBuf>, String> {
+        if let Ok(false) = path.try_exists() {
+            return Ok(None);
+        }
+        let dest = path.with_extension(format!("json.corrupt-{}", unix_secs()));
+        std::fs::copy(path, &dest)
+            .map_err(|e| format!("Failed to copy unreadable save to {}: {e}", dest.display()))?;
+        Ok(Some(dest))
+    }
+
+    /// Loads a save with recovery: retries transient read errors, preserves an unreadable file
+    /// as a timestamped copy, then falls back to the `.bak` copy.
+    pub fn load_with_recovery(path: &Path) -> LoadOutcome {
+        if let Ok(false) = path.try_exists() {
+            return LoadOutcome::NotFound;
+        }
+        let failure = match read_with_retries(path) {
+            Ok(raw) => match Self::from_json(&raw) {
+                Ok(parsed) => return LoadOutcome::Loaded(Box::new(parsed.normalized())),
+                Err(e) => format!("Failed to parse save file: {e}"),
+            },
+            Err(e) => format!("Failed to read save file: {e}"),
+        };
+        match Self::backup_unreadable(path) {
+            Err(copy_err) => LoadOutcome::ReadOnly {
+                reason: format!("{failure}; {copy_err}"),
+            },
+            Ok(None) => LoadOutcome::NotFound,
+            Ok(Some(copied)) => {
+                let backup = read_with_retries(&Self::backup_path(path))
+                    .ok()
+                    .and_then(|raw| Self::from_json(&raw).ok());
+                match backup {
+                    Some(parsed) => LoadOutcome::RecoveredFromBackup(Box::new(parsed.normalized())),
+                    None => LoadOutcome::FreshAfterBackup(copied),
+                }
+            }
+        }
+    }
+
+    fn normalized(mut self) -> Self {
+        self.bgm_volume = self.bgm_volume.clamp(0.0, 1.0);
+        self.sfx_volume = self.sfx_volume.clamp(0.0, 1.0);
+        self.schema_version = SAVE_SCHEMA_VERSION;
+        self
     }
 
     /// Loads save data from disk if it exists, backing up corrupted files to `.corrupt`.
@@ -207,12 +311,7 @@ impl SaveData {
         let raw =
             std::fs::read_to_string(path).map_err(|e| format!("Failed to read save file: {e}"))?;
         match Self::from_json(&raw) {
-            Ok(mut parsed) => {
-                parsed.bgm_volume = parsed.bgm_volume.clamp(0.0, 1.0);
-                parsed.sfx_volume = parsed.sfx_volume.clamp(0.0, 1.0);
-                parsed.schema_version = SAVE_SCHEMA_VERSION;
-                Ok(Some(parsed))
-            }
+            Ok(parsed) => Ok(Some(parsed.normalized())),
             Err(e) => {
                 let corrupt_path = path.with_extension("json.corrupt");
                 let _ = std::fs::copy(path, &corrupt_path);
@@ -223,4 +322,69 @@ impl SaveData {
             }
         }
     }
+}
+
+fn unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Reads a file as UTF-8, retrying transient I/O errors a few times.
+fn read_with_retries(path: &Path) -> std::io::Result<String> {
+    let mut attempt = 1;
+    loop {
+        match std::fs::read_to_string(path) {
+            Ok(raw) => return Ok(raw),
+            Err(e)
+                if attempt >= SAVE_READ_MAX_ATTEMPTS
+                    || matches!(
+                        e.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData
+                    ) =>
+            {
+                return Err(e)
+            }
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(SAVE_READ_RETRY_DELAY_MS));
+                attempt += 1;
+            }
+        }
+    }
+}
+
+/// Creates `path`, writes all bytes and flushes them to stable storage.
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Copies the current primary file (if any) to `.bak` through a temporary file and a rename.
+fn rotate_backup_copy(path: &Path) -> Result<(), String> {
+    if let Ok(false) = path.try_exists() {
+        return Ok(());
+    }
+    let backup = SaveData::backup_path(path);
+    let tmp = path.with_extension("json.bak.tmp");
+    std::fs::copy(path, &tmp).map_err(|e| format!("Failed to copy save to backup: {e}"))?;
+    std::fs::rename(&tmp, &backup).map_err(|e| format!("Failed to commit backup rename: {e}"))
+}
+
+/// Flushes the parent directory entry so the rename survives a power loss (Unix only;
+/// directories cannot be opened on Windows).
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|e| format!("Failed to sync save directory: {e}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
