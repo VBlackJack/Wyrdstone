@@ -24,6 +24,10 @@ const WHEEL_LINE_SCROLL_PX: f32 = 34.0;
 const TOUCH_SCROLL_DEADZONE_PX: f32 = 6.0;
 /// A touch that moved farther than this between press and release is a drag, never a tap.
 pub const TAP_SLOP_PX: f32 = 12.0;
+/// Content overflow at or below this many pixels is treated as "fits": no scrolling.
+const SCROLL_OVERFLOW_EPSILON_PX: f32 = 0.5;
+/// Extra scrollable distance added below the last child when content overflows.
+const SCROLL_BOTTOM_PADDING_PX: f32 = 20.0;
 
 /// Identifies which scrollable panel owns a `ScrollPosition` so offsets survive UI rebuilds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,14 +319,20 @@ pub fn handle_ui_scroll(
                 ScrollPanelKind::Modal => modal_metrics.map(|m| m.0).unwrap_or(false),
                 ScrollPanelKind::Inspector => inspector_metrics.map(|m| m.0).unwrap_or(false),
             };
-            node.display = if show { Display::Flex } else { Display::None };
+            let display = if show { Display::Flex } else { Display::None };
+            if node.display != display {
+                node.display = display;
+            }
         }
         for (track, mut node) in &mut tracks {
             let show = match track.kind {
                 ScrollPanelKind::Modal => modal_metrics.map(|m| m.1 > 0.5).unwrap_or(false),
                 ScrollPanelKind::Inspector => inspector_metrics.map(|m| m.1 > 0.5).unwrap_or(false),
             };
-            node.display = if show { Display::Flex } else { Display::None };
+            let display = if show { Display::Flex } else { Display::None };
+            if node.display != display {
+                node.display = display;
+            }
         }
         for (thumb, mut node) in &mut thumbs {
             let metrics = match thumb.kind {
@@ -330,8 +340,14 @@ pub fn handle_ui_scroll(
                 ScrollPanelKind::Inspector => inspector_metrics,
             };
             if let Some((_, _, thumb_pct, top_pct)) = metrics {
-                node.height = Val::Percent(thumb_pct);
-                node.top = Val::Percent(top_pct);
+                let height = Val::Percent(thumb_pct);
+                let top = Val::Percent(top_pct);
+                if node.height != height {
+                    node.height = height;
+                }
+                if node.top != top {
+                    node.top = top;
+                }
             }
         }
     }
@@ -358,7 +374,16 @@ fn max_scroll_y(
             }
         }
     }
-    ((max_child_bottom - container_bottom) + 20.0).max(0.0)
+    scroll_extent(max_child_bottom - container_bottom)
+}
+
+/// Maximum scroll offset for a given content overflow: zero when the content fits.
+fn scroll_extent(overflow: f32) -> f32 {
+    if overflow > SCROLL_OVERFLOW_EPSILON_PX {
+        overflow + SCROLL_BOTTOM_PADDING_PX
+    } else {
+        0.0
+    }
 }
 
 fn point_inside_node(pos: Vec2, computed: &ComputedNode, gtf: &GlobalTransform) -> bool {
@@ -395,6 +420,18 @@ mod tests {
 
     fn entity() -> Entity {
         Entity::from_raw(7)
+    }
+
+    #[test]
+    fn scroll_extent_is_zero_when_content_fits() {
+        assert_eq!(scroll_extent(0.0), 0.0);
+        assert_eq!(scroll_extent(-12.0), 0.0);
+        assert_eq!(scroll_extent(SCROLL_OVERFLOW_EPSILON_PX), 0.0);
+    }
+
+    #[test]
+    fn scroll_extent_adds_padding_on_overflow() {
+        assert_eq!(scroll_extent(100.0), 100.0 + SCROLL_BOTTOM_PADDING_PX);
     }
 
     #[test]
