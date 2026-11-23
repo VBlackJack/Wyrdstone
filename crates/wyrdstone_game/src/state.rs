@@ -20,11 +20,12 @@ use bevy::prelude::*;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wyrdstone_core::save::{LoadOutcome, DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME};
 use wyrdstone_core::{
-    ActiveTool, CityState, DailyBlessing, ExpeditionRun, GameDataBundle, Language, LevelOutcome,
-    LevelSession, ResourceBundle, SaveData,
+    ActiveTool, BalanceConfig, CityState, DailyBlessing, ExpeditionRun, GameDataBundle, Language,
+    LevelOutcome, LevelSession, ResourceBundle, SaveData,
 };
 
 /// File name of the primary save inside the platform data directory.
@@ -109,6 +110,8 @@ pub struct GameContext {
     pub celebration_timer_secs: f32,
     pub pending_dialogue: Option<ChapterDialogue>,
     pub energy_regen_timer: Timer,
+    /// Wall-clock instant from which the next endurance point is being earned.
+    pub energy_regen_anchor_unix_secs: u64,
     pub save_path: Option<PathBuf>,
     /// True while an existing save file could not be read or preserved: writing is suspended
     /// so the unreadable file is never overwritten.
@@ -169,7 +172,8 @@ impl GameContext {
             Some(LoadOutcome::NotFound) | None => None,
         };
 
-        let (city, has_existing_save) = match loaded_save {
+        let now = now_unix_secs();
+        let (city, has_existing_save, regen_anchor) = match loaded_save {
             Some(mut saved) => {
                 data.i18n.set_language(saved.language);
                 audio_muted = saved.muted;
@@ -185,21 +189,28 @@ impl GameContext {
                 } else {
                     saved.tutorial_step
                 };
-                let now = now_unix_secs();
-                if saved.last_saved_unix_secs > 0 && now > saved.last_saved_unix_secs {
-                    saved.city.apply_offline_energy_regen(
-                        now - saved.last_saved_unix_secs,
+                let mut anchor = now;
+                if saved.energy_regen_anchor_unix_secs > 0 || saved.last_saved_unix_secs > 0 {
+                    anchor = if saved.energy_regen_anchor_unix_secs > 0 {
+                        saved.energy_regen_anchor_unix_secs
+                    } else {
+                        saved.last_saved_unix_secs
+                    };
+                    let speed_pct = regen_speed_pct(&saved.city, &data.balance);
+                    advance_energy_regen(
+                        &mut saved.city,
+                        &mut anchor,
+                        now,
+                        speed_pct,
                         &data.balance,
                     );
-                } else if saved.last_saved_unix_secs == 0
-                    && saved.city.energy < data.balance.energy_cost_per_level
-                {
+                } else if saved.city.energy < data.balance.energy_cost_per_level {
                     let cap = saved.city.max_energy(&data.balance);
                     saved.city.energy = cap;
                 }
-                (saved.city, true)
+                (saved.city, true, anchor)
             }
-            None => (CityState::new(&data.balance), has_unreadable_save),
+            None => (CityState::new(&data.balance), has_unreadable_save, now),
         };
 
         let default_bldg = data
@@ -241,6 +252,7 @@ impl GameContext {
             celebration_timer_secs: 0.0,
             pending_dialogue: None,
             energy_regen_timer: Timer::from_seconds(regen_secs, TimerMode::Repeating),
+            energy_regen_anchor_unix_secs: regen_anchor,
             save_path,
             save_read_only,
             save_file_verified,
@@ -320,7 +332,7 @@ impl GameContext {
             schema_version: wyrdstone_core::save::SAVE_SCHEMA_VERSION,
             language: self.data.i18n.language(),
             last_saved_unix_secs: now_unix_secs(),
-            energy_regen_anchor_unix_secs: 0,
+            energy_regen_anchor_unix_secs: self.energy_regen_anchor_unix_secs,
             muted: self.audio_muted,
             bgm_volume: self.bgm_volume,
             sfx_volume: self.sfx_volume,
@@ -385,6 +397,7 @@ impl GameContext {
         self.tutorial_step = saved.tutorial_step;
         self.active_expedition = saved.active_expedition;
         self.city = saved.city;
+        self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.lift_save_read_only();
         self.persist();
         Ok(())
@@ -429,6 +442,7 @@ impl GameContext {
         self.celebration_message = None;
         self.celebration_timer_secs = 0.0;
         self.pending_dialogue = None;
+        self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.persist();
     }
 
@@ -605,9 +619,10 @@ fn resolve_save_path() -> Option<PathBuf> {
     }
     #[cfg(target_os = "android")]
     {
-        Some(PathBuf::from(
-            "/data/data/com.julienbombled.wyrdstone/files/wyrdstone_save.json",
-        ))
+        bevy::window::ANDROID_APP
+            .get()
+            .and_then(|app| app.internal_data_path())
+            .map(|dir| dir.join(SAVE_FILE_NAME))
     }
 }
 
@@ -623,21 +638,66 @@ pub fn today_day_index() -> u64 {
     now_unix_secs() / 86_400
 }
 
-/// Regenerates endurance periodically, sped up by the Mead Hall tier.
-pub fn tick_energy_regen(time: Res<Time>, mut ctx: ResMut<GameContext>) {
-    let speed_mult = 1.0
-        + (ctx
-            .city
-            .compute_bonuses(&ctx.data.balance)
-            .energy_regen_speed_pct as f32
-            / 100.0);
-    let scaled_delta = time.delta().mul_f32(speed_mult);
-    if ctx.energy_regen_timer.tick(scaled_delta).just_finished() {
-        let balance = ctx.data.balance.clone();
-        let prev = ctx.city.energy;
-        ctx.city.regenerate_energy(1, &balance);
-        if ctx.city.energy != prev {
-            ctx.persist();
-        }
+/// Regeneration speed as a percentage (100 = base rate), raised by the Mead Hall tier.
+fn regen_speed_pct(city: &CityState, balance: &BalanceConfig) -> u64 {
+    100 + u64::from(city.compute_bonuses(balance).energy_regen_speed_pct)
+}
+
+/// Credits endurance earned between `anchor` and `now` (wall clock, so time spent in the
+/// background counts) and moves the anchor forward by the time actually consumed, keeping the
+/// remainder of a partial point. Returns the endurance gained.
+fn advance_energy_regen(
+    city: &mut CityState,
+    anchor: &mut u64,
+    now: u64,
+    speed_pct: u64,
+    balance: &BalanceConfig,
+) -> u32 {
+    let regen_secs = balance.energy_regen_seconds;
+    let cap = city.max_energy(balance);
+    if city.energy >= cap || now < *anchor || regen_secs == 0 {
+        *anchor = now;
+        return 0;
+    }
+    let gained = (now - *anchor) * speed_pct / 100 / regen_secs;
+    if gained == 0 {
+        return 0;
+    }
+    let before = city.energy;
+    city.regenerate_energy(u32::try_from(gained).unwrap_or(u32::MAX), balance);
+    if city.energy >= cap {
+        *anchor = now;
+    } else {
+        *anchor += (gained * regen_secs * 100).div_ceil(speed_pct);
+    }
+    city.energy - before
+}
+
+/// Regenerates endurance from the wall clock, sped up by the Mead Hall tier.
+///
+/// The countdown timer shown by the city header is kept in sync in scaled units (its duration
+/// is one regeneration period at base speed; the header divides the remainder by the speed).
+pub fn tick_energy_regen(mut ctx: ResMut<GameContext>) {
+    let ctx = &mut *ctx;
+    let now = now_unix_secs();
+    let speed_pct = regen_speed_pct(&ctx.city, &ctx.data.balance);
+    let gained = advance_energy_regen(
+        &mut ctx.city,
+        &mut ctx.energy_regen_anchor_unix_secs,
+        now,
+        speed_pct,
+        &ctx.data.balance,
+    );
+    let duration = ctx.energy_regen_timer.duration();
+    if ctx.city.energy >= ctx.city.max_energy(&ctx.data.balance) {
+        ctx.energy_regen_timer.reset();
+    } else {
+        let elapsed_real = now.saturating_sub(ctx.energy_regen_anchor_unix_secs) as f32;
+        let elapsed_scaled = elapsed_real * speed_pct as f32 / 100.0;
+        ctx.energy_regen_timer
+            .set_elapsed(Duration::from_secs_f32(elapsed_scaled).min(duration));
+    }
+    if gained > 0 {
+        ctx.persist();
     }
 }

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! Desktop binary entry point for Wyrdstone.
 
 fn main() {

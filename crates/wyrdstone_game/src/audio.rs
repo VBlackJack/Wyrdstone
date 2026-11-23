@@ -19,6 +19,7 @@
 use crate::state::GameContext;
 use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
+use bevy::window::AppLifecycle;
 use std::f32::consts::TAU;
 
 const SAMPLE_RATE: u32 = 22_050;
@@ -541,4 +542,32 @@ fn encode_pcm16_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
         buf.extend_from_slice(&pcm.to_le_bytes());
     }
     buf
+}
+
+/// Pauses background music and saves when the app is suspended, and resumes the music when the
+/// app comes back. A muted track keeps a zero volume, so resuming it is always safe and keeps a
+/// later unmute audible.
+///
+/// Known limitation: an in-progress Match-3 board is not persisted, only the city state.
+pub fn handle_app_lifecycle(
+    mut events: EventReader<AppLifecycle>,
+    mut ctx: ResMut<GameContext>,
+    bgm_sinks: Query<&AudioSink, With<BgmTrack>>,
+) {
+    for event in events.read() {
+        match event {
+            AppLifecycle::Suspended => {
+                for sink in &bgm_sinks {
+                    sink.pause();
+                }
+                ctx.persist();
+            }
+            AppLifecycle::WillResume | AppLifecycle::Running => {
+                for sink in &bgm_sinks {
+                    sink.play();
+                }
+            }
+            AppLifecycle::Idle | AppLifecycle::WillSuspend => {}
+        }
+    }
 }

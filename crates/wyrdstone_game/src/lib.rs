@@ -29,6 +29,8 @@ mod title_ui;
 mod ui_style;
 mod vfx_art;
 
+use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::input::{ButtonState, InputSystem};
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
 use state::{tick_energy_regen, AppState, GameContext};
@@ -73,11 +75,13 @@ pub fn run_app() {
             ),
         )
         .add_systems(Startup, enter_title_after_boot)
+        .add_systems(PreUpdate, map_back_key_to_escape.after(InputSystem))
         .add_systems(
             Update,
             (
                 tick_energy_regen,
                 handle_global_shortcuts,
+                audio::handle_app_lifecycle,
                 scroll::handle_ui_scroll,
                 ui_style::tick_screen_fades,
                 ui_style::animate_button_feedback,
@@ -155,7 +159,10 @@ pub fn run_app() {
 
 fn setup_camera(
     mut commands: Commands,
-    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+    #[cfg(not(target_os = "android"))] mut windows: Query<
+        &mut Window,
+        With<bevy::window::PrimaryWindow>,
+    >,
     #[cfg(not(target_os = "android"))] winit_windows: NonSend<bevy::winit::WinitWindows>,
 ) {
     commands.spawn(Camera2d);
@@ -185,5 +192,37 @@ fn handle_global_shortcuts(
 ) {
     if keys.just_pressed(KeyCode::KeyM) {
         audio::toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
+    }
+}
+
+/// Maps the Android system Back key (reported as a logical browser-back key with no physical
+/// key code) onto `KeyCode::Escape`, mirroring both press and release so Escape never sticks.
+/// On Android, Back from the Title screen (with no pending reset confirmation) saves and exits.
+fn map_back_key_to_escape(
+    mut events: EventReader<KeyboardInput>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    #[cfg(target_os = "android")] state: Res<State<AppState>>,
+    #[cfg(target_os = "android")] mut ctx: ResMut<GameContext>,
+) {
+    for event in events.read() {
+        if !matches!(event.logical_key, Key::BrowserBack | Key::GoBack) {
+            continue;
+        }
+        match event.state {
+            ButtonState::Pressed => {
+                if event.repeat {
+                    continue;
+                }
+                #[cfg(target_os = "android")]
+                if *state.get() == AppState::Title && !ctx.confirm_reset {
+                    // Returning from android_main would leave the process alive with a stale
+                    // activity handle, so terminate it explicitly after saving.
+                    ctx.persist();
+                    std::process::exit(0);
+                }
+                keys.press(KeyCode::Escape);
+            }
+            ButtonState::Released => keys.release(KeyCode::Escape),
+        }
     }
 }
