@@ -42,6 +42,11 @@ pub const SAVE_READ_MAX_ATTEMPTS: u32 = 3;
 /// Delay between two read attempts, absorbing transient file locks (antivirus, sync tools).
 pub const SAVE_READ_RETRY_DELAY_MS: u64 = 80;
 
+/// Tag of the copy kept of a newer-version primary file before it is replaced.
+pub const NEWER_COPY_TAG: &str = "newer";
+/// Tag of the copy kept of a newer-version `.bak` file before it is rotated over.
+pub const NEWER_BACKUP_COPY_TAG: &str = "bak-newer";
+
 /// Result of a recovery-aware save load (see [`SaveData::load_with_recovery`]).
 #[derive(Debug, Clone)]
 pub enum LoadOutcome {
@@ -313,6 +318,62 @@ impl SaveData {
         Ok(dest)
     }
 
+    /// True when the file at `path` is readable and was written by a newer game version.
+    /// An unreadable or unparsable file is not reported as newer.
+    pub fn is_newer_version(path: &Path) -> bool {
+        read_with_retries(path)
+            .ok()
+            .and_then(|raw| probe_schema_version(&raw))
+            .is_some_and(|v| v > SAVE_SCHEMA_VERSION)
+    }
+
+    /// Preserves every newer-version file that an explicit replacement of the save would
+    /// destroy, and returns the copies made.
+    ///
+    /// The primary is copied (tag [`NEWER_COPY_TAG`]) when `primary_is_newer` is set; its
+    /// existence check treats an I/O error as "exists", so an inaccessible source aborts instead
+    /// of being skipped. The `.bak` companion is copied (tag [`NEWER_BACKUP_COPY_TAG`], named from
+    /// the primary path) when it is itself a newer-version file, since the next backup rotation
+    /// would overwrite it. Nothing to preserve returns an empty list. When any required copy
+    /// fails, the copies made so far are removed and the error is returned: the caller must not
+    /// replace anything.
+    pub fn prepare_replace(path: &Path, primary_is_newer: bool) -> Result<Vec<PathBuf>, String> {
+        let mut copies: Vec<PathBuf> = Vec::new();
+        let outcome = (|| -> Result<(), String> {
+            if primary_is_newer && path.try_exists().unwrap_or(true) {
+                let dest = Self::preserve_copy(path, NEWER_COPY_TAG).map_err(|e| {
+                    format!(
+                        "Failed to preserve newer-version save {}: {e}",
+                        path.display()
+                    )
+                })?;
+                copies.push(dest);
+            }
+            let backup = Self::backup_path(path);
+            if Self::is_newer_version(&backup) {
+                let dest =
+                    path.with_extension(format!("json.{NEWER_BACKUP_COPY_TAG}-{}", unix_secs()));
+                std::fs::copy(&backup, &dest).map_err(|e| {
+                    format!(
+                        "Failed to preserve newer-version backup {}: {e}",
+                        backup.display()
+                    )
+                })?;
+                copies.push(dest);
+            }
+            Ok(())
+        })();
+        match outcome {
+            Ok(()) => Ok(copies),
+            Err(err) => {
+                for copy in &copies {
+                    let _ = std::fs::remove_file(copy);
+                }
+                Err(err)
+            }
+        }
+    }
+
     /// Loads a save with recovery: retries transient read errors, preserves an unreadable file
     /// as a timestamped copy, then falls back to the `.bak` copy.
     pub fn load_with_recovery(path: &Path) -> LoadOutcome {
@@ -363,14 +424,21 @@ impl SaveData {
     /// Decides how a read-only session proceeds, re-checking the primary file first so that a
     /// save that became readable again (transient lock released) is never overwritten.
     pub fn resolve_read_only(path: &Path) -> ReadOnlyResolution {
+        Self::resolve_read_only_detailed(path).0
+    }
+
+    /// Like [`Self::resolve_read_only`], also reporting whether this check copied an unparsable
+    /// primary file aside (so the caller can tell the player a backup was made).
+    pub fn resolve_read_only_detailed(path: &Path) -> (ReadOnlyResolution, bool) {
         match Self::load_with_recovery(path) {
-            LoadOutcome::Loaded(_) => ReadOnlyResolution::KeepReadOnly,
+            LoadOutcome::Loaded(_) => (ReadOnlyResolution::KeepReadOnly, false),
             LoadOutcome::ReadOnly { .. } | LoadOutcome::NewerVersion { .. } => {
-                ReadOnlyResolution::StillBlocked
+                (ReadOnlyResolution::StillBlocked, false)
             }
-            LoadOutcome::RecoveredFromBackup(_)
-            | LoadOutcome::FreshAfterBackup(_)
-            | LoadOutcome::NotFound => ReadOnlyResolution::Lift,
+            LoadOutcome::RecoveredFromBackup(_) | LoadOutcome::FreshAfterBackup(_) => {
+                (ReadOnlyResolution::Lift, true)
+            }
+            LoadOutcome::NotFound => (ReadOnlyResolution::Lift, false),
         }
     }
 

@@ -495,3 +495,126 @@ fn preserve_copy_fails_for_a_missing_source_and_creates_nothing() {
     assert!(SaveData::preserve_copy(&path, "newer").is_err());
     assert!(dir_entries(&dir.0).is_empty());
 }
+
+/// Files next to the save whose name starts with `<save file name>.<tag>-`.
+fn tagged_copies(path: &Path, tag: &str) -> Vec<PathBuf> {
+    let prefix = format!("{}.{tag}-", path.file_name().unwrap().to_string_lossy());
+    std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(&prefix))
+        })
+        .collect()
+}
+
+#[test]
+fn prepare_replace_copies_newer_primary_before_replacement() {
+    let dir = TempDir::new("prep_primary");
+    let path = dir.save_path();
+    let raw = newer_json(4);
+    std::fs::write(&path, &raw).unwrap();
+    let copies = SaveData::prepare_replace(&path, true).unwrap();
+    assert_eq!(copies.len(), 1);
+    assert_eq!(tagged_copies(&path, "newer"), copies);
+    assert_eq!(std::fs::read_to_string(&copies[0]).unwrap(), raw);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+}
+
+#[test]
+fn prepare_replace_copies_newer_backup_with_bak_newer_tag() {
+    let dir = TempDir::new("prep_newer_bak");
+    let path = dir.save_path();
+    let bak = SaveData::backup_path(&path);
+    let raw = newer_json(6);
+    std::fs::write(&bak, &raw).unwrap();
+    std::fs::write(&path, "{ not json").unwrap();
+    let copies = SaveData::prepare_replace(&path, false).unwrap();
+    assert_eq!(copies.len(), 1);
+    assert_eq!(tagged_copies(&path, "bak-newer"), copies);
+    assert!(tagged_copies(&path, "newer").is_empty());
+    assert_eq!(std::fs::read_to_string(&copies[0]).unwrap(), raw);
+    assert_eq!(std::fs::read_to_string(&bak).unwrap(), raw);
+}
+
+#[test]
+fn prepare_replace_copies_both_newer_primary_and_newer_backup() {
+    let dir = TempDir::new("prep_both");
+    let path = dir.save_path();
+    std::fs::write(&path, newer_json(1)).unwrap();
+    std::fs::write(SaveData::backup_path(&path), newer_json(2)).unwrap();
+    let copies = SaveData::prepare_replace(&path, true).unwrap();
+    assert_eq!(copies.len(), 2);
+    assert_eq!(tagged_copies(&path, "newer").len(), 1);
+    assert_eq!(tagged_copies(&path, "bak-newer").len(), 1);
+}
+
+#[test]
+fn prepare_replace_ignores_current_version_backup() {
+    let dir = TempDir::new("prep_current_bak");
+    let path = dir.save_path();
+    std::fs::write(&path, "{ not json").unwrap();
+    std::fs::write(
+        SaveData::backup_path(&path),
+        versioned_json(3, SAVE_SCHEMA_VERSION, false),
+    )
+    .unwrap();
+    let before = dir_entries(&dir.0);
+    assert!(SaveData::prepare_replace(&path, false).unwrap().is_empty());
+    assert_eq!(dir_entries(&dir.0), before);
+}
+
+#[test]
+fn prepare_replace_aborts_without_new_files_when_copy_fails() {
+    let dir = TempDir::new("prep_fail");
+    let path = dir.save_path();
+    // A directory cannot be copied as a file: the required copy fails.
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(SaveData::backup_path(&path), newer_json(2)).unwrap();
+    let before = dir_entries(&dir.0);
+    assert!(SaveData::prepare_replace(&path, true).is_err());
+    assert_eq!(
+        dir_entries(&dir.0),
+        before,
+        "an aborted replacement leaves no copies"
+    );
+    assert!(path.is_dir());
+}
+
+#[test]
+fn prepare_replace_with_missing_primary_returns_empty() {
+    let dir = TempDir::new("prep_missing");
+    let path = dir.save_path();
+    assert!(SaveData::prepare_replace(&path, true).unwrap().is_empty());
+    assert!(dir_entries(&dir.0).is_empty());
+}
+
+#[test]
+fn is_newer_version_distinguishes_newer_current_and_unreadable() {
+    let dir = TempDir::new("is_newer");
+    let path = dir.save_path();
+    assert!(!SaveData::is_newer_version(&path));
+    std::fs::write(&path, newer_json(1)).unwrap();
+    assert!(SaveData::is_newer_version(&path));
+    std::fs::write(&path, versioned_json(1, SAVE_SCHEMA_VERSION, false)).unwrap();
+    assert!(!SaveData::is_newer_version(&path));
+    std::fs::write(&path, "{ not json").unwrap();
+    assert!(!SaveData::is_newer_version(&path));
+}
+
+#[test]
+fn resolve_read_only_detailed_reports_the_corrupt_copy() {
+    let dir = TempDir::new("detailed");
+    let path = dir.save_path();
+    std::fs::write(&path, "{ not json").unwrap();
+    assert_eq!(
+        SaveData::resolve_read_only_detailed(&path),
+        (ReadOnlyResolution::Lift, true)
+    );
+    let gone = TempDir::new("detailed_gone");
+    assert_eq!(
+        SaveData::resolve_read_only_detailed(&gone.save_path()),
+        (ReadOnlyResolution::Lift, false)
+    );
+}

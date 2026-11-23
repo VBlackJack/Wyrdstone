@@ -41,8 +41,6 @@ pub const NOTICE_SAVE_NEWER_VERSION: &str = "save.warning.newer_version";
 /// Notice shown when an unreadable save was preserved and a fresh city was started.
 const NOTICE_UNREADABLE_BACKED_UP: &str = "save.notice.unreadable_backed_up";
 
-/// Tag of the copy kept aside before a newer-version save is replaced on purpose.
-const NEWER_SAVE_COPY_TAG: &str = "newer";
 /// Notice shown when the export is refused because no progress was loaded.
 const NOTICE_BACKUP_READ_ONLY: &str = "city.panel.backup.read_only";
 
@@ -136,6 +134,9 @@ pub struct GameContext {
     pub save_read_only: bool,
     /// Why `save_read_only` is set (never serialized); `None` while saving is allowed.
     pub save_read_only_cause: Option<ReadOnlyCause>,
+    /// True when the read-only session started from a readable `.bak` (progress was loaded), so
+    /// its state is trustworthy enough to export.
+    save_read_only_has_progress: bool,
     /// True once the primary file is known to be good this session (loaded or written by us),
     /// which is the only time its content may be rotated into the `.bak` copy.
     save_file_verified: bool,
@@ -160,6 +161,7 @@ impl GameContext {
 
         let mut save_read_only = false;
         let mut save_read_only_cause = None;
+        let mut save_read_only_has_progress = false;
         let mut save_file_verified = false;
         let mut status_notice_key = None;
         let mut has_unreadable_save = false;
@@ -190,6 +192,7 @@ impl GameContext {
                 save_read_only_cause = Some(ReadOnlyCause::Unreadable);
                 status_notice_key = Some(NOTICE_SAVE_READ_ONLY.to_string());
                 // A readable `.bak` starts the session; writes stay suspended.
+                save_read_only_has_progress = backup.is_some();
                 backup.map(|saved| *saved)
             }
             Some(LoadOutcome::NewerVersion { found, backup }) => {
@@ -199,6 +202,7 @@ impl GameContext {
                 save_read_only_cause = Some(ReadOnlyCause::NewerVersion);
                 status_notice_key = Some(NOTICE_SAVE_NEWER_VERSION.to_string());
                 // A readable older `.bak` starts the session; writes stay suspended.
+                save_read_only_has_progress = backup.is_some();
                 backup.map(|saved| *saved)
             }
             Some(LoadOutcome::NotFound) | None => None,
@@ -289,6 +293,7 @@ impl GameContext {
             save_path,
             save_read_only,
             save_read_only_cause,
+            save_read_only_has_progress,
             save_file_verified,
             rng: StdRng::from_entropy(),
         }
@@ -325,7 +330,8 @@ impl GameContext {
         if self.save_read_only {
             // Re-check the primary file first: a transient lock may have ended, in which case
             // the readable save must not be overwritten by this session's progress.
-            match SaveData::resolve_read_only(&path) {
+            let (resolution, copied_aside) = SaveData::resolve_read_only_detailed(&path);
+            match resolution {
                 ReadOnlyResolution::KeepReadOnly => {
                     warn!(
                         "Wyrdstone save is readable again; session stays read-only until restart"
@@ -338,13 +344,25 @@ impl GameContext {
                     return;
                 }
                 ReadOnlyResolution::Lift => {
-                    info!("Wyrdstone unreadable save preserved, resuming writes");
-                    // A newer save that vanished mid-session was not backed up as unreadable.
-                    self.status_notice_key = (self.save_read_only_cause
-                        != Some(ReadOnlyCause::NewerVersion))
-                    .then(|| NOTICE_UNREADABLE_BACKED_UP.to_string());
+                    // The primary is gone or was copied aside; a newer `.bak` would still be
+                    // overwritten by the next backup rotation, so keep it first.
+                    if let Err(err) = SaveData::prepare_replace(&path, false) {
+                        error!("Wyrdstone newer backup could not be preserved: {err}");
+                        return;
+                    }
+                    info!("Wyrdstone unreadable save resolved, resuming writes");
+                    if copied_aside {
+                        self.status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
+                    } else if matches!(
+                        self.status_notice_key.as_deref(),
+                        Some(NOTICE_SAVE_READ_ONLY | NOTICE_SAVE_NEWER_VERSION)
+                    ) {
+                        // The file vanished: only the read-only notice is obsolete.
+                        self.status_notice_key = None;
+                    }
                     self.save_read_only = false;
                     self.save_read_only_cause = None;
+                    self.save_read_only_has_progress = false;
                 }
             }
         }
@@ -362,30 +380,44 @@ impl GameContext {
 
     /// Ends the read-only state after an explicit player action that replaces the save.
     ///
-    /// An unreadable file is copied aside on a best-effort basis. A newer-version file is valid
-    /// data: it must be copied to a `newer` sibling first, and when that copy fails the
-    /// read-only state is kept (the notice is returned as the error) so it is never overwritten.
+    /// Every newer-version file the replacement would destroy (the primary, and a `.bak` that
+    /// the next rotation would overwrite) is first copied aside by
+    /// [`SaveData::prepare_replace`]; when a copy fails the read-only state is kept (the notice
+    /// is returned as the error) so nothing is overwritten. An unreadable primary is copied
+    /// aside on a best-effort basis: an explicit player reset or import proceeds even if that
+    /// copy fails (the failure is logged).
     fn lift_save_read_only(&mut self) -> Result<(), &'static str> {
         if !self.save_read_only {
             return Ok(());
         }
         if let Some(path) = &self.save_path {
-            if self.save_read_only_cause == Some(ReadOnlyCause::NewerVersion) {
-                if let Ok(true) = path.try_exists() {
-                    if let Err(err) = SaveData::preserve_copy(path, NEWER_SAVE_COPY_TAG) {
-                        warn!("Wyrdstone newer-version save could not be preserved: {err}");
-                        self.status_notice_key = Some(NOTICE_SAVE_NEWER_VERSION.to_string());
-                        return Err(NOTICE_SAVE_NEWER_VERSION);
+            let primary_is_newer = self.save_read_only_cause == Some(ReadOnlyCause::NewerVersion);
+            match SaveData::prepare_replace(path, primary_is_newer) {
+                Ok(copies) => {
+                    for copy in &copies {
+                        info!(
+                            "Wyrdstone newer-version save preserved at {}",
+                            copy.display()
+                        );
                     }
                 }
-            } else if let Err(err) = SaveData::backup_unreadable(path) {
-                warn!(
-                    "Wyrdstone unreadable save could not be preserved before replacing it: {err}"
-                );
+                Err(err) => {
+                    error!("Wyrdstone newer-version save could not be preserved: {err}");
+                    self.status_notice_key = Some(NOTICE_SAVE_NEWER_VERSION.to_string());
+                    return Err(NOTICE_SAVE_NEWER_VERSION);
+                }
+            }
+            if !primary_is_newer {
+                if let Err(err) = SaveData::backup_unreadable(path) {
+                    error!(
+                        "Wyrdstone unreadable save could not be preserved before replacing it: {err}"
+                    );
+                }
             }
         }
         self.save_read_only = false;
         self.save_read_only_cause = None;
+        self.save_read_only_has_progress = false;
         Ok(())
     }
 
@@ -410,8 +442,9 @@ impl GameContext {
     /// Exports an atomic JSON backup to `wyrdstone_backup.json` next to the primary save file
     /// and returns the destination path string on success.
     pub fn export_backup(&self) -> Result<String, &'static str> {
-        if self.save_read_only {
-            // No saved progress was loaded, so there is nothing trustworthy to export.
+        if self.save_read_only && !self.save_read_only_has_progress {
+            // Read-only without a readable `.bak`: no saved progress was loaded, so there is
+            // nothing trustworthy to export. A session started from a `.bak` may export it.
             return Err(NOTICE_BACKUP_READ_ONLY);
         }
         let Some(backup_path) = self
