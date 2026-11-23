@@ -811,7 +811,7 @@ fn eye_of_odin_scales_boosters_and_watchtower_clan_rank_perks_apply() {
 fn typography_guard_recursively_scans_all_project_text_files() {
     use std::path::Path;
 
-    let banned: [(char, &str); 17] = [
+    let banned: [(char, &str); 21] = [
         ('\u{2014}', "em-dash"),
         ('\u{2013}', "en-dash"),
         ('\u{2010}', "unicode-hyphen"),
@@ -829,6 +829,10 @@ fn typography_guard_recursively_scans_all_project_text_files() {
         ('\u{200B}', "zwsp"),
         ('\u{0153}', "oe-ligature"),
         ('\u{0152}', "OE-ligature"),
+        ('\u{2011}', "non-breaking-hyphen"),
+        ('\u{2009}', "thin-space"),
+        ('\u{00E6}', "ae-ligature"),
+        ('\u{00C6}', "AE-ligature"),
     ];
     let text_exts = ["rs", "md", "toml", "yml", "yaml", "json", "ron", "xml"];
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -853,7 +857,11 @@ fn typography_guard_recursively_scans_all_project_text_files() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if path.is_dir() {
-                if matches!(name_str.as_ref(), ".git" | "target" | "local") {
+                if matches!(name_str.as_ref(), ".git" | ".claude" | "target" | "local") {
+                    continue;
+                }
+                // A nested checkout (for example a worktree) is not part of this project tree.
+                if path.join(".git").exists() {
                     continue;
                 }
                 walk(&path, root, text_exts, banned, visited_nested, violations);
@@ -1665,4 +1673,194 @@ fn has_valid_moves_ignores_a_match_the_player_cannot_touch() {
     assert!(board
         .begin_swap_step(CellPos::new(3, 0), CellPos::new(4, 0))
         .is_none());
+}
+
+#[test]
+fn login_tribute_cannot_be_reclaimed_after_clock_rollback() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut city = CityState::new(&data.balance);
+    assert!(city.try_claim_login_tribute(100).is_some());
+    let resources_after_claim = city.resources;
+    assert!(!city.is_login_tribute_available(99));
+    assert!(city.try_claim_login_tribute(99).is_none());
+    assert!(!city.is_login_tribute_available(100));
+    assert!(city.is_login_tribute_available(101));
+    assert_eq!(city.resources, resources_after_claim);
+}
+
+#[test]
+fn resource_and_tool_arithmetic_saturates_instead_of_overflowing() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut city = CityState::new(&data.balance);
+    city.resources = ResourceBundle {
+        wood: u32::MAX,
+        stone: u32::MAX,
+        gold: u32::MAX,
+        mead: u32::MAX,
+    };
+    city.glory = u32::MAX;
+    city.tools.mjolnir = u32::MAX;
+    city.tools.bifrost_prism = u32::MAX;
+    city.stats.total_victories = u32::MAX;
+    city.stats.win_streak = u32::MAX;
+    city.stats.last_daily_day_index = u64::MAX;
+    city.last_login_claim_day = Some(u64::MAX);
+    city.login_streak_day = 3;
+
+    let reward = ResourceBundle {
+        wood: 10,
+        stone: 10,
+        gold: 10,
+        mead: 10,
+    };
+    city.record_level_victory("great_hall", "great_hall_1", 3, &reward, &data.balance);
+    city.record_expedition_wave(u32::MAX, &reward, &data.balance);
+    city.record_daily_victory(5, &reward, &data.balance);
+    city.apply_offline_energy_regen(u64::MAX, &data.balance);
+    city.regenerate_energy(u32::MAX, &data.balance);
+    city.tools.grant_one(ActiveTool::Mjolnir);
+    let _ = city.try_claim_login_tribute(1);
+    assert_eq!(city.resources.wood, u32::MAX);
+    assert_eq!(city.glory, u32::MAX);
+    assert_eq!(city.tools.mjolnir, u32::MAX);
+    assert_eq!(city.energy, city.max_energy(&data.balance));
+    let scaled = CityState::scale_daily_rewards(
+        &ResourceBundle {
+            wood: u32::MAX,
+            stone: 0,
+            gold: 0,
+            mead: 0,
+        },
+        u32::MAX,
+    );
+    assert_eq!(scaled.wood, u32::MAX);
+}
+
+/// Collects every `"dotted.lowercase.key"` string literal found in `text`.
+fn collect_key_literals(text: &str, out: &mut HashSet<String>) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut end = start;
+        while end < bytes.len()
+            && (bytes[end].is_ascii_lowercase()
+                || bytes[end].is_ascii_digit()
+                || bytes[end] == b'_'
+                || bytes[end] == b'.')
+        {
+            end += 1;
+        }
+        if end < bytes.len() && bytes[end] == b'"' && end > start {
+            let lit = &text[start..end];
+            if lit.contains('.') && !lit.starts_with('.') && !lit.ends_with('.') {
+                out.insert(lit.to_string());
+            }
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+fn collect_source_files(dir: &std::path::Path, exts: &[&str], out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_source_files(&path, exts, out);
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| exts.contains(&e))
+        {
+            out.push(path);
+        }
+    }
+}
+
+fn project_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+fn locale_keys(file: &str) -> HashSet<String> {
+    let raw = std::fs::read_to_string(project_root().join("assets/locales").join(file)).unwrap();
+    let map: std::collections::HashMap<String, String> = serde_json::from_str(&raw).unwrap();
+    map.into_keys().collect()
+}
+
+/// Literals found in production sources (`crates/*/src`) and bundled data (`assets/data`).
+fn used_key_literals() -> HashSet<String> {
+    let root = project_root();
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(root.join("crates")).unwrap().flatten() {
+        collect_source_files(&entry.path().join("src"), &["rs"], &mut files);
+    }
+    collect_source_files(&root.join("assets/data"), &["ron"], &mut files);
+    assert!(
+        files.len() > 10,
+        "source scan must reach crates and data files"
+    );
+    let mut used = HashSet::new();
+    for file in files {
+        collect_key_literals(&std::fs::read_to_string(&file).unwrap(), &mut used);
+    }
+    used
+}
+
+#[test]
+fn every_locale_key_is_used_and_every_used_key_exists() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let en = locale_keys("en.json");
+    let fr = locale_keys("fr.json");
+    assert_eq!(en, fr, "locales must carry identical key sets");
+
+    let mut used = used_key_literals();
+    // Chapter keys are built at runtime from building ids.
+    for building in &data.buildings {
+        for part in ["title", "line1", "line2"] {
+            used.insert(format!("chapter.{}.{part}", building.id));
+        }
+    }
+
+    let mut unused: Vec<&str> = en
+        .iter()
+        .filter(|k| !used.contains(*k))
+        .map(String::as_str)
+        .collect();
+    unused.sort();
+    assert!(
+        unused.is_empty(),
+        "locale keys never referenced by code or data:\n{}",
+        unused.join("\n")
+    );
+
+    let namespaces: HashSet<&str> = en.iter().filter_map(|k| k.split('.').next()).collect();
+    let mut missing: Vec<&str> = used
+        .iter()
+        .filter(|lit| {
+            lit.split('.')
+                .next()
+                .is_some_and(|ns| namespaces.contains(ns))
+                && !en.contains(*lit)
+        })
+        .map(String::as_str)
+        .collect();
+    missing.sort();
+    assert!(
+        missing.is_empty(),
+        "literals that look like locale keys but are missing from en.json:\n{}",
+        missing.join("\n")
+    );
 }

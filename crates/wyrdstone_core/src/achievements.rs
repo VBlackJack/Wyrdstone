@@ -20,6 +20,13 @@ use crate::balance::BalanceConfig;
 use crate::city::{BuildingDef, CityState, ResourceBundle};
 use serde::{Deserialize, Serialize};
 
+/// Default Glory required to reach the Huscarl Clan Rank.
+pub const DEFAULT_CLAN_RANK_HUSCARL_GLORY: u32 = 100;
+/// Default Glory required to reach the Jarl Clan Rank.
+pub const DEFAULT_CLAN_RANK_JARL_GLORY: u32 = 280;
+/// Default Glory required to reach the High King Clan Rank.
+pub const DEFAULT_CLAN_RANK_HIGH_KING_GLORY: u32 = 600;
+
 /// Progressive Viking Clan rank unlocked by total Clan Glory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClanRank {
@@ -32,11 +39,11 @@ pub enum ClanRank {
 impl ClanRank {
     /// Resolves the player's Clan Rank using default Glory thresholds.
     pub const fn from_glory(glory: u32) -> Self {
-        if glory >= 600 {
+        if glory >= DEFAULT_CLAN_RANK_HIGH_KING_GLORY {
             ClanRank::HighKing
-        } else if glory >= 280 {
+        } else if glory >= DEFAULT_CLAN_RANK_JARL_GLORY {
             ClanRank::Jarl
-        } else if glory >= 100 {
+        } else if glory >= DEFAULT_CLAN_RANK_HUSCARL_GLORY {
             ClanRank::Huscarl
         } else {
             ClanRank::Scout

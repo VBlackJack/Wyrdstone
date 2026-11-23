@@ -16,6 +16,10 @@
 
 //! Externalized balance and timing configuration loaded from RON.
 
+use crate::achievements::{
+    DEFAULT_CLAN_RANK_HIGH_KING_GLORY, DEFAULT_CLAN_RANK_HUSCARL_GLORY,
+    DEFAULT_CLAN_RANK_JARL_GLORY,
+};
 use serde::{Deserialize, Serialize};
 
 fn default_great_hall_energy_per_tier() -> u32 {
@@ -61,13 +65,13 @@ fn default_watchtower_fury_pct_per_tier() -> u32 {
     15
 }
 fn default_clan_rank_huscarl_glory() -> u32 {
-    100
+    DEFAULT_CLAN_RANK_HUSCARL_GLORY
 }
 fn default_clan_rank_jarl_glory() -> u32 {
-    280
+    DEFAULT_CLAN_RANK_JARL_GLORY
 }
 fn default_clan_rank_high_king_glory() -> u32 {
-    600
+    DEFAULT_CLAN_RANK_HIGH_KING_GLORY
 }
 
 /// Tunable gameplay and animation parameters loaded from `assets/data/balance.ron`.

@@ -284,3 +284,63 @@ fn legacy_save_without_anchor_field_defaults_to_zero() {
     let loaded = SaveData::from_json(&value.to_string()).unwrap();
     assert_eq!(loaded.energy_regen_anchor_unix_secs, 0);
 }
+
+#[test]
+fn tampered_save_is_clamped_on_load_and_cannot_overflow() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut save = SaveData::new_game(&data.balance, Language::En);
+    save.city.resources.wood = u32::MAX;
+    save.city.resources.gold = u32::MAX;
+    save.city.glory = u32::MAX;
+    save.city.energy = u32::MAX;
+    save.city.login_streak_day = 200;
+    save.city.last_login_claim_day = Some(u64::MAX);
+    save.city.stats.daily_streak = 4_000_000_000;
+    save.city.stats.last_daily_day_index = u64::MAX;
+    save.city.stats.total_victories = u32::MAX;
+    save.city.tools.mjolnir = u32::MAX;
+    save.city
+        .building_tiers
+        .insert("great_hall".to_string(), 4_000_000_000);
+    save.city.building_tiers.insert("forge".to_string(), 99);
+    save.city.amulet_tiers.insert("odin_eye".to_string(), 250);
+    save.city
+        .level_best_stars
+        .insert("great_hall_1".to_string(), 99);
+
+    let dir = TempDir::new("tampered");
+    let path = dir.save_path();
+    save.save_to_path(&path).unwrap();
+    let loaded = SaveData::load_from_path(&path).unwrap().unwrap();
+
+    let great_hall = data.building_by_id("great_hall").unwrap();
+    let forge = data.building_by_id("forge").unwrap();
+    assert_eq!(loaded.city.building_tier("great_hall"), great_hall.max_tier);
+    assert_eq!(loaded.city.building_tier("forge"), forge.max_tier);
+    assert_eq!(
+        loaded.city.amulet_tiers.get("odin_eye").copied(),
+        Some(wyrdstone_core::city::MAX_AMULET_TIER)
+    );
+    assert_eq!(loaded.city.level_stars("great_hall_1"), 3);
+    assert_eq!(loaded.city.login_streak_day, 7);
+    assert_eq!(
+        loaded.city.stats.daily_streak,
+        wyrdstone_core::city::MAX_DAILY_STREAK_CYCLE
+    );
+    let mut city = loaded.city;
+    assert_eq!(city.energy, city.max_energy(&data.balance));
+
+    // None of the follow-up operations may panic on the saturated state.
+    let reward = wyrdstone_core::ResourceBundle {
+        wood: 5,
+        stone: 5,
+        gold: 5,
+        mead: 5,
+    };
+    let _ = city.try_claim_login_tribute(1);
+    city.record_daily_victory(2, &reward, &data.balance);
+    city.record_level_victory("great_hall", "great_hall_1", 3, &reward, &data.balance);
+    city.apply_offline_energy_regen(u64::MAX, &data.balance);
+    assert_eq!(city.resources.wood, u32::MAX);
+    assert_eq!(city.glory, u32::MAX);
+}

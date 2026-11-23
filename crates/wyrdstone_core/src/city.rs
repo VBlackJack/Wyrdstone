@@ -30,6 +30,10 @@ pub const MAX_MASTERY_STARS: u8 = 5;
 pub const MAX_DAILY_STREAK_CYCLE: u32 = 7;
 /// Maximum upgrade tier for Nordic Amulets.
 pub const MAX_AMULET_TIER: u8 = 3;
+/// Maximum star rating awarded for a level.
+pub const MAX_LEVEL_STARS: u8 = 3;
+/// Number of days in the Fjord Login Tribute cycle.
+pub const LOGIN_TRIBUTE_DAYS: u8 = 7;
 
 /// Bundle of village resources used for costs and rewards.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,10 +53,10 @@ impl ResourceBundle {
     }
 
     pub fn add(&mut self, other: &ResourceBundle) {
-        self.wood += other.wood;
-        self.stone += other.stone;
-        self.gold += other.gold;
-        self.mead += other.mead;
+        self.wood = self.wood.saturating_add(other.wood);
+        self.stone = self.stone.saturating_add(other.stone);
+        self.gold = self.gold.saturating_add(other.gold);
+        self.mead = self.mead.saturating_add(other.mead);
     }
 
     pub fn subtract(&mut self, cost: &ResourceBundle) {
@@ -207,22 +211,24 @@ impl ToolInventory {
     }
 
     pub fn add(&mut self, other: &ToolInventory) {
-        self.mjolnir += other.mjolnir;
-        self.surtr_ember += other.surtr_ember;
-        self.loki_shuffle += other.loki_shuffle;
-        self.thor_bolt += other.thor_bolt;
-        self.bifrost_prism += other.bifrost_prism;
-        self.drakkar_charge += other.drakkar_charge;
+        self.mjolnir = self.mjolnir.saturating_add(other.mjolnir);
+        self.surtr_ember = self.surtr_ember.saturating_add(other.surtr_ember);
+        self.loki_shuffle = self.loki_shuffle.saturating_add(other.loki_shuffle);
+        self.thor_bolt = self.thor_bolt.saturating_add(other.thor_bolt);
+        self.bifrost_prism = self.bifrost_prism.saturating_add(other.bifrost_prism);
+        self.drakkar_charge = self.drakkar_charge.saturating_add(other.drakkar_charge);
     }
 
     pub fn grant_one(&mut self, tool: ActiveTool) {
         match tool {
-            ActiveTool::Mjolnir => self.mjolnir += 1,
-            ActiveTool::SurtrEmber => self.surtr_ember += 1,
-            ActiveTool::LokiShuffle => self.loki_shuffle += 1,
-            ActiveTool::ThorBolt => self.thor_bolt += 1,
-            ActiveTool::BifrostPrism => self.bifrost_prism += 1,
-            ActiveTool::DrakkarCharge => self.drakkar_charge += 1,
+            ActiveTool::Mjolnir => self.mjolnir = self.mjolnir.saturating_add(1),
+            ActiveTool::SurtrEmber => self.surtr_ember = self.surtr_ember.saturating_add(1),
+            ActiveTool::LokiShuffle => self.loki_shuffle = self.loki_shuffle.saturating_add(1),
+            ActiveTool::ThorBolt => self.thor_bolt = self.thor_bolt.saturating_add(1),
+            ActiveTool::BifrostPrism => self.bifrost_prism = self.bifrost_prism.saturating_add(1),
+            ActiveTool::DrakkarCharge => {
+                self.drakkar_charge = self.drakkar_charge.saturating_add(1)
+            }
         }
     }
 
@@ -349,16 +355,40 @@ impl CityState {
         }
     }
 
+    /// Clamps values that a tampered or corrupted save could push outside their legal range:
+    /// building tiers, amulet tiers, star ratings, streak counters and endurance.
+    pub fn sanitize(&mut self, buildings: &[BuildingDef], balance: &BalanceConfig) {
+        for def in buildings {
+            if let Some(tier) = self.building_tiers.get_mut(&def.id) {
+                *tier = (*tier).min(def.max_tier);
+            }
+        }
+        for tier in self.amulet_tiers.values_mut() {
+            *tier = (*tier).min(MAX_AMULET_TIER);
+        }
+        for stars in self.level_best_stars.values_mut() {
+            *stars = (*stars).min(MAX_LEVEL_STARS);
+        }
+        self.login_streak_day = self.login_streak_day.min(LOGIN_TRIBUTE_DAYS);
+        self.stats.daily_streak = self.stats.daily_streak.min(MAX_DAILY_STREAK_CYCLE);
+        self.energy = self.energy.min(self.max_energy(balance));
+    }
+
     /// Returns true if the 7-day Fjord Login Tribute has not yet been claimed today.
     pub fn is_login_tribute_available(&self, today_day_index: u64) -> bool {
-        self.last_login_claim_day != Some(today_day_index)
+        self.last_login_claim_day
+            .is_none_or(|last| today_day_index > last)
     }
 
     /// Returns which day (1..=7) of the 7-day Fjord Login Tribute is next to claim.
     pub fn next_login_tribute_day(&self, today_day_index: u64) -> u8 {
         match self.last_login_claim_day {
-            Some(prev) if prev == today_day_index => self.login_streak_day.clamp(1, 7),
-            Some(prev) if prev + 1 == today_day_index => (self.login_streak_day % 7) + 1,
+            Some(prev) if prev == today_day_index => {
+                self.login_streak_day.clamp(1, LOGIN_TRIBUTE_DAYS)
+            }
+            Some(prev) if prev.saturating_add(1) == today_day_index => {
+                (self.login_streak_day % LOGIN_TRIBUTE_DAYS) + 1
+            }
             _ => 1,
         }
     }
@@ -444,14 +474,7 @@ impl CityState {
         let (res, tool) = Self::login_tribute_reward(day);
         self.resources.add(&res);
         if let Some(t) = tool {
-            match t {
-                ActiveTool::Mjolnir => self.tools.mjolnir += 1,
-                ActiveTool::SurtrEmber => self.tools.surtr_ember += 1,
-                ActiveTool::LokiShuffle => self.tools.loki_shuffle += 1,
-                ActiveTool::ThorBolt => self.tools.thor_bolt += 1,
-                ActiveTool::BifrostPrism => self.tools.bifrost_prism += 1,
-                ActiveTool::DrakkarCharge => self.tools.drakkar_charge += 1,
-            }
+            self.tools.grant_one(t);
         }
         self.login_streak_day = day;
         self.last_login_claim_day = Some(today_day_index);
@@ -521,7 +544,7 @@ impl CityState {
 
     /// Increments the active win streak and updates the lifetime best streak.
     fn bump_win_streak(&mut self) {
-        self.stats.win_streak += 1;
+        self.stats.win_streak = self.stats.win_streak.saturating_add(1);
         self.stats.best_win_streak = self.stats.best_win_streak.max(self.stats.win_streak);
     }
 
@@ -613,28 +636,30 @@ impl CityState {
             return Err("city.error.not_enough_resources");
         }
         self.resources.subtract(&cost);
-        let new_tier = self.building_tier(&def.id) + 1;
+        let new_tier = self.building_tier(&def.id).saturating_add(1);
         self.building_tiers.insert(def.id.clone(), new_tier);
-        self.glory += def.glory_per_tier;
+        self.glory = self.glory.saturating_add(def.glory_per_tier);
         match def.id.as_str() {
             "forge" => {
-                self.tools.mjolnir += 1;
-                self.tools.thor_bolt += 1;
+                self.tools.grant_one(ActiveTool::Mjolnir);
+                self.tools.grant_one(ActiveTool::ThorBolt);
             }
             "odin_shrine" => {
-                self.tools.bifrost_prism += 1;
-                self.tools.drakkar_charge += 1;
+                self.tools.grant_one(ActiveTool::BifrostPrism);
+                self.tools.grant_one(ActiveTool::DrakkarCharge);
             }
             "great_hall" => {
-                self.energy += balance.great_hall_energy_per_tier;
+                self.energy = self
+                    .energy
+                    .saturating_add(balance.great_hall_energy_per_tier);
             }
             "meadery" => {
                 let cap = self.max_energy(balance);
                 self.energy = self.energy.max(cap);
             }
             "watchtower" => {
-                self.tools.bifrost_prism += 1;
-                self.tools.loki_shuffle += 1;
+                self.tools.grant_one(ActiveTool::BifrostPrism);
+                self.tools.grant_one(ActiveTool::LokiShuffle);
             }
             _ => {}
         }
@@ -695,7 +720,7 @@ impl CityState {
         self.crafted_amulets.insert(amulet.id.clone());
         self.amulet_tiers.insert(amulet.id.clone(), 1);
         self.equipped_amulet = Some(amulet.id.clone());
-        self.glory += balance.amulet_glory;
+        self.glory = self.glory.saturating_add(balance.amulet_glory);
         Ok(())
     }
 
@@ -720,18 +745,8 @@ impl CityState {
         let next = (current + 1).min(MAX_AMULET_TIER);
         self.amulet_tiers.insert(amulet.id.clone(), next);
         self.equipped_amulet = Some(amulet.id.clone());
-        self.glory += balance.amulet_glory;
+        self.glory = self.glory.saturating_add(balance.amulet_glory);
         Ok(next)
-    }
-
-    /// Equips an already crafted amulet.
-    pub fn equip_amulet(&mut self, amulet_id: &str) -> bool {
-        if self.crafted_amulets.contains(amulet_id) {
-            self.equipped_amulet = Some(amulet_id.to_string());
-            true
-        } else {
-            false
-        }
     }
 
     /// Scales an amulet's base effect to an explicit tier (`1..=3`).
@@ -764,14 +779,6 @@ impl CityState {
         Some(self.scaled_amulet_effect(def))
     }
 
-    /// Returns the tier of the currently equipped amulet (0 if none equipped).
-    pub fn equipped_amulet_tier(&self) -> u8 {
-        self.equipped_amulet
-            .as_deref()
-            .map(|id| self.amulet_tier(id))
-            .unwrap_or(0)
-    }
-
     /// Consumes endurance to launch a Match-3 level.
     pub fn try_spend_energy(&mut self, balance: &BalanceConfig) -> bool {
         if self.energy >= balance.energy_cost_per_level {
@@ -785,7 +792,7 @@ impl CityState {
     /// Restores endurance up to the effective cap (including Great Hall bonus).
     pub fn regenerate_energy(&mut self, amount: u32, balance: &BalanceConfig) {
         let cap = self.max_energy(balance);
-        self.energy = (self.energy + amount).min(cap);
+        self.energy = self.energy.saturating_add(amount).min(cap);
     }
 
     /// Drinks Mead to immediately restore Endurance so players are never soft-locked.
@@ -798,7 +805,10 @@ impl CityState {
             return Err("city.error.not_enough_resources");
         }
         self.resources.mead -= balance.mead_refill_cost;
-        self.energy = (self.energy + balance.mead_refill_energy).min(cap);
+        self.energy = self
+            .energy
+            .saturating_add(balance.mead_refill_energy)
+            .min(cap);
         Ok(self.energy)
     }
 
@@ -808,8 +818,9 @@ impl CityState {
             return;
         }
         let speed_pct = 100 + self.compute_bonuses(balance).energy_regen_speed_pct as u64;
-        let effective_secs = (elapsed_secs * speed_pct) / 100;
-        let gained = (effective_secs / balance.energy_regen_seconds) as u32;
+        let effective_secs = elapsed_secs.saturating_mul(speed_pct) / 100;
+        let gained =
+            u32::try_from(effective_secs / balance.energy_regen_seconds).unwrap_or(u32::MAX);
         if gained > 0 {
             self.regenerate_energy(gained, balance);
         }
@@ -830,25 +841,27 @@ impl CityState {
             .level_best_stars
             .entry(level_id.to_string())
             .or_insert(0);
-        *entry = (*entry).max(stars.clamp(1, 3));
+        *entry = (*entry).max(stars.clamp(1, MAX_LEVEL_STARS));
 
         let prev_stars = self.building_mastery_stars(building_id);
-        *self
+        let wins = self
             .building_wins
             .entry(building_id.to_string())
-            .or_insert(0) += 1;
+            .or_insert(0);
+        *wins = wins.saturating_add(1);
         let new_stars = self.building_mastery_stars(building_id);
         if new_stars > prev_stars {
-            match new_stars {
-                1 => self.tools.mjolnir += 1,
-                2 => self.tools.surtr_ember += 1,
-                3 => self.tools.thor_bolt += 1,
-                4 => self.tools.bifrost_prism += 1,
-                _ => self.tools.drakkar_charge += 1,
-            }
+            let tool = match new_stars {
+                1 => ActiveTool::Mjolnir,
+                2 => ActiveTool::SurtrEmber,
+                3 => ActiveTool::ThorBolt,
+                4 => ActiveTool::BifrostPrism,
+                _ => ActiveTool::DrakkarCharge,
+            };
+            self.tools.grant_one(tool);
         }
-        self.glory += balance.victory_glory;
-        self.stats.total_victories += 1;
+        self.glory = self.glory.saturating_add(balance.victory_glory);
+        self.stats.total_victories = self.stats.total_victories.saturating_add(1);
         self.bump_win_streak();
     }
 
@@ -859,12 +872,16 @@ impl CityState {
 
     /// Applies the Daily Trial streak multiplier (`+10%` per consecutive day beyond day 1).
     pub fn scale_daily_rewards(rewards: &ResourceBundle, streak: u32) -> ResourceBundle {
-        let streak_bonus_pct = (streak.saturating_sub(1)) * 10;
+        let streak_bonus_pct = u128::from(streak.saturating_sub(1)) * 10;
+        let scale = |base: u32| -> u32 {
+            let bonus = u128::from(base) * streak_bonus_pct / 100;
+            u32::try_from(u128::from(base) + bonus).unwrap_or(u32::MAX)
+        };
         ResourceBundle {
-            wood: rewards.wood + (rewards.wood * streak_bonus_pct) / 100,
-            stone: rewards.stone + (rewards.stone * streak_bonus_pct) / 100,
-            gold: rewards.gold + (rewards.gold * streak_bonus_pct) / 100,
-            mead: rewards.mead + (rewards.mead * streak_bonus_pct) / 100,
+            wood: scale(rewards.wood),
+            stone: scale(rewards.stone),
+            gold: scale(rewards.gold),
+            mead: scale(rewards.mead),
         }
     }
 
@@ -876,9 +893,9 @@ impl CityState {
         balance: &BalanceConfig,
     ) -> u32 {
         let new_streak = if self.stats.last_daily_day_index > 0
-            && self.stats.last_daily_day_index + 1 == day_index
+            && self.stats.last_daily_day_index.saturating_add(1) == day_index
         {
-            (self.stats.daily_streak % MAX_DAILY_STREAK_CYCLE) + 1
+            (self.stats.daily_streak % MAX_DAILY_STREAK_CYCLE).saturating_add(1)
         } else {
             1
         };
@@ -886,16 +903,16 @@ impl CityState {
         self.resources.add(&scaled_rewards);
         self.stats.last_daily_day_index = day_index;
         self.stats.daily_streak = new_streak;
-        self.stats.daily_completions += 1;
-        self.stats.total_victories += 1;
-        self.tools.bifrost_prism += 1;
+        self.stats.daily_completions = self.stats.daily_completions.saturating_add(1);
+        self.stats.total_victories = self.stats.total_victories.saturating_add(1);
+        self.tools.grant_one(ActiveTool::BifrostPrism);
         if new_streak >= 3 {
-            self.tools.surtr_ember += 1;
+            self.tools.grant_one(ActiveTool::SurtrEmber);
         }
         if new_streak >= MAX_DAILY_STREAK_CYCLE {
-            self.tools.drakkar_charge += 1;
+            self.tools.grant_one(ActiveTool::DrakkarCharge);
         }
-        self.glory += balance.daily_glory;
+        self.glory = self.glory.saturating_add(balance.daily_glory);
         self.bump_win_streak();
         new_streak
     }
@@ -939,7 +956,7 @@ impl CityState {
         }
         self.claimed_quests.insert(quest.id.clone());
         self.resources.add(&quest.reward);
-        self.glory += balance.quest_glory;
+        self.glory = self.glory.saturating_add(balance.quest_glory);
         true
     }
 
@@ -1001,11 +1018,6 @@ impl CityState {
             .count()
     }
 
-    /// Returns true if at least one collection chest is ready to claim.
-    pub fn has_any_claimable_collection(&self, collections: &[CollectionDef]) -> bool {
-        self.claimable_collection_count(collections) > 0
-    }
-
     /// Claims a completed Nine Realms collection chest (resources + active tools + glory).
     pub fn try_claim_collection(&mut self, col: &CollectionDef, balance: &BalanceConfig) -> bool {
         if !self.is_collection_ready(col) {
@@ -1014,7 +1026,7 @@ impl CityState {
         self.claimed_collections.insert(col.id.clone());
         self.resources.add(&col.reward_resources);
         self.tools.add(&col.reward_tools);
-        self.glory += balance.collection_glory;
+        self.glory = self.glory.saturating_add(balance.collection_glory);
         true
     }
 
@@ -1045,10 +1057,10 @@ impl CityState {
     pub fn record_boss_victory_with_rewards(&mut self, boss: &BossDef, rewards: &ResourceBundle) {
         self.resources.add(rewards);
         self.tools.add(&boss.reward_tools);
-        self.glory += boss.glory_reward;
+        self.glory = self.glory.saturating_add(boss.glory_reward);
         self.defeated_bosses.insert(boss.id.clone());
-        self.stats.bosses_defeated += 1;
-        self.stats.total_victories += 1;
+        self.stats.bosses_defeated = self.stats.bosses_defeated.saturating_add(1);
+        self.stats.total_victories = self.stats.total_victories.saturating_add(1);
         self.bump_win_streak();
     }
 
@@ -1061,9 +1073,11 @@ impl CityState {
     ) {
         self.resources.add(rewards);
         self.stats.best_expedition_wave = self.stats.best_expedition_wave.max(wave);
-        self.stats.total_victories += 1;
+        self.stats.total_victories = self.stats.total_victories.saturating_add(1);
         self.bump_win_streak();
-        self.glory += balance.victory_glory + wave * 5;
+        self.glory = self
+            .glory
+            .saturating_add(balance.victory_glory.saturating_add(wave.saturating_mul(5)));
     }
 
     /// Returns the number of unlocked Skalds' Feats ready to claim.
@@ -1111,7 +1125,7 @@ impl CityState {
         }
         self.claimed_achievements.insert(ach_id.to_string());
         self.resources.add(&ach.reward);
-        self.glory += ach.glory;
+        self.glory = self.glory.saturating_add(ach.glory);
         true
     }
 }

@@ -1524,20 +1524,7 @@ impl Board {
 
     /// Places a random Line or Bomb booster on an unblocked free rune cell (Odin's Eye amulet).
     pub fn spawn_random_starting_booster<R: Rng>(&mut self, rng: &mut R) -> Option<CellPos> {
-        let candidates: Vec<CellPos> = (0..self.rows)
-            .flat_map(|row| (0..self.cols).map(move |col| CellPos::new(col, row)))
-            .filter(|&p| {
-                let c = self.cells[self.idx(p)];
-                !c.blocked
-                    && !c.chained
-                    && !c.fog
-                    && c.curse_turns == 0
-                    && c.crate_layers == 0
-                    && !c.relic
-                    && c.rune.is_some()
-                    && c.booster == Booster::None
-            })
-            .collect();
+        let candidates: Vec<CellPos> = self.free_rune_positions();
         let &pos = candidates.choose(rng)?;
         let booster = match rng.gen_range(0..3usize) {
             0 => Booster::LineHorizontal,
@@ -1646,15 +1633,6 @@ impl Board {
         affected
     }
 
-    /// Executes a Patron God's Divine Fury power, returning a `PreparedClear` if tiles are blasted.
-    pub fn apply_patron_fury<R: Rng>(
-        &mut self,
-        god: PatronGod,
-        rng: &mut R,
-    ) -> Option<PreparedClear> {
-        self.apply_patron_fury_detailed(god, rng).0
-    }
-
     /// Executes a Patron God's Divine Fury power, returning `(optional_clear, spawned_booster_positions)`.
     pub fn apply_patron_fury_detailed<R: Rng>(
         &mut self,
@@ -1729,20 +1707,7 @@ impl Board {
                 (None, spawned)
             }
             PatronGod::Odin => {
-                let candidates: Vec<CellPos> = (0..self.rows)
-                    .flat_map(|row| (0..self.cols).map(move |col| CellPos::new(col, row)))
-                    .filter(|&p| {
-                        let c = self.cells[self.idx(p)];
-                        !c.blocked
-                            && !c.chained
-                            && !c.fog
-                            && c.curse_turns == 0
-                            && c.crate_layers == 0
-                            && !c.relic
-                            && c.rune.is_some()
-                            && c.booster == Booster::None
-                    })
-                    .collect();
+                let candidates: Vec<CellPos> = self.free_rune_positions();
                 let mut spawned = Vec::new();
                 if let Some(&pos) = candidates.choose(rng) {
                     let idx = self.idx(pos);

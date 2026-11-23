@@ -26,6 +26,7 @@ use crate::level::LevelDef;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Current save format version for forward-safe migrations.
@@ -329,6 +330,9 @@ impl SaveData {
     }
 
     fn normalized(mut self) -> Self {
+        if let Some((balance, buildings)) = sanitize_reference() {
+            self.city.sanitize(buildings, balance);
+        }
         self.bgm_volume = self.bgm_volume.clamp(0.0, 1.0);
         self.sfx_volume = self.sfx_volume.clamp(0.0, 1.0);
         self.schema_version = SAVE_SCHEMA_VERSION;
@@ -354,6 +358,19 @@ impl SaveData {
             }
         }
     }
+}
+
+/// Bundled balance and building definitions used to bound loaded progression values.
+/// `None` only if the embedded data fails to parse, in which case sanitizing is skipped.
+fn sanitize_reference() -> Option<&'static (BalanceConfig, Vec<BuildingDef>)> {
+    static REFERENCE: OnceLock<Option<(BalanceConfig, Vec<BuildingDef>)>> = OnceLock::new();
+    REFERENCE
+        .get_or_init(|| {
+            let balance = BalanceConfig::from_ron_str(BUNDLED_BALANCE_RON).ok()?;
+            let buildings = ron::from_str(BUNDLED_BUILDINGS_RON).ok()?;
+            Some((balance, buildings))
+        })
+        .as_ref()
 }
 
 fn unix_secs() -> u64 {
