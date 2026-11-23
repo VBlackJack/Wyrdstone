@@ -5,6 +5,8 @@ All notable changes to Wyrdstone are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **4th Mythological Boss (Hel), Daily Fjord Blessings & Collection Crests**: Added **Hel, Queen of Helheim** (`boss_hel`, Fog of War + `CurseRunes` riposte + painted portrait), deterministic UTC **Daily Fjord Blessings** (Odin's Favor, Njord's Breeze, Fenrir's Eclipse, Idunn's Grace) shown in Fjord City and applied to every board, and 5 painted Realm Collection emblems in the Collections modal.
+- **Match-3 Comfort & Accessibility**: Added **Fast Animations (1.5x)** toggle in Chronicles and Match-3 Pause (persisted in `SaveData`), **1 Free Undo** per board (`Backspace` or HUD button), live drag-target cell highlight, full **keyboard grid navigation** (Arrow keys + `Enter`), and separated static (`BoardStaticEntity`) vs dynamic Match-3 sprite layers to eliminate per-step board flicker.
 - **Patron God Signature VFX, Amulet Artwork & Living Fjord Embers**: Distinct Divine Fury animations per Patron God (Thor lightning bolts, Freya golden sunburst, Loki spinning violet vortex, Odin runic ring), 5 painted Nordic Amulet medallion icons, and rising warm embers on rebuilt Fjord structures.
 - **Win Streak, 2-Phase Mythological Bosses & Cursed Runes**: Consecutive victories (`win_streak >= 2`) award a free starting booster; Fenrir, Jormungandr, and Surtr enrage below 50% HP with a new weakness and stronger riposte; Legendary boards and late Expedition waves feature countdown Cursed Runes.
 - **Portrait Ergonomics & Targeted Fjord Updates**: Compact icon-and-count Match-3 bottom bar on narrow portrait screens (`< 760px`) preserving board size, plus in-place Endurance text updates on Fjord City avoiding full UI rebuilds.
