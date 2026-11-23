@@ -105,12 +105,13 @@ fn spawn_modal_shell<F>(
 pub(super) fn spawn_amulets_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
+    fjord_art: &FjordTextures,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
         root,
-        560.0,
+        600.0,
         i18n.t("city.panel.amulets.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Amulets),
@@ -161,80 +162,106 @@ pub(super) fn spawn_amulets_modal(
                     ))
                     .with_children(|row| {
                         row.spawn(Node {
-                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(10.0),
                             flex_shrink: 1.0,
-                            row_gap: Val::Px(3.0),
                             ..default()
                         })
-                        .with_children(|info| {
-                            let title = if crafted {
-                                format!(
-                                    "{}  ({})",
-                                    i18n.t(&amulet.name_key),
-                                    i18n.t_fmt(
-                                        "city.panel.amulets.tier",
-                                        &[("tier", tier.to_string())]
-                                    )
-                                )
-                            } else {
-                                i18n.t(&amulet.name_key).to_string()
-                            };
-                            info.spawn((
-                                Text::new(title),
-                                TextFont {
-                                    font_size: FONT_BODY,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_GOLD),
-                            ));
-                            let effect_desc = match ctx.city.scaled_amulet_effect(amulet) {
-                                AmuletEffect::ResourceBonusPct(v) => i18n.t_fmt(
-                                    "city.panel.amulets.effect.resources",
-                                    &[("val", v.to_string())],
-                                ),
-                                AmuletEffect::ExtraMoves(v) => i18n.t_fmt(
-                                    "city.panel.amulets.effect.moves",
-                                    &[("val", v.to_string())],
-                                ),
-                                AmuletEffect::ScoreBonusPct(v) => i18n.t_fmt(
-                                    "city.panel.amulets.effect.score",
-                                    &[("val", v.to_string())],
-                                ),
-                                AmuletEffect::StartingBoosters(v) => i18n.t_fmt(
-                                    "city.panel.amulets.effect.boosters",
-                                    &[("val", v.to_string())],
-                                ),
-                                AmuletEffect::ExtraTimePct(v) => i18n.t_fmt(
-                                    "city.panel.amulets.effect.time",
-                                    &[("val", v.to_string())],
-                                ),
-                            };
-                            info.spawn((
-                                Text::new(effect_desc),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_TEXT_PRIMARY),
-                            ));
-                            if let Some(c) = next_cost {
-                                info.spawn((
-                                    Text::new(i18n.t_fmt(
-                                        "city.panel.amulet.cost",
-                                        &[
-                                            ("wood", c.wood.to_string()),
-                                            ("stone", c.stone.to_string()),
-                                            ("gold", c.gold.to_string()),
-                                            ("mead", c.mead.to_string()),
-                                        ],
-                                    )),
-                                    TextFont {
-                                        font_size: 12.0,
+                        .with_children(|left| {
+                            if let Some(icon) = fjord_art.amulet_icon(&amulet.id) {
+                                left.spawn((
+                                    ImageNode::new(icon),
+                                    Node {
+                                        width: Val::Px(48.0),
+                                        height: Val::Px(48.0),
+                                        flex_shrink: 0.0,
+                                        border: UiRect::all(Val::Px(1.5)),
                                         ..default()
                                     },
-                                    TextColor(COLOR_TEXT_MUTED),
+                                    BorderColor(if equipped {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_PANEL_BORDER
+                                    }),
+                                    BorderRadius::all(Val::Px(8.0)),
                                 ));
                             }
+                            left.spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                flex_shrink: 1.0,
+                                row_gap: Val::Px(3.0),
+                                ..default()
+                            })
+                            .with_children(|info| {
+                                let title = if crafted {
+                                    format!(
+                                        "{}  ({})",
+                                        i18n.t(&amulet.name_key),
+                                        i18n.t_fmt(
+                                            "city.panel.amulets.tier",
+                                            &[("tier", tier.to_string())]
+                                        )
+                                    )
+                                } else {
+                                    i18n.t(&amulet.name_key).to_string()
+                                };
+                                info.spawn((
+                                    Text::new(title),
+                                    TextFont {
+                                        font_size: FONT_BODY,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                                let effect_desc = match ctx.city.scaled_amulet_effect(amulet) {
+                                    AmuletEffect::ResourceBonusPct(v) => i18n.t_fmt(
+                                        "city.panel.amulets.effect.resources",
+                                        &[("val", v.to_string())],
+                                    ),
+                                    AmuletEffect::ExtraMoves(v) => i18n.t_fmt(
+                                        "city.panel.amulets.effect.moves",
+                                        &[("val", v.to_string())],
+                                    ),
+                                    AmuletEffect::ScoreBonusPct(v) => i18n.t_fmt(
+                                        "city.panel.amulets.effect.score",
+                                        &[("val", v.to_string())],
+                                    ),
+                                    AmuletEffect::StartingBoosters(v) => i18n.t_fmt(
+                                        "city.panel.amulets.effect.boosters",
+                                        &[("val", v.to_string())],
+                                    ),
+                                    AmuletEffect::ExtraTimePct(v) => i18n.t_fmt(
+                                        "city.panel.amulets.effect.time",
+                                        &[("val", v.to_string())],
+                                    ),
+                                };
+                                info.spawn((
+                                    Text::new(effect_desc),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_PRIMARY),
+                                ));
+                                if let Some(c) = next_cost {
+                                    info.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            "city.panel.amulet.cost",
+                                            &[
+                                                ("wood", c.wood.to_string()),
+                                                ("stone", c.stone.to_string()),
+                                                ("gold", c.gold.to_string()),
+                                                ("mead", c.mead.to_string()),
+                                            ],
+                                        )),
+                                        TextFont {
+                                            font_size: 12.0,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_TEXT_MUTED),
+                                    ));
+                                }
+                            });
                         });
 
                         row.spawn(Node {
@@ -550,6 +577,13 @@ pub(super) fn spawn_stats_modal(
                     "city.panel.stats.expedition",
                     &[("val", st.best_expedition_wave.to_string())],
                 ),
+                i18n.t_fmt(
+                    "city.panel.stats.win_streak",
+                    &[
+                        ("val", st.win_streak.to_string()),
+                        ("best", st.best_win_streak.to_string()),
+                    ],
+                ),
             ];
             for line in rows {
                 card.spawn((
@@ -597,6 +631,28 @@ pub(super) fn spawn_stats_modal(
                     } else {
                         COLOR_PANEL_CARD
                     },
+                );
+            });
+
+            // Save JSON Backup Export / Import Controls
+            card.spawn(Node {
+                column_gap: Val::Px(10.0),
+                margin: UiRect::top(Val::Px(6.0)),
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            })
+            .with_children(|backup_row| {
+                spawn_small_button(
+                    backup_row,
+                    i18n.t("city.panel.backup.export"),
+                    CityAction::ExportBackup,
+                    COLOR_ACCENT_TEAL,
+                );
+                spawn_small_button(
+                    backup_row,
+                    i18n.t("city.panel.backup.import"),
+                    CityAction::ImportBackup,
+                    COLOR_PANEL_CARD,
                 );
             });
         },

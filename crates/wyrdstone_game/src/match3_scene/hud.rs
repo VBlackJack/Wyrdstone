@@ -32,6 +32,7 @@ pub(super) fn spawn_match3_hud(
     fjord_art: &FjordTextures,
     sound_bank: &SoundBank,
     modal_scroll_y: f32,
+    is_compact: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let Some(session) = &ctx.active_session else {
@@ -167,28 +168,35 @@ pub(super) fn spawn_match3_hud(
                             })
                             .with_children(|bcol| {
                                 bcol.spawn((
-                                    Text::new(i18n.t_fmt(
-                                        "match3.boss.hp",
-                                        &[
-                                            ("boss", i18n.t(&boss.def.name_key).to_string()),
-                                            ("hp", boss.hp.to_string()),
-                                            ("max", boss.def.max_hp.to_string()),
-                                            (
-                                                "rune",
-                                                i18n.t(boss.def.weakness.i18n_key()).to_string(),
-                                            ),
-                                            ("turns", boss.turns_until_riposte.to_string()),
-                                        ],
-                                    )),
+                                    Text::new(
+                                        i18n.t_fmt(
+                                            "match3.boss.hp",
+                                            &[
+                                                ("boss", i18n.t(&boss.def.name_key).to_string()),
+                                                ("hp", boss.hp.to_string()),
+                                                ("max", boss.def.max_hp.to_string()),
+                                                (
+                                                    "rune",
+                                                    i18n.t(boss.active_weakness().i18n_key())
+                                                        .to_string(),
+                                                ),
+                                                ("turns", boss.turns_until_riposte.to_string()),
+                                            ],
+                                        ),
+                                    ),
                                     TextFont {
-                                        font_size: FONT_BODY,
+                                        font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
                                         ..default()
                                     },
-                                    TextColor(COLOR_ACCENT_CRIMSON),
+                                    TextColor(if boss.is_phase2() {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_ACCENT_CRIMSON
+                                    }),
                                 ));
                                 bcol.spawn((
                                     Node {
-                                        width: Val::Px(280.0),
+                                        width: Val::Px(if is_compact { 190.0 } else { 280.0 }),
                                         height: Val::Px(10.0),
                                         border: UiRect::all(Val::Px(1.0)),
                                         ..default()
@@ -394,7 +402,13 @@ pub(super) fn spawn_match3_hud(
                             * 100.0)
                             .round() as u32;
                         let patron_name = i18n.t(session.patron.name_key()).to_string();
-                        let fury_lbl = if fury_ready {
+                        let fury_lbl = if is_compact {
+                            if fury_ready {
+                                "!".to_string()
+                            } else {
+                                format!("{fury_pct}%")
+                            }
+                        } else if fury_ready {
                             i18n.t_fmt("match3.fury.ready", &[("patron", patron_name)])
                         } else {
                             i18n.t_fmt(
@@ -406,8 +420,12 @@ pub(super) fn spawn_match3_hud(
                             Button,
                             Match3UiAction::TriggerFury,
                             Node {
-                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                                column_gap: Val::Px(8.0),
+                                padding: if is_compact {
+                                    UiRect::axes(Val::Px(6.0), Val::Px(4.0))
+                                } else {
+                                    UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                                },
+                                column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
                                 align_items: AlignItems::Center,
                                 border: UiRect::all(Val::Px(2.0)),
                                 ..default()
@@ -426,11 +444,12 @@ pub(super) fn spawn_match3_hud(
                         ))
                         .with_children(|btn| {
                             if let Some(p_img) = fjord_art.patron_portrait(session.patron) {
+                                let icon_px = if is_compact { 26.0 } else { 32.0 };
                                 btn.spawn((
                                     ImageNode::new(p_img),
                                     Node {
-                                        width: Val::Px(32.0),
-                                        height: Val::Px(32.0),
+                                        width: Val::Px(icon_px),
+                                        height: Val::Px(icon_px),
                                         ..default()
                                     },
                                     BorderRadius::all(Val::Px(6.0)),
@@ -473,12 +492,21 @@ pub(super) fn spawn_match3_hud(
                             } else {
                                 COLOR_TEXT_PRIMARY
                             };
+                            let tool_lbl = if is_compact {
+                                format!("x{count}")
+                            } else {
+                                i18n.t_fmt(key, &[("count", count.to_string())])
+                            };
                             row.spawn((
                                 Button,
                                 Match3UiAction::SelectTool(tool),
                                 Node {
-                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                                    column_gap: Val::Px(8.0),
+                                    padding: if is_compact {
+                                        UiRect::axes(Val::Px(6.0), Val::Px(4.0))
+                                    } else {
+                                        UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                                    },
+                                    column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
                                     align_items: AlignItems::Center,
                                     border: UiRect::all(Val::Px(1.5)),
                                     ..default()
@@ -493,6 +521,7 @@ pub(super) fn spawn_match3_hud(
                             ))
                             .with_children(|btn| {
                                 if let Some(icon) = fjord_art.tool_icon(tool) {
+                                    let icon_px = if is_compact { 26.0 } else { 34.0 };
                                     btn.spawn((
                                         ImageNode {
                                             image: icon,
@@ -504,17 +533,17 @@ pub(super) fn spawn_match3_hud(
                                             ..default()
                                         },
                                         Node {
-                                            width: Val::Px(34.0),
-                                            height: Val::Px(34.0),
+                                            width: Val::Px(icon_px),
+                                            height: Val::Px(icon_px),
                                             ..default()
                                         },
                                         BorderRadius::all(Val::Px(6.0)),
                                     ));
                                 }
                                 btn.spawn((
-                                    Text::new(i18n.t_fmt(key, &[("count", count.to_string())])),
+                                    Text::new(tool_lbl),
                                     TextFont {
-                                        font_size: FONT_BODY,
+                                        font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
                                         ..default()
                                     },
                                     TextColor(text_col),

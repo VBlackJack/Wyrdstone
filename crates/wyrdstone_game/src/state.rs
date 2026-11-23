@@ -194,22 +194,78 @@ impl GameContext {
     pub fn persist(&mut self) {
         self.has_existing_save = true;
         if let Some(path) = &self.save_path {
-            let snapshot = SaveData {
-                schema_version: wyrdstone_core::save::SAVE_SCHEMA_VERSION,
-                language: self.data.i18n.language(),
-                last_saved_unix_secs: now_unix_secs(),
-                muted: self.audio_muted,
-                bgm_volume: self.bgm_volume,
-                sfx_volume: self.sfx_volume,
-                colorblind_mode: self.colorblind_mode,
-                tutorial_step: self.tutorial_step,
-                active_expedition: self.active_expedition.clone(),
-                city: self.city.clone(),
-            };
+            let snapshot = self.build_save_snapshot();
             if let Err(err) = snapshot.save_to_path(path) {
                 warn!("Wyrdstone save write error: {err}");
             }
         }
+    }
+
+    fn build_save_snapshot(&self) -> SaveData {
+        SaveData {
+            schema_version: wyrdstone_core::save::SAVE_SCHEMA_VERSION,
+            language: self.data.i18n.language(),
+            last_saved_unix_secs: now_unix_secs(),
+            muted: self.audio_muted,
+            bgm_volume: self.bgm_volume,
+            sfx_volume: self.sfx_volume,
+            colorblind_mode: self.colorblind_mode,
+            tutorial_step: self.tutorial_step,
+            active_expedition: self.active_expedition.clone(),
+            city: self.city.clone(),
+        }
+    }
+
+    /// Exports an atomic JSON backup to `wyrdstone_backup.json` next to the primary save file.
+    pub fn export_backup(&self) -> Result<(), &'static str> {
+        let Some(backup_path) = self
+            .save_path
+            .as_ref()
+            .map(|p| p.with_file_name("wyrdstone_backup.json"))
+        else {
+            return Err("city.panel.backup.error");
+        };
+        let snapshot = self.build_save_snapshot();
+        snapshot
+            .save_to_path(&backup_path)
+            .map_err(|_| "city.panel.backup.error")
+    }
+
+    /// Imports `wyrdstone_backup.json`, restoring full player state and persisting to primary save.
+    pub fn import_backup(&mut self) -> Result<(), &'static str> {
+        let Some(backup_path) = self
+            .save_path
+            .as_ref()
+            .map(|p| p.with_file_name("wyrdstone_backup.json"))
+        else {
+            return Err("city.panel.backup.error");
+        };
+        if !backup_path.exists() {
+            return Err("city.panel.backup.missing");
+        }
+        let saved = match SaveData::load_from_path(&backup_path) {
+            Ok(Some(s)) => s,
+            Ok(None) => return Err("city.panel.backup.missing"),
+            Err(_) => return Err("city.panel.backup.error"),
+        };
+        self.data.i18n.set_language(saved.language);
+        self.audio_muted = saved.muted;
+        self.bgm_volume = if saved.bgm_volume.is_finite() {
+            saved.bgm_volume.clamp(0.0, 1.0)
+        } else {
+            DEFAULT_BGM_VOLUME
+        };
+        self.sfx_volume = if saved.sfx_volume.is_finite() {
+            saved.sfx_volume.clamp(0.0, 1.0)
+        } else {
+            DEFAULT_SFX_VOLUME
+        };
+        self.colorblind_mode = saved.colorblind_mode;
+        self.tutorial_step = saved.tutorial_step;
+        self.active_expedition = saved.active_expedition;
+        self.city = saved.city;
+        self.persist();
+        Ok(())
     }
 
     /// Resets player progression to a brand-new Saga and persists immediately.

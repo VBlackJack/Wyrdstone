@@ -90,6 +90,7 @@ pub struct FloatingScore {
 pub struct BlastBeam {
     pub elapsed: f32,
     pub lifetime: f32,
+    pub rotation_speed: f32,
 }
 
 /// Gently pulses placed board boosters so they stand out crisply.
@@ -170,6 +171,8 @@ pub struct Match3InputState {
     pub tile_size: f32,
     pub cell_step: f32,
     pub board_origin: Vec2,
+    pub board_center_y: f32,
+    pub is_compact_hud: bool,
     pub dirty_board: bool,
     pub dirty_hud: bool,
     pub idle_secs: f32,
@@ -237,6 +240,7 @@ pub fn setup_match3_scene(
         &fjord_art,
         &sound_bank,
         scroll_mem.modal_offset_y,
+        input_state.is_compact_hud,
     );
     commands.insert_resource(input_state);
 }
@@ -264,8 +268,17 @@ pub(super) fn compute_board_layout(
     rows: usize,
     layout: &mut Match3InputState,
 ) {
-    let avail_w = (win_w - BOARD_SIDE_MARGIN_PX * 2.0).max(200.0);
-    let avail_h = (win_h - BOARD_TOP_RESERVED_PX - BOARD_BOTTOM_RESERVED_PX).max(200.0);
+    let compact = win_w < 760.0;
+    layout.is_compact_hud = compact;
+    let side_margin = if compact { 12.0 } else { BOARD_SIDE_MARGIN_PX };
+    let top_reserved = if compact { 96.0 } else { BOARD_TOP_RESERVED_PX };
+    let bottom_reserved = if compact {
+        76.0
+    } else {
+        BOARD_BOTTOM_RESERVED_PX
+    };
+    let avail_w = (win_w - side_margin * 2.0).max(200.0);
+    let avail_h = (win_h - top_reserved - bottom_reserved).max(200.0);
     let step = (avail_w / cols as f32)
         .min(avail_h / rows as f32)
         .clamp(MIN_TILE_SIZE_PX, MAX_TILE_SIZE_PX);
@@ -274,7 +287,8 @@ pub(super) fn compute_board_layout(
 
     let board_w = step * cols as f32;
     let board_h = step * rows as f32;
-    let center_y_offset = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
+    let center_y_offset = (bottom_reserved - top_reserved) * 0.5;
+    layout.board_center_y = center_y_offset;
     layout.board_origin = Vec2::new(
         -board_w * 0.5 + step * 0.5,
         board_h * 0.5 - step * 0.5 + center_y_offset,
@@ -328,7 +342,7 @@ pub(super) fn spawn_board_sprites(
     let rows = session.board.rows();
     let board_w = cols as f32 * layout.cell_step + 16.0;
     let board_h = rows as f32 * layout.cell_step + 16.0;
-    let center_y = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
+    let center_y = layout.board_center_y;
 
     commands.spawn((
         Match3Cleanup,
@@ -445,7 +459,7 @@ pub(super) fn spawn_board_sprites(
                 ));
             } else if let Some(rune) = cell.rune {
                 if let Some(tex) = textures.runes.get(&rune) {
-                    commands.spawn((
+                    let mut rune_cmd = commands.spawn((
                         Match3Cleanup,
                         Match3Entity,
                         BoardTileVisual { pos },
@@ -456,6 +470,28 @@ pub(super) fn spawn_board_sprites(
                         },
                         Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
                     ));
+                    if cell.curse_turns > 0 {
+                        let badge_font = (layout.tile_size * 0.42).clamp(14.0, 26.0);
+                        rune_cmd.with_children(|parent| {
+                            parent.spawn((
+                                Sprite {
+                                    color: Color::srgba(0.86, 0.14, 0.34, 0.42),
+                                    custom_size: Some(tile_size * 1.04),
+                                    ..default()
+                                },
+                                Transform::from_xyz(0.0, 0.0, 1.4),
+                            ));
+                            parent.spawn((
+                                Text2d::new(cell.curse_turns.to_string()),
+                                TextFont {
+                                    font_size: badge_font,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(1.0, 0.92, 0.94)),
+                                Transform::from_xyz(0.0, 0.0, 1.6),
+                            ));
+                        });
+                    }
                 }
                 if colorblind_mode {
                     if let Some(badge) = textures.colorblind_badges.get(&rune) {
@@ -644,21 +680,31 @@ fn execute_patron_fury(
     sound_bank: &SoundBank,
     input_state: &mut Match3InputState,
 ) {
-    let can_fire = ctx
-        .active_session
-        .as_ref()
-        .map(|s| s.can_trigger_fury())
-        .unwrap_or(false);
+    let Some((can_fire, patron, cols, rows)) = ctx.active_session.as_ref().map(|s| {
+        (
+            s.can_trigger_fury(),
+            s.patron,
+            s.board.cols(),
+            s.board.rows(),
+        )
+    }) else {
+        return;
+    };
     if !can_fire || !input_state.is_idle() {
         return;
     }
     let ctx_ref = ctx;
-    let prepared = if let Some(session) = ctx_ref.active_session.as_mut() {
-        session.trigger_patron_fury(&mut ctx_ref.rng)
+    let (prepared, spawned_positions) = if let Some(session) = ctx_ref.active_session.as_mut() {
+        session.trigger_patron_fury_detailed(&mut ctx_ref.rng)
     } else {
-        None
+        (None, Vec::new())
     };
     play_sfx(commands, sound_bank, SfxKind::FuryUnleash);
+    let vfx_targets: Vec<CellPos> = prepared
+        .as_ref()
+        .map(|p| p.cells.clone())
+        .unwrap_or(spawned_positions);
+    anim::spawn_patron_fury_vfx(commands, patron, &vfx_targets, cols, rows, input_state);
     input_state.shake_secs = SHAKE_DURATION_SECS;
     input_state.dirty_hud = true;
     if let Some(prep) = prepared {
@@ -761,6 +807,9 @@ pub fn handle_match3_hud_buttons(
         }
         match *action {
             Match3UiAction::Retreat => {
+                if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
+                    continue;
+                }
                 let was_expedition = ctx
                     .active_session
                     .as_ref()
@@ -768,8 +817,9 @@ pub fn handle_match3_hud_buttons(
                     .unwrap_or(false);
                 if was_expedition {
                     ctx.active_expedition = None;
-                    ctx.persist();
                 }
+                ctx.city.reset_win_streak();
+                ctx.persist();
                 ctx.active_session = None;
                 ctx.armed_tool = None;
                 ctx.active_modal = ActiveModal::None;
@@ -1124,6 +1174,7 @@ pub fn sync_match3_visuals(
             &fjord_art,
             &sound_bank,
             scroll_mem.modal_offset_y,
+            input_state.is_compact_hud,
         );
         input_state.dirty_hud = false;
     }

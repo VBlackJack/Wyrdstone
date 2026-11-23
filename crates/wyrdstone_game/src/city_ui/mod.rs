@@ -58,6 +58,18 @@ pub struct FjordSnowflake {
     pub phase: f32,
 }
 
+/// Rising warm ember spark glowing on rebuilt (`tier > 0`) Fjord buildings.
+#[derive(Component)]
+pub struct FjordEmber {
+    pub base_x_pct: f32,
+    pub y_pct: f32,
+    pub phase: f32,
+}
+
+/// Marker on the top bar's Endurance pill text so periodic energy regen updates in-place.
+#[derive(Component)]
+pub struct CityEnergyText;
+
 /// Tracks City layout mode, displayed endurance, audio state, and periodic harvest readiness checks.
 #[derive(Resource)]
 pub struct CityLayoutMode {
@@ -94,6 +106,8 @@ pub enum CityAction {
     ToggleColorblind,
     CycleBgmVolume,
     CycleSfxVolume,
+    ExportBackup,
+    ImportBackup,
     ToggleLanguage,
     ToggleAudio,
     BackToTitle,
@@ -259,16 +273,43 @@ fn spawn_city_tree(
                         &format!("{}: {}", i18n.t("resources.label.mead"), res.mead),
                         Color::srgb(0.95, 0.66, 0.30),
                     );
-                    spawn_resource_pill(
-                        pills,
-                        &format!(
-                            "{}: {}/{}",
-                            i18n.t("resources.label.energy"),
-                            ctx.city.energy,
-                            max_energy
-                        ),
-                        Color::srgb(0.45, 0.84, 0.96),
-                    );
+                    pills
+                        .spawn((
+                            Node {
+                                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderColor(COLOR_PANEL_BORDER),
+                            BorderRadius::all(Val::Px(6.0)),
+                        ))
+                        .with_children(|pill| {
+                            pill.spawn((
+                                CityEnergyText,
+                                Text::new(format!(
+                                    "{}: {}/{}",
+                                    i18n.t("resources.label.energy"),
+                                    ctx.city.energy,
+                                    max_energy
+                                )),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.45, 0.84, 0.96)),
+                            ));
+                        });
+                    if ctx.city.stats.win_streak >= 2 {
+                        spawn_resource_pill(
+                            pills,
+                            &i18n.t_fmt(
+                                "city.header.win_streak",
+                                &[("streak", ctx.city.stats.win_streak.to_string())],
+                            ),
+                            COLOR_ACCENT_GOLD,
+                        );
+                    }
                     if ctx.city.energy < max_energy {
                         let can_drink = res.mead >= ctx.data.balance.mead_refill_cost;
                         let lbl = i18n.t_fmt(
@@ -798,7 +839,7 @@ fn spawn_city_tree(
             let m_scroll = scroll_mem.modal_offset_y;
             match ctx.active_modal {
                 ActiveModal::None => {}
-                ActiveModal::Amulets => modals::spawn_amulets_modal(root, ctx, m_scroll),
+                ActiveModal::Amulets => modals::spawn_amulets_modal(root, ctx, fjord_art, m_scroll),
                 ActiveModal::Collections => modals::spawn_collections_modal(root, ctx, m_scroll),
                 ActiveModal::Shop => modals::spawn_tool_shop_modal(root, ctx, fjord_art, m_scroll),
                 ActiveModal::Stats => modals::spawn_stats_modal(root, ctx, sound_bank, m_scroll),
@@ -896,10 +937,36 @@ fn spawn_map_building_pin(
                 Node {
                     width: Val::Percent(100.0),
                     height: Val::Px(img_h),
+                    overflow: Overflow::clip(),
                     ..default()
                 },
                 BorderRadius::all(Val::Px(6.0)),
-            ));
+            ))
+            .with_children(|img_box| {
+                if tier > 0 {
+                    for k in 0..3usize {
+                        let base_x = 22.0 + k as f32 * 26.0;
+                        let start_y = 78.0 - (k as f32 * 18.0);
+                        img_box.spawn((
+                            FjordEmber {
+                                base_x_pct: base_x,
+                                y_pct: start_y,
+                                phase: k as f32 * 2.1 + b.map_x_pct * 0.1,
+                            },
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(base_x),
+                                top: Val::Percent(start_y),
+                                width: Val::Px(4.0),
+                                height: Val::Px(4.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(1.0, 0.78, 0.28, 0.85)),
+                            BorderRadius::all(Val::Px(4.0)),
+                        ));
+                    }
+                }
+            });
         }
 
         pin.spawn((
@@ -1089,6 +1156,7 @@ pub fn handle_city_buttons(
     mut resize_events: EventReader<WindowResized>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<CityRoot>>,
+    mut energy_texts: Query<&mut Text, With<CityEnergyText>>,
     buttons: Query<(&Interaction, &CityAction), Changed<Interaction>>,
 ) {
     let mut rebuild = false;
@@ -1117,8 +1185,23 @@ pub fn handle_city_buttons(
     }
 
     if layout_mode.last_displayed_energy != ctx.city.energy {
+        let max_energy = ctx.city.max_energy(&ctx.data.balance);
+        let prev_below = layout_mode.last_displayed_energy < max_energy;
+        let curr_below = ctx.city.energy < max_energy;
         layout_mode.last_displayed_energy = ctx.city.energy;
-        rebuild = true;
+        if prev_below != curr_below {
+            rebuild = true;
+        } else {
+            let formatted = format!(
+                "{}: {}/{}",
+                ctx.data.i18n.t("resources.label.energy"),
+                ctx.city.energy,
+                max_energy
+            );
+            for mut text in &mut energy_texts {
+                text.0 = formatted.clone();
+            }
+        }
     }
 
     if layout_mode
@@ -1440,6 +1523,50 @@ pub fn handle_city_buttons(
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
+            CityAction::ExportBackup => match ctx.export_backup() {
+                Ok(()) => {
+                    ctx.status_notice_key = None;
+                    ctx.celebration_message =
+                        Some(ctx.data.i18n.t("city.panel.backup.exported").to_string());
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                    rebuild = true;
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                }
+            },
+            CityAction::ImportBackup => match ctx.import_backup() {
+                Ok(()) => {
+                    sound_bank.muted = ctx.audio_muted;
+                    sound_bank.bgm_volume = ctx.bgm_volume;
+                    sound_bank.sfx_volume = ctx.sfx_volume;
+                    let target_vol = if sound_bank.muted {
+                        0.0
+                    } else {
+                        sound_bank.bgm_volume
+                    };
+                    for sink in bgm_sinks.iter_mut() {
+                        sink.set_volume(target_vol);
+                    }
+                    layout_mode.last_muted = sound_bank.muted;
+                    layout_mode.last_displayed_energy = ctx.city.energy;
+                    layout_mode.last_ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
+                    ctx.status_notice_key = None;
+                    ctx.celebration_message =
+                        Some(ctx.data.i18n.t("city.panel.backup.imported").to_string());
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    rebuild = true;
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                }
+            },
             CityAction::ToggleLanguage => {
                 ctx.data.i18n.toggle_language();
                 ctx.persist();
@@ -1472,11 +1599,22 @@ pub fn handle_city_buttons(
     }
 }
 
-/// Animates gentle falling snow, aurora borealis ribbons, and pulsing building beacons.
+/// Animates gentle falling snow, aurora borealis ribbons, rising building embers, and pulsing beacons.
+#[allow(clippy::type_complexity)]
 pub fn animate_city_ambience(
     time: Res<Time>,
-    mut snow_q: Query<(&mut FjordSnowflake, &mut Node), Without<FjordAurora>>,
-    mut aurora_q: Query<(&FjordAurora, &mut Node, &mut BackgroundColor), Without<FjordSnowflake>>,
+    mut snow_q: Query<
+        (&mut FjordSnowflake, &mut Node),
+        (Without<FjordAurora>, Without<FjordEmber>),
+    >,
+    mut aurora_q: Query<
+        (&FjordAurora, &mut Node, &mut BackgroundColor),
+        (Without<FjordSnowflake>, Without<FjordEmber>),
+    >,
+    mut ember_q: Query<
+        (&mut FjordEmber, &mut Node, &mut BackgroundColor),
+        (Without<FjordSnowflake>, Without<FjordAurora>),
+    >,
     mut beacon_q: Query<&mut BorderColor, With<QuestBeaconPin>>,
 ) {
     let dt = time.delta_secs();
@@ -1498,6 +1636,18 @@ pub fn animate_city_ambience(
         node.left = Val::Percent((aurora.base_left_pct + drift).clamp(0.0, 60.0));
         bg.0 =
             bg.0.with_alpha((aurora.base_alpha * pulse).clamp(0.05, 0.45));
+    }
+
+    for (mut ember, mut node, mut bg) in &mut ember_q {
+        ember.y_pct -= 22.0 * dt;
+        if ember.y_pct < 6.0 {
+            ember.y_pct = 86.0;
+        }
+        let sway = (t * 2.4 + ember.phase).sin() * 4.0;
+        let alpha = ((ember.y_pct - 6.0) / 80.0).clamp(0.1, 0.9);
+        node.top = Val::Percent(ember.y_pct);
+        node.left = Val::Percent((ember.base_x_pct + sway).clamp(4.0, 94.0));
+        bg.0 = bg.0.with_alpha(alpha);
     }
 
     let glow = 0.5 + 0.5 * (t * 4.5).sin();

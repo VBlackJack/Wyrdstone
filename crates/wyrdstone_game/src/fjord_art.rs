@@ -48,6 +48,11 @@ const PATRON_THOR_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_th
 const PATRON_FREYA_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_freya.png");
 const PATRON_LOKI_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_loki.png");
 const PATRON_ODIN_PNG: &[u8] = include_bytes!("../../../assets/sprites/patron_odin.png");
+const AMULET_FREYA_PNG: &[u8] = include_bytes!("../../../assets/sprites/amulet_freya.png");
+const AMULET_HEIMDALL_PNG: &[u8] = include_bytes!("../../../assets/sprites/amulet_heimdall.png");
+const AMULET_THOR_PNG: &[u8] = include_bytes!("../../../assets/sprites/amulet_thor.png");
+const AMULET_ODIN_PNG: &[u8] = include_bytes!("../../../assets/sprites/amulet_odin.png");
+const AMULET_VIDAR_PNG: &[u8] = include_bytes!("../../../assets/sprites/amulet_vidar.png");
 const INTER_REGULAR_TTF: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
 
 /// Handles to all bundled painted artworks.
@@ -61,6 +66,7 @@ pub struct FjordTextures {
     pub boss_portraits: HashMap<String, Handle<Image>>,
     pub patron_portraits: HashMap<PatronGod, Handle<Image>>,
     pub tool_icons: HashMap<ActiveTool, Handle<Image>>,
+    pub amulet_icons: HashMap<String, Handle<Image>>,
 }
 
 /// Decodes the bundled app icon PNG into raw RGBA8 bytes and dimensions for native window icons.
@@ -95,6 +101,11 @@ impl FjordTextures {
     /// Returns the painted portrait for a Norse Patron God.
     pub fn patron_portrait(&self, god: PatronGod) -> Option<Handle<Image>> {
         self.patron_portraits.get(&god).cloned()
+    }
+
+    /// Returns the painted medallion icon for a Nordic Amulet by ID.
+    pub fn amulet_icon(&self, amulet_id: &str) -> Option<Handle<Image>> {
+        self.amulet_icons.get(amulet_id).cloned()
     }
 }
 
@@ -196,6 +207,28 @@ pub fn init_fjord_textures(
     patron_portraits.insert(PatronGod::Loki, images.add(decode_png(PATRON_LOKI_PNG)));
     patron_portraits.insert(PatronGod::Odin, images.add(decode_png(PATRON_ODIN_PNG)));
 
+    let mut amulet_icons = HashMap::new();
+    amulet_icons.insert(
+        "amulet_freya".to_string(),
+        images.add(decode_png(AMULET_FREYA_PNG)),
+    );
+    amulet_icons.insert(
+        "amulet_heimdall".to_string(),
+        images.add(decode_png(AMULET_HEIMDALL_PNG)),
+    );
+    amulet_icons.insert(
+        "amulet_thor".to_string(),
+        images.add(decode_png(AMULET_THOR_PNG)),
+    );
+    amulet_icons.insert(
+        "amulet_odin".to_string(),
+        images.add(decode_png(AMULET_ODIN_PNG)),
+    );
+    amulet_icons.insert(
+        "amulet_vidar".to_string(),
+        images.add(decode_png(AMULET_VIDAR_PNG)),
+    );
+
     commands.insert_resource(FjordTextures {
         fjord_map,
         match3_bg,
@@ -205,6 +238,7 @@ pub fn init_fjord_textures(
         boss_portraits,
         patron_portraits,
         tool_icons,
+        amulet_icons,
     });
 }
 

@@ -30,7 +30,7 @@ use crate::theme::*;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
 use std::collections::{HashMap, HashSet};
-use wyrdstone_core::{ActiveTool, CellPos, FallMove, LevelOutcome};
+use wyrdstone_core::{ActiveTool, CellPos, FallMove, LevelOutcome, PatronGod};
 
 type BackdropQuery<'w, 's> = Query<
     'w,
@@ -137,11 +137,23 @@ pub(super) fn spawn_clear_particles(
 }
 
 fn spawn_blast_beam(commands: &mut Commands, center: Vec2, size: Vec2, color: Color) {
+    spawn_blast_beam_ex(commands, center, size, color, 0.30, 0.0);
+}
+
+fn spawn_blast_beam_ex(
+    commands: &mut Commands,
+    center: Vec2,
+    size: Vec2,
+    color: Color,
+    lifetime: f32,
+    rotation_speed: f32,
+) {
     commands.spawn((
         Match3Cleanup,
         BlastBeam {
             elapsed: 0.0,
-            lifetime: 0.30,
+            lifetime,
+            rotation_speed,
         },
         Sprite {
             color,
@@ -152,6 +164,101 @@ fn spawn_blast_beam(commands: &mut Commands, center: Vec2, size: Vec2, color: Co
     ));
 }
 
+pub(super) fn spawn_patron_fury_vfx(
+    commands: &mut Commands,
+    patron: PatronGod,
+    targets: &[CellPos],
+    cols: usize,
+    rows: usize,
+    layout: &Match3InputState,
+) {
+    let board_w = cols as f32 * layout.cell_step;
+    let board_h = rows as f32 * layout.cell_step;
+    let center_y = layout.board_center_y;
+    match patron {
+        PatronGod::Thor => {
+            // Vertical cyan lightning bolts striking each targeted obstacle/tile.
+            for &pos in targets {
+                let w = cell_to_world(pos, layout);
+                spawn_blast_beam_ex(
+                    commands,
+                    Vec2::new(w.x, center_y),
+                    Vec2::new(layout.tile_size * 0.44, board_h),
+                    Color::srgba(0.42, 0.92, 1.0, 0.95),
+                    0.42,
+                    0.0,
+                );
+            }
+        }
+        PatronGod::Freya => {
+            // Radiant golden-rose sunburst beams across every cleared tile.
+            for &pos in targets {
+                let w = cell_to_world(pos, layout);
+                spawn_blast_beam_ex(
+                    commands,
+                    w,
+                    Vec2::splat(layout.cell_step * 1.35),
+                    Color::srgba(1.0, 0.80, 0.36, 0.85),
+                    0.46,
+                    2.6,
+                );
+            }
+            spawn_blast_beam_ex(
+                commands,
+                Vec2::new(0.0, center_y),
+                Vec2::new(board_w * 0.85, board_h * 0.85),
+                Color::srgba(0.98, 0.64, 0.72, 0.32),
+                0.48,
+                -1.2,
+            );
+        }
+        PatronGod::Loki => {
+            // Spinning violet trickster vortex over the board + emerald bursts on spawned boosters.
+            spawn_blast_beam_ex(
+                commands,
+                Vec2::new(0.0, center_y),
+                Vec2::new(board_w * 0.82, board_h * 0.82),
+                Color::srgba(0.62, 0.30, 0.96, 0.46),
+                0.52,
+                5.5,
+            );
+            for &pos in targets {
+                let w = cell_to_world(pos, layout);
+                spawn_blast_beam_ex(
+                    commands,
+                    w,
+                    Vec2::splat(layout.cell_step * 1.6),
+                    Color::srgba(0.32, 0.96, 0.62, 0.88),
+                    0.46,
+                    -4.0,
+                );
+            }
+        }
+        PatronGod::Odin => {
+            // Rotating golden Allfather runic aura + crimson-gold flare on the spawned Surtr Bomb.
+            spawn_blast_beam_ex(
+                commands,
+                Vec2::new(0.0, center_y),
+                Vec2::new(board_w * 0.78, board_h * 0.78),
+                Color::srgba(0.98, 0.84, 0.30, 0.42),
+                0.55,
+                -2.8,
+            );
+            for &pos in targets {
+                let w = cell_to_world(pos, layout);
+                spawn_blast_beam_ex(
+                    commands,
+                    w,
+                    Vec2::splat(layout.cell_step * 1.9),
+                    Color::srgba(1.0, 0.56, 0.20, 0.92),
+                    0.48,
+                    3.2,
+                );
+            }
+        }
+    }
+}
+
 pub(super) fn spawn_loki_vfx(
     commands: &mut Commands,
     cols: usize,
@@ -160,12 +267,14 @@ pub(super) fn spawn_loki_vfx(
 ) {
     let board_w = cols as f32 * layout.cell_step;
     let board_h = rows as f32 * layout.cell_step;
-    let center_y = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
-    spawn_blast_beam(
+    let center_y = layout.board_center_y;
+    spawn_blast_beam_ex(
         commands,
         Vec2::new(0.0, center_y),
         Vec2::new(board_w * 0.92, board_h * 0.92),
         Color::srgba(0.62, 0.38, 0.95, 0.52),
+        0.38,
+        4.2,
     );
 }
 
@@ -181,7 +290,7 @@ pub(super) fn spawn_tool_vfx(
     let center = cell_to_world(cell, layout);
     let board_w = cols as f32 * layout.cell_step;
     let board_h = rows as f32 * layout.cell_step;
-    let center_y = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
+    let center_y = layout.board_center_y;
     match tool {
         ActiveTool::ThorBolt => {
             spawn_blast_beam(
@@ -580,6 +689,7 @@ pub fn tick_board_animation(
                 let mut gained_score = 0u32;
                 let mut cleared_total = 0u64;
                 let mut boss_damaged = false;
+                let mut boss_phase2_name: Option<String> = None;
                 let mut fall_map = HashMap::new();
                 {
                     let ctx_ref = ctx.as_mut();
@@ -588,11 +698,14 @@ pub fn tick_board_animation(
                         gained_score = step.score_gained;
                         cleared_total = step.cleared_runes.values().map(|&v| v as u64).sum();
                         session.apply_step_progress(&step);
-                        boss_damaged = session
-                            .boss
-                            .as_ref()
-                            .map(|b| b.last_damage_dealt > 0)
-                            .unwrap_or(false);
+                        if let Some(boss) = session.boss.as_mut() {
+                            boss_damaged = boss.last_damage_dealt > 0;
+                            if boss.just_entered_phase2 {
+                                boss.just_entered_phase2 = false;
+                                boss_phase2_name =
+                                    Some(ctx_ref.data.i18n.t(&boss.def.name_key).to_string());
+                            }
+                        }
                         let fall_moves: Vec<FallMove> = session
                             .board
                             .apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
@@ -605,6 +718,32 @@ pub fn tick_board_animation(
                 }
                 if boss_damaged {
                     input_state.boss_hit_flash_secs = 0.38;
+                }
+                if let Some(bname) = boss_phase2_name {
+                    play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
+                    let msg = ctx
+                        .data
+                        .i18n
+                        .t_fmt("match3.boss.phase2", &[("boss", bname)]);
+                    commands.spawn((
+                        Match3Cleanup,
+                        FloatingScore {
+                            elapsed: 0.0,
+                            lifetime: 1.35,
+                        },
+                        Text2d::new(msg),
+                        TextFont {
+                            font_size: 32.0,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_CRIMSON),
+                        Transform::from_xyz(
+                            0.0,
+                            input_state.board_center_y + 20.0,
+                            Z_SELECTION_RING + 3.0,
+                        ),
+                    ));
+                    input_state.shake_secs = SHAKE_DURATION_SECS * 1.4;
                 }
                 if gained_score > 0 {
                     let i18n = &ctx.data.i18n;
@@ -766,11 +905,13 @@ pub fn tick_board_animation(
                     let ctx_ref = ctx.as_mut();
                     let mut did_shuffle = false;
                     let mut frost_pos = None;
+                    let mut curse_hits = Vec::new();
                     let mut boss_riposte_hits = Vec::new();
                     let mut boss_riposte_name: Option<String> = None;
                     if let Some(session) = ctx_ref.active_session.as_mut() {
                         if consumes_turn {
                             frost_pos = session.apply_frost_spread_if_needed(&mut ctx_ref.rng);
+                            curse_hits = session.tick_cursed_runes_if_needed();
                             boss_riposte_hits =
                                 session.tick_boss_riposte_if_needed(&mut ctx_ref.rng);
                             if !boss_riposte_hits.is_empty() {
@@ -786,6 +927,38 @@ pub fn tick_board_animation(
                             did_shuffle = true;
                         }
                         session.finalize_turn(&balance);
+                    }
+                    if !curse_hits.is_empty() {
+                        play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
+                        for &cp in &curse_hits {
+                            let w = cell_to_world(cp, &input_state);
+                            spawn_blast_beam(
+                                &mut commands,
+                                w,
+                                Vec2::splat(input_state.cell_step * 1.25),
+                                Color::srgba(0.92, 0.16, 0.42, 0.88),
+                            );
+                        }
+                        let msg = ctx.data.i18n.t("match3.curse.detonate").to_string();
+                        spawn_floating_score(
+                            &mut commands,
+                            &curse_hits,
+                            msg,
+                            COLOR_ACCENT_CRIMSON,
+                            &input_state,
+                        );
+                        input_state.shake_secs = SHAKE_DURATION_SECS;
+                        input_state.dirty_board = true;
+                    } else if consumes_turn {
+                        // Refresh cursed rune countdown badges on board after a player turn.
+                        let has_cursed = ctx
+                            .active_session
+                            .as_ref()
+                            .map(|s| !s.level.cursed_cells.is_empty())
+                            .unwrap_or(false);
+                        if has_cursed {
+                            input_state.dirty_board = true;
+                        }
                     }
                     if !boss_riposte_hits.is_empty() {
                         play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
@@ -915,7 +1088,7 @@ pub fn tick_board_animation(
                     }
                     if !burst_cells.is_empty() {
                         let board_h = rows as f32 * input_state.cell_step;
-                        let center_y = (BOARD_BOTTOM_RESERVED_PX - BOARD_TOP_RESERVED_PX) * 0.5;
+                        let center_y = input_state.board_center_y;
                         let strike_world = cell_to_world(burst_cells[0], &input_state);
                         // Valhalla Bonus golden lightning bolt striking down the column!
                         spawn_blast_beam(
@@ -1022,6 +1195,7 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
             if building_id == "expedition" {
                 ctx.active_expedition = None;
             }
+            ctx.city.reset_win_streak();
             ctx.last_discovered_relic_key = None;
         }
         ctx.active_modal = ActiveModal::None;
@@ -1052,6 +1226,11 @@ pub fn animate_particles(
         for mut bg in &mut backdrops {
             bg.custom_size = Some(Vec2::new(bg_w, bg_h));
         }
+        let now_compact = ev.width < 760.0;
+        if now_compact != input_state.is_compact_hud {
+            input_state.is_compact_hud = now_compact;
+            input_state.dirty_hud = true;
+        }
         input_state.dirty_board = true;
     }
 
@@ -1076,6 +1255,9 @@ pub fn animate_particles(
         }
         let progress = b.elapsed / b.lifetime;
         tf.scale = Vec3::splat(1.0 + progress * 0.25);
+        if b.rotation_speed.abs() > f32::EPSILON {
+            tf.rotate_z(b.rotation_speed * dt);
+        }
         sprite.color = sprite.color.with_alpha((1.0 - progress).powf(1.4));
     }
 
