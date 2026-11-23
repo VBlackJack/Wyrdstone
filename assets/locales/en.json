@@ -330,5 +330,16 @@
   "tutorial.step1": "Jarl Halvar: Match 4 or 5 runes to forge Boosters, and unleash your Patron God's Divine Fury [Space] when full!",
   "tutorial.step2": "Jarl Halvar: Rebuild the Great Hall to unlock the Fjord, collect periodic tributes on the map, and challenge Mythological Bosses!",
   "tutorial.next": "Next Tip",
-  "tutorial.done": "Got It!"
+  "tutorial.done": "Got It!",
+  "city.header.win_streak": "Win Streak: {streak} (+1 Starter Booster)",
+  "city.panel.stats.win_streak": "Win Streak: {val} (Best: {best})",
+  "city.panel.building.cursed_warning": "Cursed Runes count down each turn and freeze neighbors at 0!",
+  "match3.boss.phase2": "{boss} ENRAGES! Phase 2!",
+  "match3.curse.detonate": "Curse Unleashed!",
+  "city.panel.backup.export": "Export Backup",
+  "city.panel.backup.import": "Import Backup",
+  "city.panel.backup.exported": "Backup saved to wyrdstone_backup.json!",
+  "city.panel.backup.imported": "Backup restored successfully!",
+  "city.panel.backup.missing": "No wyrdstone_backup.json found.",
+  "city.panel.backup.error": "Backup operation failed."
 }

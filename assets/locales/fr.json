@@ -330,5 +330,16 @@
   "tutorial.step1": "Jarl Halvar : Alignez 4 ou 5 runes pour créer des Boosters, et déchaînez la Fureur Divine [Espace] quand la jauge est pleine !",
   "tutorial.step2": "Jarl Halvar : Rebâtissez la Grande Salle pour débloquer le Fjord, récoltez les tributs sur la carte et défiez les Boss !",
   "tutorial.next": "Suivant",
-  "tutorial.done": "Compris !"
+  "tutorial.done": "Compris !",
+  "city.header.win_streak": "Série : {streak} (+1 Booster au départ)",
+  "city.panel.stats.win_streak": "Série de victoires : {val} (Record : {best})",
+  "city.panel.building.cursed_warning": "Les Runes Maudites explosent à 0 et gèlent leurs voisines !",
+  "match3.boss.phase2": "{boss} S'ENRAGE ! Phase 2 !",
+  "match3.curse.detonate": "Malédiction libérée !",
+  "city.panel.backup.export": "Exporter sauvegarde",
+  "city.panel.backup.import": "Importer sauvegarde",
+  "city.panel.backup.exported": "Sauvegarde exportée dans wyrdstone_backup.json !",
+  "city.panel.backup.imported": "Sauvegarde restaurée avec succès !",
+  "city.panel.backup.missing": "Aucun fichier wyrdstone_backup.json trouvé.",
+  "city.panel.backup.error": "Échec de l'opération de sauvegarde."
 }
