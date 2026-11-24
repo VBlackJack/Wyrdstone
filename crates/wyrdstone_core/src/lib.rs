@@ -40,8 +40,8 @@ pub use board::{
 pub use boss::{BossDef, BossRiposteKind, BossState, BOSS_RAID_BUILDING_ID};
 pub use city::{
     validate_city_content, AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats,
-    CollectionDef, QuestCondition, QuestDef, ResourceBundle, ToolInventory, ToolRecipeDef,
-    HUB_BUILDING_ID, MAX_DAILY_STREAK_CYCLE,
+    CollectionDef, DivineSynergy, QuestCondition, QuestDef, ResourceBundle, ToolInventory,
+    ToolRecipeDef, WarDraught, HUB_BUILDING_ID, MAX_DAILY_STREAK_CYCLE,
 };
 pub use expedition::{
     ExpeditionBoon, ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITION_BUILDING_ID,

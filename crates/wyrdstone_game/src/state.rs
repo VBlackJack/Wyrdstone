@@ -639,6 +639,21 @@ impl GameContext {
         true
     }
 
+    fn apply_loadout_extras(&mut self, session: &mut LevelSession) -> bool {
+        if let Some(extra) = self.city.secondary_amulet_effect(&self.data.amulets) {
+            session.apply_extra_amulet_effect(extra, &mut self.rng);
+        }
+        let synergies = self.city.active_synergies();
+        if !synergies.is_empty() {
+            session.apply_synergies(&synergies, &mut self.rng);
+        }
+        if let Some(draught) = self.city.active_war_draught.take() {
+            session.apply_war_draught(draught, &mut self.rng);
+            return true;
+        }
+        false
+    }
+
     /// Launches today's deterministic Daily Trial board (free of Endurance cost once per day).
     pub fn start_daily_trial(&mut self) -> Result<(), &'static str> {
         let day_idx = today_day_index();
@@ -657,11 +672,15 @@ impl GameContext {
         session.apply_session_tuning(&self.data.balance.session);
         session
             .apply_daily_blessing_with(DailyBlessing::for_day(day_idx), &self.data.balance.session);
+        let consumed_draught = self.apply_loadout_extras(&mut session);
         self.active_level_id = Some(format!("daily_{day_idx}"));
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
         self.armed_tool = None;
         self.status_notice_key = None;
+        if consumed_draught {
+            self.persist();
+        }
         Ok(())
     }
 
@@ -680,6 +699,7 @@ impl GameContext {
             &mut self.rng,
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        self.apply_loadout_extras(&mut session);
         self.active_level_id = Some(wyrdstone_core::BLITZ_BUILDING_ID.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -709,6 +729,7 @@ impl GameContext {
         );
         session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        self.apply_loadout_extras(&mut session);
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -741,6 +762,7 @@ impl GameContext {
         );
         session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        self.apply_loadout_extras(&mut session);
         self.active_level_id = Some(boss_id.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -769,11 +791,15 @@ impl GameContext {
                 &mut self.rng,
             );
             session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+            let consumed_draught = self.apply_loadout_extras(&mut session);
             self.active_level_id = Some(session.level.id.clone());
             self.active_session = Some(session);
             self.active_modal = ActiveModal::None;
             self.armed_tool = None;
             self.status_notice_key = None;
+            if consumed_draught {
+                self.persist();
+            }
             return Ok(true);
         }
         self.start_expedition().map(|()| true)
@@ -797,6 +823,7 @@ impl GameContext {
             &mut self.rng,
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        self.apply_loadout_extras(&mut session);
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
         self.active_session = Some(session);
@@ -829,6 +856,7 @@ impl GameContext {
             &mut self.rng,
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        self.apply_loadout_extras(&mut session);
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
         self.active_session = Some(session);

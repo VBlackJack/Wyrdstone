@@ -22,7 +22,7 @@ use crate::balance::{
 };
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, PreparedClear, RuneType};
 use crate::boss::{BossDef, BossState};
-use crate::city::{AmuletEffect, CityBonuses, ResourceBundle};
+use crate::city::{AmuletEffect, CityBonuses, DivineSynergy, ResourceBundle, WarDraught};
 use crate::expedition::{ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITION_BUILDING_ID};
 use crate::patron::{
     PatronGod, FURY_CHARGE_MAX, FURY_PER_COMBO_STEP, FURY_PER_OBSTACLE, FURY_PER_TILE,
@@ -829,6 +829,86 @@ impl LevelSession {
             self.overdrive_ignited_this_turn = false;
         } else if self.overdrive_turns_left > 0 {
             self.overdrive_turns_left -= 1;
+        }
+    }
+
+    /// Layers a secondary equipped Nordic Amulet effect onto an active session.
+    pub fn apply_extra_amulet_effect<R: Rng>(&mut self, effect: AmuletEffect, rng: &mut R) {
+        match effect {
+            AmuletEffect::ResourceBonusPct(p) => {
+                self.resource_bonus_pct = self.resource_bonus_pct.saturating_add(p);
+            }
+            AmuletEffect::ExtraMoves(m) => {
+                self.initial_moves = self.initial_moves.saturating_add(m);
+                self.moves_left = self.moves_left.saturating_add(m);
+            }
+            AmuletEffect::ScoreBonusPct(p) => {
+                self.score_bonus_pct = self.score_bonus_pct.saturating_add(p);
+            }
+            AmuletEffect::StartingBoosters(count) => {
+                for _ in 0..count {
+                    if self.board.spawn_random_starting_booster(rng).is_none() {
+                        break;
+                    }
+                }
+            }
+            AmuletEffect::ExtraTimePct(p) => {
+                if let Some(ref mut secs) = self.time_left_secs {
+                    *secs *= 1.0 + p as f32 / 100.0;
+                }
+            }
+        }
+    }
+
+    /// Applies active Patron + Amulet Divine Synergies to an active session.
+    pub fn apply_synergies<R: Rng>(&mut self, synergies: &[DivineSynergy], rng: &mut R) {
+        for &syn in synergies {
+            match syn {
+                DivineSynergy::Thunderforge => {
+                    self.boss_damage_bonus_pct = self.boss_damage_bonus_pct.saturating_add(20);
+                    self.fury_charge_bonus_pct = self.fury_charge_bonus_pct.saturating_add(15);
+                }
+                DivineSynergy::GoldenHarvest => {
+                    self.resource_bonus_pct = self.resource_bonus_pct.saturating_add(20);
+                    let _ = self.board.spawn_random_starting_booster(rng);
+                }
+                DivineSynergy::TricksterTempo => {
+                    self.initial_moves = self.initial_moves.saturating_add(2);
+                    self.moves_left = self.moves_left.saturating_add(2);
+                    self.score_bonus_pct = self.score_bonus_pct.saturating_add(15);
+                }
+                DivineSynergy::AllfatherSight => {
+                    self.fury = self.fury.saturating_add(25).min(self.fury_max);
+                    self.score_bonus_pct = self.score_bonus_pct.saturating_add(15);
+                }
+                DivineSynergy::TwinRunes => {
+                    self.score_bonus_pct = self.score_bonus_pct.saturating_add(15);
+                    self.resource_bonus_pct = self.resource_bonus_pct.saturating_add(15);
+                    self.boss_damage_bonus_pct = self.boss_damage_bonus_pct.saturating_add(10);
+                }
+            }
+        }
+    }
+
+    /// Applies a single-raid Runeforge War Draught onto an active session.
+    pub fn apply_war_draught<R: Rng>(&mut self, draught: WarDraught, rng: &mut R) {
+        match draught {
+            WarDraught::MeadOfPoetry => {
+                self.fury = self.fury_max;
+            }
+            WarDraught::ValkyrieElixir => {
+                self.initial_moves = self.initial_moves.saturating_add(4);
+                self.moves_left = self.moves_left.saturating_add(4);
+                for _ in 0..2 {
+                    if self.board.spawn_random_starting_booster(rng).is_none() {
+                        break;
+                    }
+                }
+            }
+            WarDraught::SurtrBrew => {
+                self.score_bonus_pct = self.score_bonus_pct.saturating_add(50);
+                self.boss_damage_bonus_pct = self.boss_damage_bonus_pct.saturating_add(35);
+            }
         }
     }
 

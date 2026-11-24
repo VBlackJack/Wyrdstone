@@ -196,7 +196,9 @@ pub enum CityAction {
     ClaimCollection(String),
     ClaimAllCollections,
     CraftTool(ActiveTool),
+    BrewWarDraught(wyrdstone_core::WarDraught),
     CraftOrEquipAmulet(String),
+    EquipSecondaryAmulet(String),
     UpgradeAmulet(String),
     AdvanceTutorial,
     ToggleColorblind,
@@ -668,6 +670,16 @@ fn spawn_city_tree(
                         )
                     };
                     spawn_resource_pill(pills, &blessing_lbl, COLOR_ACCENT_TEAL_TEXT);
+                    if let Some(draught) = ctx.city.active_war_draught {
+                        spawn_resource_pill(
+                            pills,
+                            &i18n.t_fmt(
+                                "city.header.war_draught",
+                                &[("name", i18n.t(draught.name_key()).to_string())],
+                            ),
+                            COLOR_ACCENT_GOLD,
+                        );
+                    }
                     if ctx.city.energy < max_energy {
                         let can_drink = res.mead >= ctx.data.balance.mead_refill_cost;
                         let lbl = i18n.t_fmt(
@@ -2935,12 +2947,18 @@ pub fn handle_city_buttons(
                     continue;
                 }
                 if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {
+                    let prev_primary = ctx.city.equipped_amulet.clone();
+                    let was_secondary =
+                        ctx.city.equipped_amulet_secondary.as_deref() == Some(amulet_id.as_str());
                     let res = {
                         let s = &mut *ctx;
                         s.city.try_craft_amulet(&amulet, &s.data.balance)
                     };
                     match res {
                         Ok(()) => {
+                            if was_secondary {
+                                ctx.city.equipped_amulet_secondary = prev_primary;
+                            }
                             ctx.status_notice_key = None;
                             ctx.persist();
                             play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
@@ -2952,6 +2970,39 @@ pub fn handle_city_buttons(
                     }
                     rebuild = true;
                 }
+            }
+            CityAction::EquipSecondaryAmulet(amulet_id) => {
+                match ctx.city.try_equip_secondary_amulet(amulet_id) {
+                    Ok(()) => {
+                        ctx.status_notice_key = None;
+                        ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    }
+                }
+                rebuild = true;
+            }
+            CityAction::BrewWarDraught(draught) => {
+                match ctx.city.try_brew_war_draught(*draught) {
+                    Ok(()) => {
+                        ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                            "city.panel.shop.brewed",
+                            &[("name", ctx.data.i18n.t(draught.name_key()).to_string())],
+                        ));
+                        ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                        ctx.status_notice_key = None;
+                        ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    }
+                }
+                rebuild = true;
             }
             CityAction::UpgradeAmulet(amulet_id) => {
                 if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {

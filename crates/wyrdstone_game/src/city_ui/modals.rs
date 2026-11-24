@@ -448,10 +448,64 @@ pub(super) fn spawn_amulets_modal(
         scroll_offset_y,
         |modal| {
             spawn_modal_resource_strip(modal, ctx, vfx);
+            let synergies = ctx.city.active_synergies();
+            if !synergies.is_empty() {
+                modal
+                    .spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(Val::Px(8.0)),
+                            row_gap: Val::Px(4.0),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_CARD),
+                        BorderColor(COLOR_ACCENT_GOLD),
+                        BorderRadius::all(Val::Px(RADIUS_MD)),
+                    ))
+                    .with_children(|sbox| {
+                        for syn in synergies {
+                            sbox.spawn((
+                                Text::new(format!(
+                                    "{} - {}",
+                                    i18n.t(syn.name_key()),
+                                    i18n.t(syn.desc_key())
+                                )),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                        }
+                    });
+            } else {
+                modal.spawn((
+                    Text::new(i18n.t("city.panel.amulets.synergy_hint")),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(COLOR_TEXT_MUTED),
+                ));
+            }
+            let slot2_unlocked = ctx.city.is_secondary_amulet_unlocked();
+            if !slot2_unlocked {
+                modal.spawn((
+                    Text::new(i18n.t("city.panel.amulets.slot2_locked")),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                ));
+            }
             for amulet in &ctx.data.amulets {
                 let tier = ctx.city.amulet_tier(&amulet.id);
                 let crafted = tier > 0;
                 let equipped = ctx.city.equipped_amulet.as_deref() == Some(amulet.id.as_str());
+                let in_slot2 = slot2_unlocked
+                    && ctx.city.equipped_amulet_secondary.as_deref() == Some(amulet.id.as_str());
                 let next_cost = ctx.city.amulet_next_cost(amulet);
                 let can_afford_next = next_cost
                     .map(|c| ctx.city.resources.can_afford(&c))
@@ -603,6 +657,28 @@ pub(super) fn spawn_amulets_modal(
                                 btn_fg,
                                 equipped || crafted || can_afford_next,
                             );
+                            if crafted && slot2_unlocked && !equipped {
+                                spawn_small_button_colored(
+                                    btns,
+                                    if in_slot2 {
+                                        i18n.t("city.panel.amulets.slot2_active")
+                                    } else {
+                                        i18n.t("city.panel.amulets.slot2")
+                                    },
+                                    CityAction::EquipSecondaryAmulet(amulet.id.clone()),
+                                    if in_slot2 {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_ACCENT_TEAL
+                                    },
+                                    if in_slot2 {
+                                        COLOR_TEXT_DARK
+                                    } else {
+                                        COLOR_TEXT_ON_ACCENT
+                                    },
+                                    true,
+                                );
+                            }
                             if crafted && next_cost.is_some() {
                                 spawn_small_button(
                                     btns,
@@ -970,6 +1046,88 @@ pub(super) fn spawn_tool_shop_modal(
                                 COLOR_ACCENT_GREEN
                             } else {
                                 COLOR_BUTTON_DISABLED
+                            },
+                            can_afford,
+                        );
+                    });
+            }
+            modal.spawn((
+                Text::new(i18n.t("city.panel.shop.draughts_title")),
+                TextFont {
+                    font_size: FONT_HEADING,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+            ));
+            for draught in wyrdstone_core::WarDraught::ALL {
+                let cost = draught.cost();
+                let is_active = ctx.city.active_war_draught == Some(draught);
+                let can_afford = !is_active && ctx.city.resources.can_afford(&cost);
+                modal
+                    .spawn((
+                        Node {
+                            flex_wrap: FlexWrap::Wrap,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(10.0)),
+                            column_gap: Val::Px(10.0),
+                            row_gap: Val::Px(8.0),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_CARD),
+                        BorderColor(if is_active {
+                            COLOR_ACCENT_GOLD
+                        } else {
+                            COLOR_PANEL_BORDER
+                        }),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|row| {
+                        row.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            flex_shrink: 1.0,
+                            row_gap: Val::Px(3.0),
+                            ..default()
+                        })
+                        .with_children(|info| {
+                            info.spawn((
+                                Text::new(i18n.t(draught.name_key())),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                            info.spawn((
+                                Text::new(i18n.t(draught.desc_key())),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                            spawn_cost_pills(info, i18n, ctx.city.resources, cost);
+                        });
+                        spawn_small_button_colored(
+                            row,
+                            if is_active {
+                                i18n.t("city.panel.shop.draught_active")
+                            } else {
+                                i18n.t("city.panel.shop.brew")
+                            },
+                            CityAction::BrewWarDraught(draught),
+                            if is_active {
+                                COLOR_ACCENT_GOLD
+                            } else if can_afford {
+                                COLOR_ACCENT_GREEN
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            if is_active {
+                                COLOR_TEXT_DARK
+                            } else {
+                                COLOR_TEXT_ON_ACCENT
                             },
                             can_afford,
                         );

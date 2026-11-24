@@ -2748,3 +2748,88 @@ fn save_data_deserializes_legacy_expedition_without_relics_or_oaths() {
     assert!(run.relics.is_empty());
     assert!(run.active_oath.is_none());
 }
+
+#[test]
+fn dual_slot_amulets_synergies_and_war_draught_apply_to_session() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    city.resources = wyrdstone_core::ResourceBundle {
+        wood: 5_000,
+        stone: 5_000,
+        gold: 5_000,
+        mead: 5_000,
+    };
+
+    // Great Hall T1 locks slot 2; T2 unlocks it.
+    assert!(!city.is_secondary_amulet_unlocked());
+    city.building_tiers
+        .insert(wyrdstone_core::HUB_BUILDING_ID.to_string(), 2);
+    assert!(city.is_secondary_amulet_unlocked());
+
+    let thor_am = data.amulet_by_id("amulet_thor").expect("thor").clone();
+    let heimdall_am = data
+        .amulet_by_id("amulet_heimdall")
+        .expect("heimdall")
+        .clone();
+    city.try_craft_amulet(&thor_am, &data.balance)
+        .expect("craft thor");
+    city.try_upgrade_amulet(&thor_am, &data.balance).unwrap();
+    city.try_upgrade_amulet(&thor_am, &data.balance).unwrap();
+    city.try_craft_amulet(&heimdall_am, &data.balance)
+        .expect("craft heimdall");
+    city.try_upgrade_amulet(&heimdall_am, &data.balance)
+        .unwrap();
+    city.try_upgrade_amulet(&heimdall_am, &data.balance)
+        .unwrap();
+
+    // Equip both slots (heimdall primary via last upgrade, thor secondary) + Patron Thor.
+    city.selected_patron = PatronGod::Thor;
+    city.try_equip_secondary_amulet("amulet_thor")
+        .expect("equip slot 2");
+    let synergies = city.active_synergies();
+    assert!(synergies.contains(&wyrdstone_core::DivineSynergy::Thunderforge));
+    assert!(synergies.contains(&wyrdstone_core::DivineSynergy::TwinRunes));
+
+    // Brew a War Draught.
+    city.try_brew_war_draught(wyrdstone_core::WarDraught::MeadOfPoetry)
+        .expect("brew");
+    assert_eq!(
+        city.active_war_draught,
+        Some(wyrdstone_core::WarDraught::MeadOfPoetry)
+    );
+
+    let mut rng = StdRng::seed_from_u64(701);
+    let level = data.level_by_id("forge_1").expect("forge_1").clone();
+    let mut session = LevelSession::start_full(
+        level,
+        city.active_amulet_effect(&data.amulets),
+        city.compute_bonuses(&data.balance),
+        city.selected_patron,
+        None,
+        &mut rng,
+    );
+    if let Some(extra) = city.secondary_amulet_effect(&data.amulets) {
+        session.apply_extra_amulet_effect(extra, &mut rng);
+    }
+    session.apply_synergies(&synergies, &mut rng);
+    if let Some(draught) = city.active_war_draught.take() {
+        session.apply_war_draught(draught, &mut rng);
+    }
+    assert_eq!(session.fury, session.fury_max);
+    assert!(session.boss_damage_bonus_pct >= 30);
+    assert!(session.score_bonus_pct >= 65);
+}
+
+#[test]
+fn save_data_deserializes_without_secondary_amulet_or_war_draught() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let base = SaveData::new_game(&data.balance, Language::En);
+    let mut val = serde_json::to_value(&base).expect("serialize");
+    let city_obj = val["city"].as_object_mut().expect("city map");
+    city_obj.remove("equipped_amulet_secondary");
+    city_obj.remove("active_war_draught");
+    let json = serde_json::to_string(&val).expect("to string");
+    let loaded: SaveData = serde_json::from_str(&json).expect("backward-compat load");
+    assert!(loaded.city.equipped_amulet_secondary.is_none());
+    assert!(loaded.city.active_war_draught.is_none());
+}

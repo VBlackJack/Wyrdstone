@@ -122,6 +122,89 @@ pub struct CityBonuses {
     pub starting_boosters: u32,
 }
 
+/// Patron + Amulet or Dual-Amulet resonance bonus unlocked by equipping matching gear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DivineSynergy {
+    Thunderforge,
+    GoldenHarvest,
+    TricksterTempo,
+    AllfatherSight,
+    TwinRunes,
+}
+
+impl DivineSynergy {
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            Self::Thunderforge => "synergy.thunderforge.name",
+            Self::GoldenHarvest => "synergy.golden_harvest.name",
+            Self::TricksterTempo => "synergy.trickster_tempo.name",
+            Self::AllfatherSight => "synergy.allfather_sight.name",
+            Self::TwinRunes => "synergy.twin_runes.name",
+        }
+    }
+
+    pub const fn desc_key(self) -> &'static str {
+        match self {
+            Self::Thunderforge => "synergy.thunderforge.desc",
+            Self::GoldenHarvest => "synergy.golden_harvest.desc",
+            Self::TricksterTempo => "synergy.trickster_tempo.desc",
+            Self::AllfatherSight => "synergy.allfather_sight.desc",
+            Self::TwinRunes => "synergy.twin_runes.desc",
+        }
+    }
+}
+
+/// Consumable Runeforge War Draught active for the next single raid (endgame resource sink).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WarDraught {
+    MeadOfPoetry,
+    ValkyrieElixir,
+    SurtrBrew,
+}
+
+impl WarDraught {
+    pub const ALL: [Self; 3] = [Self::MeadOfPoetry, Self::ValkyrieElixir, Self::SurtrBrew];
+
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            Self::MeadOfPoetry => "draught.poetry.name",
+            Self::ValkyrieElixir => "draught.valkyrie.name",
+            Self::SurtrBrew => "draught.surtr.name",
+        }
+    }
+
+    pub const fn desc_key(self) -> &'static str {
+        match self {
+            Self::MeadOfPoetry => "draught.poetry.desc",
+            Self::ValkyrieElixir => "draught.valkyrie.desc",
+            Self::SurtrBrew => "draught.surtr.desc",
+        }
+    }
+
+    pub const fn cost(self) -> ResourceBundle {
+        match self {
+            Self::MeadOfPoetry => ResourceBundle {
+                wood: 120,
+                stone: 120,
+                gold: 180,
+                mead: 40,
+            },
+            Self::ValkyrieElixir => ResourceBundle {
+                wood: 150,
+                stone: 150,
+                gold: 220,
+                mead: 50,
+            },
+            Self::SurtrBrew => ResourceBundle {
+                wood: 180,
+                stone: 180,
+                gold: 260,
+                mead: 60,
+            },
+        }
+    }
+}
+
 /// Concrete perk granted each time a building is upgraded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UpgradePerk {
@@ -335,6 +418,10 @@ pub struct CityState {
     #[serde(default)]
     pub equipped_amulet: Option<String>,
     #[serde(default)]
+    pub equipped_amulet_secondary: Option<String>,
+    #[serde(default)]
+    pub active_war_draught: Option<WarDraught>,
+    #[serde(default)]
     pub found_relics: HashSet<String>,
     #[serde(default)]
     pub claimed_collections: HashSet<String>,
@@ -386,6 +473,8 @@ impl CityState {
             crafted_amulets: HashSet::new(),
             amulet_tiers: HashMap::new(),
             equipped_amulet: None,
+            equipped_amulet_secondary: None,
+            active_war_draught: None,
             found_relics: HashSet::new(),
             claimed_collections: HashSet::new(),
             stats: ClanStats::default(),
@@ -426,6 +515,13 @@ impl CityState {
             .is_some_and(|id| !self.crafted_amulets.contains(id))
         {
             self.equipped_amulet = None;
+        }
+        if !self.is_secondary_amulet_unlocked()
+            || self.equipped_amulet_secondary.as_deref().is_some_and(|id| {
+                !self.crafted_amulets.contains(id) || self.equipped_amulet.as_deref() == Some(id)
+            })
+        {
+            self.equipped_amulet_secondary = None;
         }
         for stars in self.level_best_stars.values_mut() {
             *stars = (*stars).min(MAX_LEVEL_STARS);
@@ -839,6 +935,97 @@ impl CityState {
         }
         let def = amulets.iter().find(|a| a.id == id)?;
         Some(self.scaled_amulet_effect(def))
+    }
+
+    /// True once the Great Hall reaches Tier 2, unlocking the second Amulet Band slot.
+    pub fn is_secondary_amulet_unlocked(&self) -> bool {
+        self.building_tier(HUB_BUILDING_ID) >= 2
+    }
+
+    /// Equips or unequips a crafted amulet in the secondary Runic Band slot.
+    pub fn try_equip_secondary_amulet(&mut self, amulet_id: &str) -> Result<(), &'static str> {
+        if !self.is_secondary_amulet_unlocked() {
+            return Err("city.panel.amulets.slot2_locked");
+        }
+        if !self.crafted_amulets.contains(amulet_id) {
+            return Err("city.error.not_enough_resources");
+        }
+        if self.equipped_amulet_secondary.as_deref() == Some(amulet_id) {
+            self.equipped_amulet_secondary = None;
+            return Ok(());
+        }
+        if self.equipped_amulet.as_deref() == Some(amulet_id) {
+            self.equipped_amulet = self.equipped_amulet_secondary.take();
+        }
+        self.equipped_amulet_secondary = Some(amulet_id.to_string());
+        Ok(())
+    }
+
+    /// Returns the passive effect of the secondary equipped amulet when unlocked and distinct.
+    pub fn secondary_amulet_effect(&self, amulets: &[AmuletDef]) -> Option<AmuletEffect> {
+        if !self.is_secondary_amulet_unlocked() {
+            return None;
+        }
+        let id = self.equipped_amulet_secondary.as_deref()?;
+        if self.equipped_amulet.as_deref() == Some(id) || self.amulet_tier(id) == 0 {
+            return None;
+        }
+        let def = amulets.iter().find(|a| a.id == id)?;
+        Some(self.scaled_amulet_effect(def))
+    }
+
+    /// Computes active Patron + Amulet and Dual Tier-3 Amulet Divine Synergies.
+    pub fn active_synergies(&self) -> Vec<DivineSynergy> {
+        let mut equipped = Vec::new();
+        if let Some(id) = self.equipped_amulet.as_deref() {
+            equipped.push(id);
+        }
+        if self.is_secondary_amulet_unlocked() {
+            if let Some(id) = self.equipped_amulet_secondary.as_deref() {
+                if !equipped.contains(&id) {
+                    equipped.push(id);
+                }
+            }
+        }
+        let has = |target: &str| equipped.contains(&target);
+        let mut out = Vec::new();
+        match self.selected_patron {
+            PatronGod::Thor if has("amulet_thor") || has("amulet_odin") => {
+                out.push(DivineSynergy::Thunderforge);
+            }
+            PatronGod::Freya if has("amulet_freya") => {
+                out.push(DivineSynergy::GoldenHarvest);
+            }
+            PatronGod::Loki if has("amulet_vidar") || has("amulet_heimdall") => {
+                out.push(DivineSynergy::TricksterTempo);
+            }
+            PatronGod::Odin if has("amulet_odin") || has("amulet_heimdall") => {
+                out.push(DivineSynergy::AllfatherSight);
+            }
+            _ => {}
+        }
+        if equipped.len() >= 2
+            && equipped
+                .iter()
+                .all(|id| self.amulet_tier(id) >= MAX_AMULET_TIER)
+        {
+            out.push(DivineSynergy::TwinRunes);
+        }
+        out
+    }
+
+    /// Brews a single-raid Runeforge War Draught for the next expedition/raid.
+    pub fn try_brew_war_draught(&mut self, draught: WarDraught) -> Result<(), &'static str> {
+        if self.active_war_draught == Some(draught) {
+            return Err("city.panel.shop.draught_active");
+        }
+        let cost = draught.cost();
+        if !self.resources.can_afford(&cost) {
+            return Err("city.error.not_enough_resources");
+        }
+        self.resources.subtract(&cost);
+        self.active_war_draught = Some(draught);
+        Ok(())
     }
 
     /// Consumes endurance to launch a Match-3 level.
