@@ -168,3 +168,64 @@ fn all_problems_are_collected_in_one_pass() {
     let err = validate_bundle(&b).expect_err("several problems must fail");
     assert!(err.lines().count() >= 3, "{err}");
 }
+
+#[test]
+fn load_bundled_runs_validation_and_succeeds() {
+    GameDataBundle::load_bundled(Language::En).expect("bundled data must load and validate");
+    GameDataBundle::load_bundled(Language::Fr).expect("bundled data must load and validate");
+}
+
+#[test]
+fn reserved_ids_come_from_the_building_constants() {
+    use wyrdstone_core::validate::RESERVED_BUILDING_IDS;
+    use wyrdstone_core::{BOSS_RAID_BUILDING_ID, DAILY_TRIAL_BUILDING_ID, EXPEDITION_BUILDING_ID};
+    assert_eq!(
+        RESERVED_BUILDING_IDS,
+        [
+            DAILY_TRIAL_BUILDING_ID,
+            BOSS_RAID_BUILDING_ID,
+            EXPEDITION_BUILDING_ID
+        ]
+    );
+}
+
+#[test]
+fn building_colliding_with_a_reserved_id_fails() {
+    use wyrdstone_core::BOSS_RAID_BUILDING_ID;
+    let mut b = bundle();
+    let mut clone = b.buildings[1].clone();
+    clone.id = BOSS_RAID_BUILDING_ID.to_string();
+    b.buildings.push(clone);
+    let err = validate_bundle(&b).expect_err("a reserved id used by a building must fail");
+    assert!(err.contains("reserved building id"), "{err}");
+    assert!(err.contains(BOSS_RAID_BUILDING_ID), "{err}");
+}
+
+#[test]
+fn missing_hub_building_is_reported_by_city_validation() {
+    use wyrdstone_core::HUB_BUILDING_ID;
+    let mut b = bundle();
+    b.buildings.retain(|x| x.id != HUB_BUILDING_ID);
+    let err = validate_bundle(&b).expect_err("a missing hub must fail");
+    assert!(err.contains(HUB_BUILDING_ID), "{err}");
+}
+
+/// Minimal balance document: only the required fields, every tunable falls back to serde.
+const MINIMAL_BALANCE_RON: &str = "(default_board_cols: 0, default_board_rows: 0, \
+points_per_tile: 0, combo_multiplier_step: 0.0, booster_activation_bonus: 0, ice_break_bonus: 0, \
+chain_break_bonus: 0, crate_break_bonus: 0, relic_drop_bonus: 0, remaining_move_bonus: 0, \
+max_energy: 0, energy_cost_per_level: 0, energy_regen_seconds: 0, mead_refill_cost: 0, \
+mead_refill_energy: 0, starting_wood: 0, starting_stone: 0, starting_gold: 0, starting_mead: 0, \
+starting_mjolnir: 0, starting_surtr_ember: 0, starting_loki_shuffle: 0, starting_thor_bolt: 0, \
+starting_bifrost_prism: 0, starting_drakkar_charge: 0, swap_anim_seconds: 0.0, \
+clear_anim_seconds: 0.0, fall_anim_seconds: 0.0, swipe_threshold_px: 0.0)";
+
+#[test]
+fn balance_default_equals_serde_defaults() {
+    use wyrdstone_core::BalanceConfig;
+    let parsed = BalanceConfig::from_ron_str(MINIMAL_BALANCE_RON).expect("minimal document parses");
+    assert_eq!(
+        ron::to_string(&BalanceConfig::default()).expect("serialize default"),
+        ron::to_string(&parsed).expect("serialize parsed"),
+    );
+}
