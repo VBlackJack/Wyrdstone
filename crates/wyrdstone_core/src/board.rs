@@ -39,6 +39,8 @@ const MAX_REGENERATION_ATTEMPTS: usize = 128;
 const MAX_PORTAL_PASSES: usize = 32;
 /// Blast radius (in cells) of the Surtr Ember tool.
 const SURTR_EMBER_RADIUS: i32 = 1;
+/// Combo depth of the first clear of a board-only chain.
+const FIRST_COMBO_DEPTH: u32 = 1;
 /// Blast radius (in cells) of a Bomb + Bomb super combo.
 const BOMB_COMBO_RADIUS: i32 = 2;
 /// Blast radius (in cells) of a single detonated Bomb booster.
@@ -200,6 +202,24 @@ pub struct MatchStepOutcome {
     pub cleared_runes: HashMap<RuneType, u32>,
     pub cleared_positions: Vec<CellPos>,
     pub shuffled: bool,
+}
+
+impl MatchStepOutcome {
+    /// Folds another step into this outcome: counters add up, combo keeps the maximum.
+    pub fn merge(&mut self, step: &MatchStepOutcome) {
+        self.valid |= step.valid;
+        self.score_gained += step.score_gained;
+        self.max_combo = self.max_combo.max(step.max_combo);
+        self.ice_broken += step.ice_broken;
+        self.chains_broken += step.chains_broken;
+        self.crates_broken += step.crates_broken;
+        self.fog_cleared += step.fog_cleared;
+        self.relics_dropped += step.relics_dropped;
+        for (&rune, &count) in &step.cleared_runes {
+            *self.cleared_runes.entry(rune).or_insert(0) += count;
+        }
+        self.cleared_positions.extend(&step.cleared_positions);
+    }
 }
 
 /// Describes one tile's vertical drop during a gravity step (`from_row < 0` means spawned above).
@@ -518,10 +538,7 @@ impl Board {
                 is_direct_blast: true,
             }),
             ActiveTool::SurtrEmber => Some(PreparedClear {
-                cells: self
-                    .area_positions(target, SURTR_EMBER_RADIUS)
-                    .into_iter()
-                    .collect(),
+                cells: sorted_positions(self.area_positions(target, SURTR_EMBER_RADIUS)),
                 spawned_boosters: Vec::new(),
                 converted_boosters: Vec::new(),
                 is_direct_blast: true,
@@ -541,7 +558,7 @@ impl Board {
                 let mut set = HashSet::new();
                 self.collect_all_of_rune(target_rune, &mut set);
                 Some(PreparedClear {
-                    cells: set.into_iter().collect(),
+                    cells: sorted_positions(set),
                     spawned_boosters: Vec::new(),
                     converted_boosters: Vec::new(),
                     is_direct_blast: true,
@@ -552,7 +569,7 @@ impl Board {
                     self.row_positions(target.row).into_iter().collect();
                 set.extend(self.col_positions(target.col));
                 Some(PreparedClear {
-                    cells: set.into_iter().collect(),
+                    cells: sorted_positions(set),
                     spawned_boosters: Vec::new(),
                     converted_boosters: Vec::new(),
                     is_direct_blast: true,
@@ -595,7 +612,7 @@ impl Board {
             }
         }
         PreparedClear {
-            cells: to_clear.into_iter().collect(),
+            cells: sorted_positions(to_clear),
             spawned_boosters,
             converted_boosters: Vec::new(),
             is_direct_blast: false,
@@ -804,23 +821,7 @@ impl Board {
         let Some(first_clear) = self.begin_swap_step(a, b) else {
             return MatchStepOutcome::default();
         };
-        let mut total = self.commit_clear_step(&first_clear, 1, balance);
-        self.apply_gravity_and_refill_tracked(rng);
-        self.collect_relics_loop(balance, rng, &mut total);
-
-        let mut depth = 2;
-        while let Some(next_clear) = self.prepare_cascade_step() {
-            let step = self.commit_clear_step(&next_clear, depth, balance);
-            merge_outcomes(&mut total, &step);
-            self.apply_gravity_and_refill_tracked(rng);
-            self.collect_relics_loop(balance, rng, &mut total);
-            depth += 1;
-        }
-
-        if !self.has_valid_moves() && self.ensure_playable(rng) {
-            total.shuffled = true;
-        }
-        total
+        self.resolve_chain(&first_clear, balance, rng)
     }
 
     /// Executes an active player tool from the action bar (instant resolution for tests/Loki).
@@ -845,39 +846,41 @@ impl Board {
         let Some(prepared) = self.prepare_tool_step(tool, pos) else {
             return MatchStepOutcome::default();
         };
-        let mut total = self.commit_clear_step(&prepared, 1, balance);
-        self.apply_gravity_and_refill_tracked(rng);
-        self.collect_relics_loop(balance, rng, &mut total);
+        self.resolve_chain(&prepared, balance, rng)
+    }
 
-        let mut depth = 2;
-        while let Some(next_clear) = self.prepare_cascade_step() {
+    /// Board-only cascade loop shared by `try_swap` and `use_active_tool`: commits the first
+    /// clear, then alternates gravity, relic collection and cascades until the board settles,
+    /// and finally recovers a deadlocked board. Per-step outcomes are merged into one.
+    fn resolve_chain<R: Rng>(
+        &mut self,
+        first_clear: &PreparedClear,
+        balance: &BalanceConfig,
+        rng: &mut R,
+    ) -> MatchStepOutcome {
+        let mut total = self.commit_clear_step(first_clear, FIRST_COMBO_DEPTH, balance);
+        let mut depth = FIRST_COMBO_DEPTH;
+        loop {
+            self.apply_gravity_and_refill_tracked(rng);
+            loop {
+                let dropped = self.collect_bottom_relics(balance);
+                if dropped.relics_dropped == 0 {
+                    break;
+                }
+                merge_outcomes(&mut total, &dropped);
+                self.apply_gravity_and_refill_tracked(rng);
+            }
+            let Some(next_clear) = self.prepare_cascade_step() else {
+                break;
+            };
+            depth += 1;
             let step = self.commit_clear_step(&next_clear, depth, balance);
             merge_outcomes(&mut total, &step);
-            self.apply_gravity_and_refill_tracked(rng);
-            self.collect_relics_loop(balance, rng, &mut total);
-            depth += 1;
         }
-
         if !self.has_valid_moves() && self.ensure_playable(rng) {
             total.shuffled = true;
         }
         total
-    }
-
-    fn collect_relics_loop<R: Rng>(
-        &mut self,
-        balance: &BalanceConfig,
-        rng: &mut R,
-        total: &mut MatchStepOutcome,
-    ) {
-        loop {
-            let dropped = self.collect_bottom_relics(balance);
-            if dropped.relics_dropped == 0 {
-                break;
-            }
-            merge_outcomes(total, &dropped);
-            self.apply_gravity_and_refill_tracked(rng);
-        }
     }
 
     fn swap_contents(&mut self, a: CellPos, b: CellPos) {
@@ -1723,7 +1726,7 @@ impl Board {
                 } else {
                     (
                         Some(PreparedClear {
-                            cells: set.into_iter().collect(),
+                            cells: sorted_positions(set),
                             spawned_boosters: Vec::new(),
                             converted_boosters: Vec::new(),
                             is_direct_blast: true,
@@ -1854,18 +1857,7 @@ impl Board {
 }
 
 fn merge_outcomes(total: &mut MatchStepOutcome, step: &MatchStepOutcome) {
-    total.valid |= step.valid;
-    total.score_gained += step.score_gained;
-    total.max_combo = total.max_combo.max(step.max_combo);
-    total.ice_broken += step.ice_broken;
-    total.chains_broken += step.chains_broken;
-    total.crates_broken += step.crates_broken;
-    total.fog_cleared += step.fog_cleared;
-    total.relics_dropped += step.relics_dropped;
-    for (&rune, &count) in &step.cleared_runes {
-        *total.cleared_runes.entry(rune).or_insert(0) += count;
-    }
-    total.cleared_positions.extend(&step.cleared_positions);
+    total.merge(step);
 }
 
 /// Collects positions into a vector sorted by `(row, col)` for deterministic processing.

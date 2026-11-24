@@ -24,6 +24,7 @@ use crate::expedition::ExpeditionRun;
 use crate::patron::{
     PatronGod, FURY_CHARGE_MAX, FURY_PER_COMBO_STEP, FURY_PER_OBSTACLE, FURY_PER_TILE,
 };
+use crate::turn::{Turn, TurnStep};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -630,7 +631,9 @@ impl LevelSession {
         false
     }
 
-    /// Attempts a player swap, updating moves, score, objectives, frost spread, and victory/defeat state.
+    /// Attempts a player swap and resolves the whole turn through the step machine (clears,
+    /// relics, cascades, end-of-turn hooks, shuffle check, victory/defeat). Returns the merged
+    /// outcome of every step, or an empty outcome when the swap is rejected.
     pub fn play_swap<R: Rng>(
         &mut self,
         a: CellPos,
@@ -638,28 +641,13 @@ impl LevelSession {
         balance: &BalanceConfig,
         rng: &mut R,
     ) -> MatchStepOutcome {
-        if self.outcome != LevelOutcome::InProgress {
-            return MatchStepOutcome::default();
+        match self.begin_swap(a, b) {
+            Ok((turn, _)) => self.drain_turn(turn, balance, rng),
+            Err(_) => MatchStepOutcome::default(),
         }
-        let step = self.board.try_swap(a, b, balance, rng);
-        if step.valid {
-            self.consume_move();
-            self.apply_step_progress(&step);
-            self.apply_frost_spread_if_needed(rng);
-            let curse_hits = self.tick_cursed_runes_if_needed();
-            let riposte = self.tick_boss_riposte_if_needed(rng);
-            if (!riposte.is_empty() || !curse_hits.is_empty())
-                && !self.board.has_valid_moves()
-                && self.board.ensure_playable(rng)
-            {
-                self.last_shuffled = true;
-            }
-            self.finalize_turn(balance);
-        }
-        step
     }
 
-    /// Applies an active tool without consuming a move.
+    /// Applies an active tool without consuming a move, resolving it through the step machine.
     pub fn play_tool<R: Rng>(
         &mut self,
         tool: ActiveTool,
@@ -667,15 +655,35 @@ impl LevelSession {
         balance: &BalanceConfig,
         rng: &mut R,
     ) -> MatchStepOutcome {
-        if self.outcome != LevelOutcome::InProgress {
+        if tool == ActiveTool::LokiShuffle {
+            return self.loki_shuffle(balance, rng);
+        }
+        let Some(target) = target else {
             return MatchStepOutcome::default();
+        };
+        match self.begin_tool(tool, target) {
+            Ok((turn, _)) => self.drain_turn(turn, balance, rng),
+            Err(_) => MatchStepOutcome::default(),
         }
-        let step = self.board.use_active_tool(tool, target, balance, rng);
-        if step.valid {
-            self.apply_step_progress(&step);
-            self.finalize_turn(balance);
+    }
+
+    /// Advances a turn to its end and merges the per-step outcomes into one.
+    fn drain_turn<R: Rng>(
+        &mut self,
+        mut turn: Turn,
+        balance: &BalanceConfig,
+        rng: &mut R,
+    ) -> MatchStepOutcome {
+        let mut total = MatchStepOutcome::default();
+        while let Some(step) = turn.advance(self, balance, rng) {
+            match step {
+                TurnStep::Cleared(report) => total.merge(&report.step),
+                TurnStep::RelicsDropped(report) => total.merge(&report.step),
+                TurnStep::Ended(end) => total.shuffled |= end.shuffled,
+                TurnStep::ClearPending(_) => {}
+            }
         }
-        step
+        total
     }
 
     /// Decrements remaining moves by one and resets per-turn trackers.
