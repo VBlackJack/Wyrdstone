@@ -349,8 +349,14 @@ impl GameContext {
     /// While the existing save is unreadable (`save_read_only`), nothing is written until the
     /// unreadable file has been copied aside.
     pub fn persist(&mut self) {
+        if let Err(err) = self.persist_checked() {
+            warn!("Wyrdstone save write skipped or failed: {err}");
+        }
+    }
+
+    fn persist_checked(&mut self) -> Result<(), String> {
         let Some(path) = self.save_path.clone() else {
-            return;
+            return Ok(());
         };
         if self.save_read_only {
             // A newer-version `.bak` must be copied aside before anything can replace it. Do it
@@ -360,7 +366,7 @@ impl GameContext {
                 if let Err(err) = SaveData::prepare_replace(&path, false) {
                     error!("Wyrdstone newer backup could not be preserved: {err}");
                     self.status_notice_key = self.save_read_only_notice().map(str::to_string);
-                    return;
+                    return Err(err);
                 }
                 self.newer_backup_preserved = true;
             }
@@ -378,11 +384,11 @@ impl GameContext {
                         "Wyrdstone save is readable again; session stays read-only until restart"
                     );
                     self.status_notice_key = self.save_read_only_notice().map(str::to_string);
-                    return;
+                    return Err("save is read-only".to_string());
                 }
                 ReadOnlyResolution::StillBlocked => {
                     warn!("Wyrdstone save write skipped, unreadable save not preserved");
-                    return;
+                    return Err("unreadable save still blocked".to_string());
                 }
                 ReadOnlyResolution::Lift => {
                     info!("Wyrdstone unreadable save resolved, resuming writes");
@@ -408,8 +414,12 @@ impl GameContext {
                 if let Some(err) = report.backup_rotation_error {
                     warn!("Wyrdstone save backup rotation error: {err}");
                 }
+                Ok(())
             }
-            Err(err) => warn!("Wyrdstone save write error: {err}"),
+            Err(err) => {
+                warn!("Wyrdstone save write error: {err}");
+                Err(err)
+            }
         }
     }
 
@@ -490,9 +500,10 @@ impl GameContext {
             return Err("city.panel.backup.error");
         };
         let snapshot = self.build_save_snapshot();
-        snapshot
-            .save_to_path(&backup_path)
-            .map_err(|_| "city.panel.backup.error")?;
+        snapshot.save_to_path(&backup_path).map_err(|e| {
+            warn!("Wyrdstone backup export failed: {e}");
+            "city.panel.backup.error"
+        })?;
         Ok(backup_path.display().to_string())
     }
 
@@ -511,7 +522,10 @@ impl GameContext {
         let saved = match SaveData::load_from_path(&backup_path) {
             Ok(Some(s)) => s,
             Ok(None) => return Err("city.panel.backup.missing"),
-            Err(_) => return Err("city.panel.backup.error"),
+            Err(e) => {
+                warn!("Wyrdstone backup import failed: {e}");
+                return Err("city.panel.backup.error");
+            }
         };
         self.lift_save_read_only()?;
         self.data.i18n.set_language(saved.language);
@@ -532,9 +546,25 @@ impl GameContext {
         self.tutorial_step = saved.tutorial_step;
         self.active_expedition = saved.active_expedition;
         self.city = saved.city;
+        self.selected_building_id = self
+            .data
+            .buildings
+            .first()
+            .map(|b| b.id.clone())
+            .unwrap_or_else(|| HUB_BUILDING_ID.to_string());
+        self.selected_difficulty = 0;
+        self.confirm_reset = false;
+        self.active_session = None;
+        self.active_level_id = None;
+        self.armed_tool = None;
+        self.last_outcome = None;
+        self.pending_dialogue = None;
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
-        self.persist();
+        self.persist_checked().map_err(|e| {
+            warn!("Wyrdstone backup import persist failed: {e}");
+            "city.panel.backup.error"
+        })?;
         Ok(())
     }
 

@@ -294,6 +294,8 @@ pub struct ClanStats {
     #[serde(default)]
     pub daily_streak: u32,
     #[serde(default)]
+    pub best_daily_streak: u32,
+    #[serde(default)]
     pub daily_completions: u32,
     #[serde(default)]
     pub bosses_defeated: u32,
@@ -308,7 +310,7 @@ pub struct ClanStats {
 impl ClanStats {
     /// Applies the lifetime statistics earned by one committed clear step.
     pub fn record_clear(&mut self, delta: ClearStatsDelta) {
-        self.total_runes_cleared += delta.runes_cleared;
+        self.total_runes_cleared = self.total_runes_cleared.saturating_add(delta.runes_cleared);
         self.best_combo = self.best_combo.max(delta.combo);
     }
 }
@@ -397,21 +399,37 @@ impl CityState {
     }
 
     /// Clamps values that a tampered or corrupted save could push outside their legal range:
-    /// building tiers, amulet tiers, star ratings, streak counters and endurance.
+    /// building tiers, amulet ownership/tiers, star ratings, streak counters and endurance.
     pub fn sanitize(&mut self, buildings: &[BuildingDef], balance: &BalanceConfig) {
         for def in buildings {
             if let Some(tier) = self.building_tiers.get_mut(&def.id) {
                 *tier = (*tier).min(def.max_tier);
             }
         }
+        self.amulet_tiers
+            .retain(|id, tier| *tier > 0 || self.crafted_amulets.contains(id));
         for tier in self.amulet_tiers.values_mut() {
-            *tier = (*tier).min(MAX_AMULET_TIER);
+            *tier = (*tier).clamp(1, MAX_AMULET_TIER);
+        }
+        for id in &self.crafted_amulets {
+            self.amulet_tiers.entry(id.clone()).or_insert(1);
+        }
+        for id in self.amulet_tiers.keys() {
+            self.crafted_amulets.insert(id.clone());
+        }
+        if self
+            .equipped_amulet
+            .as_deref()
+            .is_some_and(|id| !self.crafted_amulets.contains(id))
+        {
+            self.equipped_amulet = None;
         }
         for stars in self.level_best_stars.values_mut() {
             *stars = (*stars).min(MAX_LEVEL_STARS);
         }
         self.login_streak_day = self.login_streak_day.min(LOGIN_TRIBUTE_DAYS);
         self.stats.daily_streak = self.stats.daily_streak.min(MAX_DAILY_STREAK_CYCLE);
+        self.stats.best_daily_streak = self.stats.best_daily_streak.max(self.stats.daily_streak);
         self.energy = self.energy.min(self.max_energy(balance));
     }
 
@@ -596,7 +614,9 @@ impl CityState {
 
     /// Returns effective max endurance including Great Hall bonus.
     pub fn max_energy(&self, balance: &BalanceConfig) -> u32 {
-        balance.max_energy + self.compute_bonuses(balance).extra_max_energy
+        balance
+            .max_energy
+            .saturating_add(self.compute_bonuses(balance).extra_max_energy)
     }
 
     /// Returns passive harvest output for a rebuilt building based on its RON `harvest_per_tier` and tier.
@@ -811,6 +831,9 @@ impl CityState {
     /// Returns the passive effect of the currently equipped amulet, scaled by its tier (1..=3).
     pub fn active_amulet_effect(&self, amulets: &[AmuletDef]) -> Option<AmuletEffect> {
         let id = self.equipped_amulet.as_deref()?;
+        if self.amulet_tier(id) == 0 {
+            return None;
+        }
         let def = amulets.iter().find(|a| a.id == id)?;
         Some(self.scaled_amulet_effect(def))
     }
@@ -950,6 +973,7 @@ impl CityState {
         self.resources.add(&scaled_rewards);
         self.stats.last_daily_day_index = day_index;
         self.stats.daily_streak = new_streak;
+        self.stats.best_daily_streak = self.stats.best_daily_streak.max(new_streak);
         self.stats.daily_completions = self.stats.daily_completions.saturating_add(1);
         self.stats.total_victories = self.stats.total_victories.saturating_add(1);
         for reward in &balance.daily_streak_tool_rewards {

@@ -278,6 +278,9 @@ impl LevelSession {
         }
         let patron = self.patron;
         let (prepared, spawned) = self.trigger_patron_fury_detailed_with(tuning, rng);
+        if self.fury >= self.fury_max {
+            return None;
+        }
         let vfx_targets = prepared
             .as_ref()
             .map_or(spawned, |prepared| prepared.cells.clone());

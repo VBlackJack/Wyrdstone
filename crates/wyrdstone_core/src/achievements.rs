@@ -215,7 +215,7 @@ pub fn achievement_progress(
             (done, target)
         }
         AchievementCondition::DailyStreak(n) => (
-            u64::from(city.stats.daily_streak).min(u64::from(n)),
+            u64::from(city.stats.best_daily_streak.max(city.stats.daily_streak)).min(u64::from(n)),
             u64::from(n),
         ),
     }

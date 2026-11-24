@@ -18,13 +18,14 @@
 //! out-of-range tuning values are reported together so a data mistake is fixed in a single pass.
 
 use crate::balance::BalanceConfig;
-use crate::board::RuneType;
+use crate::board::{ActiveTool, RuneType};
 use crate::boss::BOSS_RAID_BUILDING_ID;
 use crate::city::{
     validate_city_content, QuestCondition, LOGIN_TRIBUTE_DAYS, MAX_DAILY_STREAK_CYCLE,
 };
-use crate::expedition::EXPEDITION_BUILDING_ID;
-use crate::level::DAILY_TRIAL_BUILDING_ID;
+use crate::expedition::{EXPEDITION_BUILDING_ID, MAX_EXPEDITION_ICE_CELLS};
+use crate::i18n::Language;
+use crate::level::{LevelDef, Objective, DAILY_TRIAL_BUILDING_ID};
 use crate::save::GameDataBundle;
 use std::collections::HashSet;
 
@@ -38,13 +39,19 @@ pub const RESERVED_BUILDING_IDS: [&str; 3] = [
 
 /// Smallest number of rune types a board can be played with.
 const MIN_RUNE_TYPES: usize = 3;
+/// Maximum allowed phase-2 HP percentage threshold.
+const MAX_PERCENT: u32 = 100;
 
 /// Collects every problem found in the bundle, or returns `Ok(())` when the data is consistent.
 pub fn validate_bundle(b: &GameDataBundle) -> Result<(), String> {
     let mut problems: Vec<String> = Vec::new();
     check_unique_ids(b, &mut problems);
     check_references(b, &mut problems);
+    check_levels(&b.levels, &mut problems);
+    check_bosses(b, &mut problems);
+    check_tool_shop(b, &mut problems);
     check_balance(&b.balance, b, &mut problems);
+    check_i18n_keys(b, &mut problems);
     problems.extend(validate_city_content(
         &b.buildings,
         &b.amulets,
@@ -172,6 +179,12 @@ fn check_references(b: &GameDataBundle, problems: &mut Vec<String>) {
                 ));
             }
         }
+        if col.relic_ids.is_empty() {
+            problems.push(format!(
+                "collection '{}': relic_ids must not be empty",
+                col.id
+            ));
+        }
         if col.relic_ids.len() != col.relic_name_keys.len() {
             problems.push(format!(
                 "collection '{}': {} relic ids but {} relic name keys",
@@ -180,6 +193,205 @@ fn check_references(b: &GameDataBundle, problems: &mut Vec<String>) {
                 col.relic_name_keys.len()
             ));
         }
+        check_unique(
+            &format!("collection '{}' relic_ids", col.id),
+            col.relic_ids.iter().map(String::as_str),
+            problems,
+        );
+    }
+}
+
+fn check_levels(levels: &[LevelDef], problems: &mut Vec<String>) {
+    for level in levels {
+        if level.cols == 0 || level.rows == 0 {
+            problems.push(format!(
+                "level '{}': board dimensions {}x{} must be positive",
+                level.id, level.cols, level.rows
+            ));
+        }
+        if level.max_moves == 0 {
+            problems.push(format!("level '{}': max_moves must be positive", level.id));
+        }
+        if !(MIN_RUNE_TYPES..=RuneType::ALL.len()).contains(&level.rune_types_count) {
+            problems.push(format!(
+                "level '{}': rune_types_count {} outside {MIN_RUNE_TYPES}..={}",
+                level.id,
+                level.rune_types_count,
+                RuneType::ALL.len()
+            ));
+        }
+        if level.objectives.is_empty() {
+            problems.push(format!(
+                "level '{}': objectives must not be empty",
+                level.id
+            ));
+        }
+        let check_coord = |kind: &str, c: usize, r: usize, probs: &mut Vec<String>| {
+            if c >= level.cols || r >= level.rows {
+                probs.push(format!(
+                    "level '{}': {kind} ({c}, {r}) out of {}x{} bounds",
+                    level.id, level.cols, level.rows
+                ));
+            }
+        };
+        for &(c, r, _) in &level.ice_cells {
+            check_coord("ice_cell", c, r, problems);
+        }
+        for &(c, r) in &level.chained_cells {
+            check_coord("chained_cell", c, r, problems);
+        }
+        for &(c, r, _) in &level.crate_cells {
+            check_coord("crate_cell", c, r, problems);
+        }
+        for &(c, r) in &level.relic_cells {
+            check_coord("relic_cell", c, r, problems);
+        }
+        for &(c, r) in &level.fog_cells {
+            check_coord("fog_cell", c, r, problems);
+        }
+        for &(c, r, _) in &level.cursed_cells {
+            check_coord("cursed_cell", c, r, problems);
+        }
+        for &(c, r) in &level.blocked_cells {
+            check_coord("blocked_cell", c, r, problems);
+        }
+        for &((sc, sr), (dc, dr)) in &level.portals {
+            check_coord("portal source", sc, sr, problems);
+            check_coord("portal destination", dc, dr, problems);
+        }
+        let pool_len = level.rune_types_count.min(RuneType::ALL.len());
+        let active_pool = &RuneType::ALL[..pool_len];
+        for obj in &level.objectives {
+            match obj {
+                Objective::CollectRune { rune, target } => {
+                    if *target == 0 {
+                        problems.push(format!(
+                            "level '{}': CollectRune target must be positive",
+                            level.id
+                        ));
+                    }
+                    if !active_pool.contains(rune) {
+                        problems.push(format!(
+                            "level '{}': CollectRune({rune:?}) is outside rune_types_count {}",
+                            level.id, level.rune_types_count
+                        ));
+                    }
+                }
+                Objective::ClearIce { target } => {
+                    if *target == 0 {
+                        problems.push(format!(
+                            "level '{}': ClearIce target must be positive",
+                            level.id
+                        ));
+                    } else if !level.frost_spread && (*target as usize) > level.ice_cells.len() {
+                        problems.push(format!(
+                            "level '{}': ClearIce target {} exceeds {} placed ice cells",
+                            level.id,
+                            target,
+                            level.ice_cells.len()
+                        ));
+                    }
+                }
+                Objective::DropRelics { target } => {
+                    if *target == 0 {
+                        problems.push(format!(
+                            "level '{}': DropRelics target must be positive",
+                            level.id
+                        ));
+                    } else if (*target as usize) > level.relic_cells.len() {
+                        problems.push(format!(
+                            "level '{}': DropRelics target {} exceeds {} placed relics",
+                            level.id,
+                            target,
+                            level.relic_cells.len()
+                        ));
+                    }
+                }
+                Objective::ReachScore { target } => {
+                    if *target == 0 {
+                        problems.push(format!(
+                            "level '{}': ReachScore target must be positive",
+                            level.id
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn check_bosses(b: &GameDataBundle, problems: &mut Vec<String>) {
+    for boss in &b.bosses {
+        if boss.max_hp == 0 {
+            problems.push(format!("boss '{}': max_hp must be positive", boss.id));
+        }
+        if boss.max_moves == 0 {
+            problems.push(format!("boss '{}': max_moves must be positive", boss.id));
+        }
+        if boss.riposte_interval == 0 {
+            problems.push(format!(
+                "boss '{}': riposte_interval must be positive",
+                boss.id
+            ));
+        }
+    }
+}
+
+fn check_tool_shop(b: &GameDataBundle, problems: &mut Vec<String>) {
+    let mut seen: HashSet<ActiveTool> = HashSet::new();
+    for recipe in &b.tool_shop {
+        if !seen.insert(recipe.tool) {
+            problems.push(format!("tool_shop: duplicate tool '{:?}'", recipe.tool));
+        }
+    }
+}
+
+fn check_i18n_keys(b: &GameDataBundle, problems: &mut Vec<String>) {
+    let mut check_key = |owner: &str, key: &str| {
+        for lang in [Language::En, Language::Fr] {
+            if !b.i18n.has_key(lang, key) {
+                problems.push(format!("{owner}: missing {lang:?} locale key '{key}'"));
+            }
+        }
+    };
+    for def in &b.buildings {
+        let owner = format!("building '{}'", def.id);
+        check_key(&owner, &def.name_key);
+        check_key(&owner, &def.desc_key);
+        check_key(&owner, &def.bonus_key);
+    }
+    for q in &b.quests {
+        let owner = format!("quest '{}'", q.id);
+        check_key(&owner, &q.title_key);
+        check_key(&owner, &q.desc_key);
+    }
+    for a in &b.amulets {
+        let owner = format!("amulet '{}'", a.id);
+        check_key(&owner, &a.name_key);
+        check_key(&owner, &a.desc_key);
+    }
+    for c in &b.collections {
+        let owner = format!("collection '{}'", c.id);
+        check_key(&owner, &c.name_key);
+        for rk in &c.relic_name_keys {
+            check_key(&owner, rk);
+        }
+    }
+    for boss in &b.bosses {
+        let owner = format!("boss '{}'", boss.id);
+        check_key(&owner, &boss.name_key);
+        check_key(&owner, &boss.title_key);
+        check_key(&owner, &boss.desc_key);
+    }
+    for ach in &b.achievements {
+        let owner = format!("achievement '{}'", ach.id);
+        check_key(&owner, &ach.title_key);
+        check_key(&owner, &ach.desc_key);
+    }
+    for tool in &b.tool_shop {
+        let owner = format!("tool_shop '{:?}'", tool.tool);
+        check_key(&owner, &tool.name_key);
+        check_key(&owner, &tool.desc_key);
     }
 }
 
@@ -281,6 +493,12 @@ fn check_balance(bal: &BalanceConfig, b: &GameDataBundle, problems: &mut Vec<Str
             RuneType::ALL.len()
         ));
     }
+    if e.ice_cap > MAX_EXPEDITION_ICE_CELLS {
+        problems.push(format!(
+            "balance.expedition.ice_cap: {} exceeds {MAX_EXPEDITION_ICE_CELLS} grid cells",
+            e.ice_cap
+        ));
+    }
     if e.score_wave_interval < 1 {
         problems.push(format!(
             "balance.expedition.score_wave_interval: {} must be at least 1",
@@ -292,6 +510,38 @@ fn check_balance(bal: &BalanceConfig, b: &GameDataBundle, problems: &mut Vec<Str
             "balance.expedition.boon_choices: {} outside 1..={}",
             e.boon_choices,
             e.boons.len()
+        ));
+    }
+
+    // Core stamina and multipliers.
+    if bal.max_energy == 0 {
+        problems.push("balance.max_energy: must be positive".to_string());
+    }
+    if bal.energy_regen_seconds == 0 {
+        problems.push("balance.energy_regen_seconds: must be positive".to_string());
+    }
+    if !bal.combo_multiplier_step.is_finite() || bal.combo_multiplier_step < 0.0 {
+        problems.push(format!(
+            "balance.combo_multiplier_step: {} must be finite and non-negative",
+            bal.combo_multiplier_step
+        ));
+    }
+    if bal.boss.phase2_hp_pct > MAX_PERCENT {
+        problems.push(format!(
+            "balance.boss.phase2_hp_pct: {} exceeds {MAX_PERCENT}",
+            bal.boss.phase2_hp_pct
+        ));
+    }
+    if bal.boss.weakness_multiplier < 1 {
+        problems.push(format!(
+            "balance.boss.weakness_multiplier: {} must be at least 1",
+            bal.boss.weakness_multiplier
+        ));
+    }
+    if !bal.boss.combo_damage_step.is_finite() || bal.boss.combo_damage_step < 0.0 {
+        problems.push(format!(
+            "balance.boss.combo_damage_step: {} must be finite and non-negative",
+            bal.boss.combo_damage_step
         ));
     }
 

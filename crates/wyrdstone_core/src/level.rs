@@ -16,7 +16,9 @@
 
 //! Level definitions, objective tracking, timed mode, frost spread, amulet modifiers, and Match-3 session state.
 
-use crate::balance::{BalanceConfig, BossTuning, DailyTuning, ExpeditionTuning, SessionTuning};
+use crate::balance::{
+    add_pct_u32, BalanceConfig, BossTuning, DailyTuning, ExpeditionTuning, SessionTuning,
+};
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, PreparedClear, RuneType};
 use crate::boss::{BossDef, BossState};
 use crate::city::{AmuletEffect, CityBonuses, ResourceBundle};
@@ -449,13 +451,15 @@ impl LevelSession {
     ) -> Self {
         let level = run.generate_wave_level_with(tuning, rng);
         let mut session = Self::start_full(level, amulet, city_bonuses, patron, None, rng);
-        session.score_bonus_pct += run.score_bonus_pct;
+        session.score_bonus_pct = session.score_bonus_pct.saturating_add(run.score_bonus_pct);
         session.fury = session
             .fury
             .saturating_add(run.fury_headstart)
             .min(FURY_CHARGE_MAX);
         for _ in 0..run.starting_boosters {
-            session.board.spawn_random_starting_booster(rng);
+            if session.board.spawn_random_starting_booster(rng).is_none() {
+                break;
+            }
         }
         session
     }
@@ -472,10 +476,12 @@ impl LevelSession {
         let mut board = Board::new_for_level(&level, rng);
         let mut total_starting_boosters = city_bonuses.starting_boosters;
         if let Some(AmuletEffect::StartingBoosters(count)) = amulet {
-            total_starting_boosters += count;
+            total_starting_boosters = total_starting_boosters.saturating_add(count);
         }
         for _ in 0..total_starting_boosters {
-            board.spawn_random_starting_booster(rng);
+            if board.spawn_random_starting_booster(rng).is_none() {
+                break;
+            }
         }
 
         let objectives = level
@@ -515,7 +521,10 @@ impl LevelSession {
         let time_left_secs = level
             .time_limit_seconds
             .map(|s| (s as f32) * (1.0 + amulet_time_pct as f32 / 100.0));
-        let total_moves = level.max_moves + amulet_moves + city_bonuses.extra_moves;
+        let total_moves = level
+            .max_moves
+            .saturating_add(amulet_moves)
+            .saturating_add(city_bonuses.extra_moves);
 
         Self {
             initial_moves: total_moves,
@@ -524,8 +533,8 @@ impl LevelSession {
             level,
             board,
             score: 0,
-            score_bonus_pct: amulet_score + city_bonuses.score_bonus_pct,
-            resource_bonus_pct: amulet_resources + city_bonuses.resource_bonus_pct,
+            score_bonus_pct: amulet_score.saturating_add(city_bonuses.score_bonus_pct),
+            resource_bonus_pct: amulet_resources.saturating_add(city_bonuses.resource_bonus_pct),
             objectives,
             outcome: LevelOutcome::InProgress,
             last_combo: 0,
@@ -553,17 +562,27 @@ impl LevelSession {
         self.daily_blessing = Some(blessing);
         match blessing {
             DailyBlessing::OdinFavor => {
-                self.fury_charge_bonus_pct += tuning.blessing_odin_fury_pct;
+                self.fury_charge_bonus_pct = self
+                    .fury_charge_bonus_pct
+                    .saturating_add(tuning.blessing_odin_fury_pct);
             }
             DailyBlessing::NjordBreeze => {
-                self.resource_bonus_pct += tuning.blessing_njord_resource_pct;
+                self.resource_bonus_pct = self
+                    .resource_bonus_pct
+                    .saturating_add(tuning.blessing_njord_resource_pct);
             }
             DailyBlessing::FenrirEclipse => {
-                self.boss_damage_bonus_pct += tuning.blessing_fenrir_boss_damage_pct;
+                self.boss_damage_bonus_pct = self
+                    .boss_damage_bonus_pct
+                    .saturating_add(tuning.blessing_fenrir_boss_damage_pct);
             }
             DailyBlessing::IdunnGrace => {
-                self.initial_moves += tuning.blessing_idunn_extra_moves;
-                self.moves_left += tuning.blessing_idunn_extra_moves;
+                self.initial_moves = self
+                    .initial_moves
+                    .saturating_add(tuning.blessing_idunn_extra_moves);
+                self.moves_left = self
+                    .moves_left
+                    .saturating_add(tuning.blessing_idunn_extra_moves);
             }
         }
     }
@@ -595,22 +614,33 @@ impl LevelSession {
         if !self.can_trigger_fury() {
             return (None, Vec::new());
         }
-        self.fury = 0;
-        match self.patron {
-            PatronGod::Freya => {
-                self.fury_resource_bonus_pct += tuning.freya_fury_resource_pct;
-            }
-            PatronGod::Odin => {
-                self.moves_left += tuning.odin_fury_extra_moves;
-            }
-            PatronGod::Thor | PatronGod::Loki => {}
-        }
-        self.board.apply_patron_fury_detailed(
+        let (prepared, spawned) = self.board.apply_patron_fury_detailed(
             self.patron,
             tuning.thor_fury_strike_cells,
             tuning.loki_fury_boosters,
             rng,
-        )
+        );
+        let effective = match self.patron {
+            PatronGod::Thor | PatronGod::Freya => prepared.is_some(),
+            PatronGod::Loki => !spawned.is_empty(),
+            PatronGod::Odin => tuning.odin_fury_extra_moves > 0 || !spawned.is_empty(),
+        };
+        if !effective {
+            return (None, Vec::new());
+        }
+        self.fury = 0;
+        match self.patron {
+            PatronGod::Freya => {
+                self.fury_resource_bonus_pct = self
+                    .fury_resource_bonus_pct
+                    .saturating_add(tuning.freya_fury_resource_pct);
+            }
+            PatronGod::Odin => {
+                self.moves_left = self.moves_left.saturating_add(tuning.odin_fury_extra_moves);
+            }
+            PatronGod::Thor | PatronGod::Loki => {}
+        }
+        (prepared, spawned)
     }
 
     /// Advances the optional countdown timer and triggers Defeat when time expires.
@@ -695,32 +725,48 @@ impl LevelSession {
 
     /// Applies score and objective progress from a single animated clear step without ending the turn yet.
     pub fn apply_step_progress(&mut self, step: &MatchStepOutcome) {
-        let boosted_score = step.score_gained + (step.score_gained * self.score_bonus_pct) / 100;
-        self.score += boosted_score;
+        let boosted_score = add_pct_u32(step.score_gained, self.score_bonus_pct);
+        self.score = self.score.saturating_add(boosted_score);
         self.last_combo = step.max_combo;
         self.last_shuffled = step.shuffled;
-        self.turn_ice_broken += step.ice_broken;
+        self.turn_ice_broken = self.turn_ice_broken.saturating_add(step.ice_broken);
 
-        let tiles_cleared: u32 = step.cleared_runes.values().copied().sum();
-        let obstacles_broken = step.ice_broken + step.chains_broken + step.crates_broken;
-        let combo_bonus = step.max_combo.saturating_sub(1) * FURY_PER_COMBO_STEP;
-        let raw_fury =
-            tiles_cleared * FURY_PER_TILE + obstacles_broken * FURY_PER_OBSTACLE + combo_bonus;
-        let fury_gain = raw_fury + (raw_fury * self.fury_charge_bonus_pct) / 100;
-        self.fury = (self.fury + fury_gain).min(self.fury_max);
+        let tiles_cleared: u32 = step
+            .cleared_runes
+            .values()
+            .copied()
+            .fold(0u32, u32::saturating_add);
+        let obstacles_broken = step
+            .ice_broken
+            .saturating_add(step.chains_broken)
+            .saturating_add(step.crates_broken);
+        let combo_bonus = step
+            .max_combo
+            .saturating_sub(1)
+            .saturating_mul(FURY_PER_COMBO_STEP);
+        let raw_fury = tiles_cleared
+            .saturating_mul(FURY_PER_TILE)
+            .saturating_add(obstacles_broken.saturating_mul(FURY_PER_OBSTACLE))
+            .saturating_add(combo_bonus);
+        let fury_gain = add_pct_u32(raw_fury, self.fury_charge_bonus_pct);
+        self.fury = self.fury.saturating_add(fury_gain).min(self.fury_max);
 
         if let Some(boss) = self.boss.as_mut() {
-            boss.apply_step_damage(step, self.score_bonus_pct + self.boss_damage_bonus_pct);
+            boss.apply_step_damage(
+                step,
+                self.score_bonus_pct
+                    .saturating_add(self.boss_damage_bonus_pct),
+            );
         }
 
         for prog in &mut self.objectives {
             match &prog.objective {
                 Objective::ClearIce { .. } => {
-                    prog.done = (prog.done + step.ice_broken).min(prog.target);
+                    prog.done = prog.done.saturating_add(step.ice_broken).min(prog.target);
                 }
                 Objective::CollectRune { rune, .. } => {
                     if let Some(&count) = step.cleared_runes.get(rune) {
-                        prog.done = (prog.done + count).min(prog.target);
+                        prog.done = prog.done.saturating_add(count).min(prog.target);
                     }
                 }
                 Objective::ReachScore { .. } => {
@@ -731,7 +777,10 @@ impl LevelSession {
                     }
                 }
                 Objective::DropRelics { .. } => {
-                    prog.done = (prog.done + step.relics_dropped).min(prog.target);
+                    prog.done = prog
+                        .done
+                        .saturating_add(step.relics_dropped)
+                        .min(prog.target);
                 }
             }
         }
@@ -783,7 +832,9 @@ impl LevelSession {
             self.objectives.iter().all(ObjectiveProgress::is_complete)
         };
         if won {
-            self.score += self.moves_left * balance.remaining_move_bonus;
+            self.score = self
+                .score
+                .saturating_add(self.moves_left.saturating_mul(balance.remaining_move_bonus));
             self.outcome = LevelOutcome::Victory;
         } else if self.moves_left == 0 {
             self.outcome = LevelOutcome::Defeat;
@@ -816,7 +867,9 @@ impl LevelSession {
 
     /// Returns `(move_bonus_pct, passive_bonus_pct, fury_bonus_pct)` applied to victory rewards.
     pub fn reward_bonus_breakdown(&self, balance: &BalanceConfig) -> (u32, u32, u32) {
-        let move_bonus = (self.moves_left * balance.move_reward_bonus_pct_per_move)
+        let move_bonus = self
+            .moves_left
+            .saturating_mul(balance.move_reward_bonus_pct_per_move)
             .min(balance.move_reward_bonus_cap_pct);
         (
             move_bonus,
@@ -831,8 +884,10 @@ impl LevelSession {
             return ResourceBundle::default();
         }
         let (move_bonus, passive_bonus, fury_bonus) = self.reward_bonus_breakdown(balance);
-        let bonus_pct = move_bonus + passive_bonus + fury_bonus;
-        let scale = |base: u32| base + (base * bonus_pct) / 100;
+        let bonus_pct = move_bonus
+            .saturating_add(passive_bonus)
+            .saturating_add(fury_bonus);
+        let scale = |base: u32| add_pct_u32(base, bonus_pct);
         ResourceBundle {
             wood: scale(self.level.base_reward.wood),
             stone: scale(self.level.base_reward.stone),

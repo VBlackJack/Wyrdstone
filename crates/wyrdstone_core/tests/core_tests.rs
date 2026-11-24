@@ -1907,3 +1907,166 @@ fn collect_rune_objectives_are_always_included_in_board_rune_pool() {
     let board = Board::new_for_level(&misconfigured, &mut rng);
     assert_eq!(board.rune_pool_len(), 6);
 }
+
+#[test]
+fn bifrost_shard_swap_with_rune_clears_only_target_color() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    // 4x4 board: cell (0,0) is BifrostShard (rune: None), (1,0) is Fire,
+    // all remaining cells are Gold except two extra Fire runes.
+    let mut cells = vec![Cell::playable(RuneType::Gold); 16];
+    cells[0].rune = None;
+    cells[0].booster = Booster::BifrostShard;
+    cells[1].rune = Some(RuneType::Fire);
+    cells[7].rune = Some(RuneType::Fire);
+    cells[12].rune = Some(RuneType::Fire);
+    let mut board = Board::from_cells(4, 4, 6, cells);
+
+    let prepared = board
+        .begin_swap_step(CellPos::new(0, 0), CellPos::new(1, 0))
+        .expect("Bifrost + Rune swap must prepare a clear");
+    let out = board.commit_clear_step(&prepared, 1, &data.balance);
+    assert!(out.valid);
+    assert_eq!(out.cleared_runes.get(&RuneType::Fire).copied(), Some(3));
+    assert_eq!(
+        out.cleared_runes.get(&RuneType::Gold).copied().unwrap_or(0),
+        0,
+        "Swapping BifrostShard with Fire must not double-trigger onto Gold"
+    );
+}
+
+#[test]
+fn line_plus_line_swap_clears_only_cross_not_extra_row() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut cells = vec![Cell::playable(RuneType::Water); 25];
+    cells[5].booster = Booster::LineHorizontal;
+    cells[6].booster = Booster::LineHorizontal;
+    let mut board = Board::from_cells(5, 5, 6, cells);
+
+    // Swap (0,1) and (1,1): cross at b=(1,1) covers row 1 (5) + col 1 (5) - overlap (1) = 9 cells.
+    // If (0,1) double-triggered a second horizontal line or bonus, score/runes would inflate.
+    let prepared = board
+        .begin_swap_step(CellPos::new(0, 1), CellPos::new(1, 1))
+        .expect("Line + Line swap must prepare cross clear");
+    let out = board.commit_clear_step(&prepared, 1, &data.balance);
+    assert!(out.valid);
+    assert_eq!(out.cleared_runes.get(&RuneType::Water).copied(), Some(9));
+    let expected_score =
+        9 * data.balance.points_per_tile + 2 * data.balance.booster_activation_bonus;
+    assert_eq!(out.score_gained, expected_score);
+}
+
+#[test]
+fn special_swap_combo_prepared_cells_are_sorted_deterministically() {
+    for _ in 0..20 {
+        let mut cells = vec![Cell::playable(RuneType::Stone); 25];
+        cells[6].booster = Booster::Bomb;
+        cells[7].booster = Booster::Bomb;
+        let mut board = Board::from_cells(5, 5, 6, cells);
+        let prepared = board
+            .begin_swap_step(CellPos::new(1, 1), CellPos::new(2, 1))
+            .expect("Bomb + Bomb combo");
+        let keys: Vec<(usize, usize)> = prepared.cells.iter().map(|p| (p.row, p.col)).collect();
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        assert_eq!(keys, sorted);
+    }
+}
+
+#[test]
+fn sanitize_fixes_unowned_equipped_amulet_and_zero_tier_crafted_amulet() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut city = CityState::new(&data.balance);
+    city.equipped_amulet = Some("amulet_odin".to_string());
+    assert!(
+        city.active_amulet_effect(&data.amulets).is_none(),
+        "uncrafted equipped amulet must grant no effect even before sanitize"
+    );
+
+    city.crafted_amulets.insert("amulet_freya".to_string());
+    city.amulet_tiers.insert("amulet_freya".to_string(), 0);
+    city.sanitize(&data.buildings, &data.balance);
+
+    assert!(city.equipped_amulet.is_none());
+    assert_eq!(city.amulet_tier("amulet_freya"), 1);
+    assert!(
+        city.try_upgrade_amulet(data.amulet_by_id("amulet_freya").unwrap(), &data.balance)
+            .is_ok()
+            || city.amulet_tier("amulet_freya") == 1
+    );
+}
+
+#[test]
+fn daily_streak_achievement_survives_day_8_cycle_wrap() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut city = CityState::new(&data.balance);
+    let reward = ResourceBundle {
+        wood: 10,
+        stone: 10,
+        gold: 10,
+        mead: 1,
+    };
+    for day in 1..=8u64 {
+        city.record_daily_victory(day, &reward, &data.balance);
+    }
+    assert_eq!(city.stats.daily_streak, 1);
+    assert_eq!(city.stats.best_daily_streak, 7);
+
+    let streak_ach = data
+        .achievements
+        .iter()
+        .find(|a| a.id == "ach_daily_streak_3")
+        .expect("ach_daily_streak_3 exists");
+    let (done, target) =
+        achievement_progress(streak_ach, &city, &data.buildings, data.bosses.len());
+    assert_eq!(done, target);
+}
+
+#[test]
+fn fury_without_valid_targets_does_not_drain_gauge() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(5);
+    let cells = vec![Cell::blocked_cell(); 16];
+    let mut level = data.level_by_id("forge_1").unwrap().clone();
+    level.cols = 4;
+    level.rows = 4;
+    let mut session = LevelSession::start_full(
+        level,
+        None,
+        CityBonuses::default(),
+        PatronGod::Thor,
+        None,
+        &mut rng,
+    );
+    session.board = Board::from_cells(4, 4, 6, cells);
+    session.fury = session.fury_max;
+
+    assert!(session
+        .trigger_fury(&data.balance.session, &mut rng)
+        .is_none());
+    assert_eq!(session.fury, session.fury_max);
+
+    session.patron = PatronGod::Loki;
+    assert!(session
+        .trigger_fury(&data.balance.session, &mut rng)
+        .is_none());
+    assert_eq!(session.fury, session.fury_max);
+}
+
+#[test]
+fn clear_cell_set_does_not_duplicate_cleared_positions_on_direct_blast() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut cells = vec![Cell::playable(RuneType::Fire); 9];
+    cells[4].fog = true;
+    cells[4].chained = true;
+    let mut board = Board::from_cells(3, 3, 6, cells);
+    let prepared = board
+        .prepare_tool_step(ActiveTool::Mjolnir, CellPos::new(1, 1))
+        .unwrap();
+    let out = board.commit_clear_step(&prepared, 1, &data.balance);
+    let count = out
+        .cleared_positions
+        .iter()
+        .filter(|&&p| p == CellPos::new(1, 1))
+        .count();
+    assert_eq!(count, 1);
+}

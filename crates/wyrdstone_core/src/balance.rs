@@ -592,3 +592,9 @@ impl BalanceConfig {
         1.0 + extra * self.combo_multiplier_step
     }
 }
+
+/// Computes `base + (base * pct) / 100` using widened integer math and saturates on `u32::MAX`.
+pub(crate) fn add_pct_u32(base: u32, pct: u32) -> u32 {
+    let total = u128::from(base) + (u128::from(base) * u128::from(pct)) / 100;
+    u32::try_from(total).unwrap_or(u32::MAX)
+}

@@ -252,3 +252,16 @@ fn zero_expedition_score_wave_interval_is_reported() {
     let err = validate_bundle(&b).expect_err("a zero score wave interval must fail");
     assert!(err.contains("expedition.score_wave_interval"), "{err}");
 }
+
+#[test]
+fn validate_bundle_rejects_out_of_bounds_level_and_invalid_boss() {
+    let mut b = bundle();
+    b.levels[0].ice_cells.push((99, 99, 1));
+    b.bosses[0].riposte_interval = 0;
+    b.balance.expedition.ice_cap = 20;
+    let err =
+        validate_bundle(&b).expect_err("out of bounds level and zero boss interval must fail");
+    assert!(err.contains("out of"), "{err}");
+    assert!(err.contains("riposte_interval"), "{err}");
+    assert!(err.contains("ice_cap"), "{err}");
+}

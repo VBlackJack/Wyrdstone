@@ -258,10 +258,24 @@ impl SaveData {
         serde_json::to_string_pretty(self)
     }
 
-    /// Deserializes save data from JSON.
+    /// Deserializes raw save data from JSON without schema-version validation or normalization.
+    ///
+    /// Prefer [`Self::from_json_validated`] or [`Self::load_with_recovery`] for untrusted input.
     pub fn from_json(raw: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(raw)
     }
+
+    /// Parses JSON save data while rejecting newer schema versions, then migrates and normalizes.
+    pub fn from_json_validated(raw: &str) -> Result<Self, String> {
+        if let Some(found) = probe_schema_version(raw).filter(|v| *v > SAVE_SCHEMA_VERSION) {
+            return Err(format!(
+                "Save file was written by a newer version (schema {found}, supported {SAVE_SCHEMA_VERSION})"
+            ));
+        }
+        let parsed = Self::from_json(raw).map_err(|e| format!("Failed to parse save file: {e}"))?;
+        Ok(parsed.migrate().normalized())
+    }
+
     /// Atomically writes save data to disk without rotating the `.bak` copy.
     pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
         self.save_with_options(path, false).map(|_| ())
@@ -289,8 +303,10 @@ impl SaveData {
         if rotate_backup {
             report.backup_rotation_error = rotate_backup_copy(path).err();
         }
-        std::fs::rename(&tmp_path, path)
-            .map_err(|e| format!("Failed to commit atomic save rename: {e}"))?;
+        if let Err(e) = std::fs::rename(&tmp_path, path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(format!("Failed to commit atomic save rename: {e}"));
+        }
         sync_parent_dir(path)?;
         Ok(report)
     }
@@ -306,7 +322,7 @@ impl SaveData {
         if let Ok(false) = path.try_exists() {
             return Ok(None);
         }
-        let dest = path.with_extension(format!("json.corrupt-{}", unix_secs()));
+        let dest = unique_sibling_path(path, "corrupt");
         std::fs::copy(path, &dest)
             .map_err(|e| format!("Failed to copy unreadable save to {}: {e}", dest.display()))?;
         Ok(Some(dest))
@@ -316,7 +332,7 @@ impl SaveData {
     /// [`Self::backup_unreadable`], the tag lets callers name what the copy holds (for example
     /// a valid save from a newer game version). A missing source is an error.
     pub fn preserve_copy(path: &Path, tag: &str) -> std::io::Result<PathBuf> {
-        let dest = path.with_extension(format!("json.{tag}-{}", unix_secs()));
+        let dest = unique_sibling_path(path, tag);
         std::fs::copy(path, &dest)?;
         Ok(dest)
     }
@@ -360,8 +376,7 @@ impl SaveData {
             }
             let backup = Self::backup_path(path);
             if Self::is_newer_version(&backup) {
-                let dest =
-                    path.with_extension(format!("json.{NEWER_BACKUP_COPY_TAG}-{}", unix_secs()));
+                let dest = unique_sibling_path(path, NEWER_BACKUP_COPY_TAG);
                 std::fs::copy(&backup, &dest).map_err(|e| {
                     format!(
                         "Failed to preserve newer-version backup {}: {e}",
@@ -466,6 +481,9 @@ impl SaveData {
     fn normalized(mut self) -> Self {
         if let Some((balance, buildings)) = sanitize_reference() {
             self.city.sanitize(buildings, balance);
+            if let Some(expedition) = self.active_expedition.as_mut() {
+                expedition.sanitize(balance);
+            }
         }
         self.bgm_volume = self.bgm_volume.clamp(0.0, 1.0);
         self.sfx_volume = self.sfx_volume.clamp(0.0, 1.0);
@@ -490,11 +508,16 @@ impl SaveData {
             Ok(parsed) => Ok(Some(parsed.migrate().normalized())),
             Err(e) => {
                 let corrupt_path = path.with_extension("json.corrupt");
-                let _ = std::fs::copy(path, &corrupt_path);
-                Err(format!(
-                    "Failed to parse save file (backed up to {}): {e}",
-                    corrupt_path.display()
-                ))
+                match std::fs::copy(path, &corrupt_path) {
+                    Ok(_) => Err(format!(
+                        "Failed to parse save file (backed up to {}): {e}",
+                        corrupt_path.display()
+                    )),
+                    Err(copy_err) => Err(format!(
+                        "Failed to parse save file (backup to {} failed: {copy_err}): {e}",
+                        corrupt_path.display()
+                    )),
+                }
             }
         }
     }
@@ -518,6 +541,23 @@ fn unix_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Builds a `<file>.<tag>-<unix_secs>` sibling path, adding a counter suffix when a regular file
+/// already occupies that slot in the same second.
+fn unique_sibling_path(path: &Path, tag: &str) -> PathBuf {
+    let secs = unix_secs();
+    let base = path.with_extension(format!("json.{tag}-{secs}"));
+    if !base.is_file() {
+        return base;
+    }
+    for n in 1u32..=999 {
+        let candidate = path.with_extension(format!("json.{tag}-{secs}-{n}"));
+        if !candidate.is_file() {
+            return candidate;
+        }
+    }
+    base
 }
 
 /// Reads a file as UTF-8, retrying transient I/O errors a few times.
@@ -550,15 +590,23 @@ fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Copies the current primary file (if any) to `.bak` through a temporary file and a rename.
+/// Copies the current primary file (if any) to `.bak` through a synced temporary file and a rename.
 fn rotate_backup_copy(path: &Path) -> Result<(), String> {
     if let Ok(false) = path.try_exists() {
         return Ok(());
     }
     let backup = SaveData::backup_path(path);
     let tmp = path.with_extension("json.bak.tmp");
-    std::fs::copy(path, &tmp).map_err(|e| format!("Failed to copy save to backup: {e}"))?;
-    std::fs::rename(&tmp, &backup).map_err(|e| format!("Failed to commit backup rename: {e}"))
+    let bytes = std::fs::read(path).map_err(|e| format!("Failed to read save for backup: {e}"))?;
+    write_synced(&tmp, &bytes).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("Failed to write backup temporary file: {e}")
+    })?;
+    if let Err(e) = std::fs::rename(&tmp, &backup) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Failed to commit backup rename: {e}"));
+    }
+    sync_parent_dir(&backup)
 }
 
 /// Flushes the parent directory entry so the rename survives a power loss (Unix only;

@@ -236,6 +236,7 @@ pub struct PreparedClear {
     pub cells: Vec<CellPos>,
     pub spawned_boosters: Vec<(CellPos, RuneType, Booster)>,
     pub converted_boosters: Vec<(CellPos, Booster)>,
+    pub consumed_boosters: Vec<CellPos>,
     pub is_direct_blast: bool,
 }
 
@@ -431,9 +432,10 @@ impl Board {
     }
 
     fn pick_non_matching_rune<R: Rng>(&self, col: usize, row: usize, rng: &mut R) -> RuneType {
-        let mut candidates: Vec<RuneType> = RuneType::ALL[..self.rune_pool_len].to_vec();
-        candidates.shuffle(rng);
-        for rune in candidates {
+        let mut candidates = RuneType::ALL;
+        let pool = &mut candidates[..self.rune_pool_len];
+        pool.shuffle(rng);
+        for &rune in pool.iter() {
             let horiz_match = col >= 2
                 && self.get(CellPos::new(col - 1, row)).and_then(|c| c.rune) == Some(rune)
                 && self.get(CellPos::new(col - 2, row)).and_then(|c| c.rune) == Some(rune);
@@ -461,11 +463,12 @@ impl Board {
             return None;
         }
         self.swap_contents(a, b);
-        if let Some((combo_cells, converted_boosters)) = self.check_special_swap_combo(a, b) {
+        if let Some(combo) = self.check_special_swap_combo(a, b) {
             return Some(PreparedClear {
-                cells: combo_cells.into_iter().collect(),
+                cells: sorted_positions(combo.affected),
                 spawned_boosters: Vec::new(),
-                converted_boosters,
+                converted_boosters: combo.converted,
+                consumed_boosters: combo.consumed,
                 is_direct_blast: true,
             });
         }
@@ -521,6 +524,7 @@ impl Board {
             cells: vec![target],
             spawned_boosters: Vec::new(),
             converted_boosters: Vec::new(),
+            consumed_boosters: Vec::new(),
             is_direct_blast: true,
         })
     }
@@ -535,18 +539,21 @@ impl Board {
                 cells: vec![target],
                 spawned_boosters: Vec::new(),
                 converted_boosters: Vec::new(),
+                consumed_boosters: Vec::new(),
                 is_direct_blast: true,
             }),
             ActiveTool::SurtrEmber => Some(PreparedClear {
                 cells: sorted_positions(self.area_positions(target, SURTR_EMBER_RADIUS)),
                 spawned_boosters: Vec::new(),
                 converted_boosters: Vec::new(),
+                consumed_boosters: Vec::new(),
                 is_direct_blast: true,
             }),
             ActiveTool::ThorBolt => Some(PreparedClear {
                 cells: self.row_positions(target.row),
                 spawned_boosters: Vec::new(),
                 converted_boosters: Vec::new(),
+                consumed_boosters: Vec::new(),
                 is_direct_blast: true,
             }),
             ActiveTool::BifrostPrism => {
@@ -561,6 +568,7 @@ impl Board {
                     cells: sorted_positions(set),
                     spawned_boosters: Vec::new(),
                     converted_boosters: Vec::new(),
+                    consumed_boosters: Vec::new(),
                     is_direct_blast: true,
                 })
             }
@@ -572,6 +580,7 @@ impl Board {
                     cells: sorted_positions(set),
                     spawned_boosters: Vec::new(),
                     converted_boosters: Vec::new(),
+                    consumed_boosters: Vec::new(),
                     is_direct_blast: true,
                 })
             }
@@ -615,6 +624,7 @@ impl Board {
             cells: sorted_positions(to_clear),
             spawned_boosters,
             converted_boosters: Vec::new(),
+            consumed_boosters: Vec::new(),
             is_direct_blast: false,
         }
     }
@@ -631,6 +641,18 @@ impl Board {
             max_combo: combo_depth,
             ..Default::default()
         };
+        // Consume swapped combo partner boosters upfront so they award their activation bonus
+        // once without re-triggering inside `clear_cell_set`.
+        let mult = balance.combo_multiplier(combo_depth);
+        for &pos in &prepared.consumed_boosters {
+            if let Some(cell) = self.get_mut(pos) {
+                if cell.booster != Booster::None {
+                    cell.booster = Booster::None;
+                    outcome.score_gained +=
+                        (balance.booster_activation_bonus as f32 * mult).round() as u32;
+                }
+            }
+        }
         for &(pos, booster) in &prepared.converted_boosters {
             if let Some(cell) = self.get_mut(pos) {
                 if !cell.blocked && cell.crate_layers == 0 && !cell.relic {
@@ -691,11 +713,11 @@ impl Board {
         self.apply_column_gravity_only(&mut moves);
 
         // Iteratively transfer movable pieces through Bifrost portals when destination is empty.
-        let portals_snapshot = self.portals.clone();
-        if !portals_snapshot.is_empty() {
+        if !self.portals.is_empty() {
             for _ in 0..(self.rows * self.cols).min(MAX_PORTAL_PASSES) {
                 let mut moved_any = false;
-                for &(src, dst) in &portals_snapshot {
+                for portal_idx in 0..self.portals.len() {
+                    let (src, dst) = self.portals[portal_idx];
                     if self.in_bounds(src) && self.in_bounds(dst) {
                         let si = self.idx(src);
                         let di = self.idx(dst);
@@ -835,6 +857,8 @@ impl Board {
         if tool == ActiveTool::LokiShuffle {
             let recovered = self.ensure_playable(rng);
             return MatchStepOutcome {
+                // The tool invocation is valid even when no free runes can be shuffled; `shuffled`
+                // reports whether the board actually changed.
                 valid: true,
                 shuffled: recovered,
                 ..Default::default()
@@ -900,11 +924,48 @@ impl Board {
         self.cells[ib].curse_turns = curse_a;
     }
 
+    fn collect_bifrost_partner_combo(
+        &self,
+        shard_pos: CellPos,
+        partner_pos: CellPos,
+        partner_booster: Booster,
+        target_rune: RuneType,
+    ) -> SpecialSwapCombo {
+        let mut affected = HashSet::new();
+        let mut converted = Vec::new();
+        affected.insert(shard_pos);
+        affected.insert(partner_pos);
+        self.collect_all_of_rune(target_rune, &mut affected);
+        if matches!(
+            partner_booster,
+            Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb
+        ) {
+            let mut targets: Vec<CellPos> = affected
+                .iter()
+                .copied()
+                .filter(|&p| p != shard_pos)
+                .collect();
+            targets.sort_by_key(|p| (p.row, p.col));
+            for (idx, p) in targets.into_iter().enumerate() {
+                let btype = match partner_booster {
+                    Booster::Bomb => Booster::Bomb,
+                    _ if idx % 2 == 0 => Booster::LineHorizontal,
+                    _ => Booster::LineVertical,
+                };
+                converted.push((p, btype));
+            }
+        }
+        SpecialSwapCombo {
+            affected,
+            converted,
+            consumed: vec![shard_pos],
+        }
+    }
+
     fn check_special_swap_combo(&self, a: CellPos, b: CellPos) -> Option<SpecialSwapCombo> {
         let ca = self.cells[self.idx(a)];
         let cb = self.cells[self.idx(b)];
         let mut affected = HashSet::new();
-        let mut converted = Vec::new();
 
         match (ca.booster, cb.booster) {
             (Booster::BifrostShard, Booster::BifrostShard) => {
@@ -916,57 +977,25 @@ impl Board {
                         }
                     }
                 }
-                Some((affected, converted))
+                Some(SpecialSwapCombo {
+                    affected,
+                    converted: Vec::new(),
+                    consumed: sorted_positions([a, b]),
+                })
             }
             (Booster::BifrostShard, partner_booster) => {
-                let target_rune = cb.rune?;
-                affected.insert(a);
-                affected.insert(b);
-                self.collect_all_of_rune(target_rune, &mut affected);
-                if matches!(
-                    partner_booster,
-                    Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb
-                ) {
-                    let mut targets: Vec<CellPos> =
-                        affected.iter().copied().filter(|&p| p != a).collect();
-                    targets.sort_by_key(|p| (p.row, p.col));
-                    for (idx, p) in targets.into_iter().enumerate() {
-                        let btype = match partner_booster {
-                            Booster::Bomb => Booster::Bomb,
-                            _ if idx % 2 == 0 => Booster::LineHorizontal,
-                            _ => Booster::LineVertical,
-                        };
-                        converted.push((p, btype));
-                    }
-                }
-                Some((affected, converted))
+                Some(self.collect_bifrost_partner_combo(a, b, partner_booster, cb.rune?))
             }
             (partner_booster, Booster::BifrostShard) => {
-                let target_rune = ca.rune?;
-                affected.insert(a);
-                affected.insert(b);
-                self.collect_all_of_rune(target_rune, &mut affected);
-                if matches!(
-                    partner_booster,
-                    Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb
-                ) {
-                    let mut targets: Vec<CellPos> =
-                        affected.iter().copied().filter(|&p| p != b).collect();
-                    targets.sort_by_key(|p| (p.row, p.col));
-                    for (idx, p) in targets.into_iter().enumerate() {
-                        let btype = match partner_booster {
-                            Booster::Bomb => Booster::Bomb,
-                            _ if idx % 2 == 0 => Booster::LineHorizontal,
-                            _ => Booster::LineVertical,
-                        };
-                        converted.push((p, btype));
-                    }
-                }
-                Some((affected, converted))
+                Some(self.collect_bifrost_partner_combo(b, a, partner_booster, ca.rune?))
             }
             (Booster::Bomb, Booster::Bomb) => {
                 affected.extend(self.area_positions(b, BOMB_COMBO_RADIUS));
-                Some((affected, converted))
+                Some(SpecialSwapCombo {
+                    affected,
+                    converted: Vec::new(),
+                    consumed: sorted_positions([a, b]),
+                })
             }
             (
                 Booster::LineHorizontal | Booster::LineVertical,
@@ -974,7 +1003,11 @@ impl Board {
             ) => {
                 affected.extend(self.row_positions(b.row));
                 affected.extend(self.col_positions(b.col));
-                Some((affected, converted))
+                Some(SpecialSwapCombo {
+                    affected,
+                    converted: Vec::new(),
+                    consumed: sorted_positions([a, b]),
+                })
             }
             (Booster::Bomb, Booster::LineHorizontal | Booster::LineVertical)
             | (Booster::LineHorizontal | Booster::LineVertical, Booster::Bomb) => {
@@ -990,7 +1023,11 @@ impl Board {
                         affected.extend(self.col_positions(c as usize));
                     }
                 }
-                Some((affected, converted))
+                Some(SpecialSwapCombo {
+                    affected,
+                    converted: Vec::new(),
+                    consumed: sorted_positions([a, b]),
+                })
             }
             _ => None,
         }
@@ -1058,21 +1095,12 @@ impl Board {
         set
     }
 
-    fn orthogonal_neighbors(&self, pos: CellPos) -> Vec<CellPos> {
-        let mut nbs = Vec::with_capacity(4);
-        if pos.col > 0 {
-            nbs.push(CellPos::new(pos.col - 1, pos.row));
-        }
-        if pos.col + 1 < self.cols {
-            nbs.push(CellPos::new(pos.col + 1, pos.row));
-        }
-        if pos.row > 0 {
-            nbs.push(CellPos::new(pos.col, pos.row - 1));
-        }
-        if pos.row + 1 < self.rows {
-            nbs.push(CellPos::new(pos.col, pos.row + 1));
-        }
-        nbs
+    fn orthogonal_neighbors(&self, pos: CellPos) -> impl Iterator<Item = CellPos> {
+        let left = (pos.col > 0).then(|| CellPos::new(pos.col - 1, pos.row));
+        let right = (pos.col + 1 < self.cols).then(|| CellPos::new(pos.col + 1, pos.row));
+        let up = (pos.row > 0).then(|| CellPos::new(pos.col, pos.row - 1));
+        let down = (pos.row + 1 < self.rows).then(|| CellPos::new(pos.col, pos.row + 1));
+        [left, right, up, down].into_iter().flatten()
     }
 
     fn find_match_groups(&self) -> Vec<MatchGroup> {
@@ -1204,12 +1232,15 @@ impl Board {
                 continue;
             }
 
+            let mut pushed_pos = false;
+
             // Dispel Niflheim Fog when directly hit by a blast or booster.
             if self.cells[idx].fog {
                 self.cells[idx].fog = false;
                 outcome.fog_cleared += 1;
                 outcome.score_gained += (balance.ice_break_bonus as f32 * mult).round() as u32;
                 outcome.cleared_positions.push(pos);
+                pushed_pos = true;
                 if !is_direct_blast {
                     continue;
                 }
@@ -1222,7 +1253,9 @@ impl Board {
                     outcome.crates_broken += 1;
                 }
                 outcome.score_gained += (balance.crate_break_bonus as f32 * mult).round() as u32;
-                outcome.cleared_positions.push(pos);
+                if !pushed_pos {
+                    outcome.cleared_positions.push(pos);
+                }
                 continue;
             }
 
@@ -1285,7 +1318,10 @@ impl Board {
                 self.cells[idx].chained = false;
                 outcome.chains_broken += 1;
                 outcome.score_gained += (balance.chain_break_bonus as f32 * mult).round() as u32;
-                outcome.cleared_positions.push(pos);
+                if !pushed_pos {
+                    outcome.cleared_positions.push(pos);
+                    pushed_pos = true;
+                }
                 if !is_direct_blast {
                     continue;
                 }
@@ -1303,7 +1339,9 @@ impl Board {
                 self.cells[idx].curse_turns = 0;
                 *outcome.cleared_runes.entry(rune).or_insert(0) += 1;
                 outcome.score_gained += (balance.points_per_tile as f32 * mult).round() as u32;
-                outcome.cleared_positions.push(pos);
+                if !pushed_pos {
+                    outcome.cleared_positions.push(pos);
+                }
             }
         }
 
@@ -1342,11 +1380,10 @@ impl Board {
 
     /// Returns the first valid adjacent swap `(a, b)` for auto-hinting, if one exists.
     pub fn find_hint_move(&self) -> Option<(CellPos, CellPos)> {
-        let mut clone = self.clone();
         for row in 0..self.rows {
             for col in 0..self.cols {
                 let a = CellPos::new(col, row);
-                if !clone.cells[clone.idx(a)].can_be_swapped() {
+                if !self.cells[self.idx(a)].can_be_swapped() {
                     continue;
                 }
                 let neighbors = [
@@ -1354,20 +1391,75 @@ impl Board {
                     (row + 1 < self.rows).then(|| CellPos::new(col, row + 1)),
                 ];
                 for nb in neighbors.into_iter().flatten() {
-                    if !clone.cells[clone.idx(nb)].can_be_swapped() {
+                    if !self.cells[self.idx(nb)].can_be_swapped() {
                         continue;
                     }
-                    clone.swap_contents(a, nb);
-                    let valid = clone.check_special_swap_combo(a, nb).is_some()
-                        || Self::groups_involve_swap(&clone.find_match_groups(), a, nb);
-                    clone.swap_contents(a, nb);
-                    if valid {
+                    if self.swap_forms_valid_move(a, nb) {
                         return Some((a, nb));
                     }
                 }
             }
         }
         None
+    }
+
+    fn swap_forms_valid_move(&self, a: CellPos, b: CellPos) -> bool {
+        let ca = self.cells[self.idx(a)];
+        let cb = self.cells[self.idx(b)];
+        let is_special = match (ca.booster, cb.booster) {
+            (Booster::BifrostShard, Booster::BifrostShard) => true,
+            (Booster::BifrostShard, _) => cb.rune.is_some(),
+            (_, Booster::BifrostShard) => ca.rune.is_some(),
+            (
+                Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb,
+                Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb,
+            ) => true,
+            _ => false,
+        };
+        if is_special {
+            return true;
+        }
+        self.virtual_cell_matches(a, a, b) || self.virtual_cell_matches(b, a, b)
+    }
+
+    fn virtual_matchable_rune(&self, pos: CellPos, a: CellPos, b: CellPos) -> Option<RuneType> {
+        let dst = self.cells[self.idx(pos)];
+        if dst.blocked || dst.fog || dst.crate_layers > 0 {
+            return None;
+        }
+        let src = if pos == a {
+            b
+        } else if pos == b {
+            a
+        } else {
+            pos
+        };
+        self.cells[self.idx(src)].rune
+    }
+
+    fn virtual_cell_matches(&self, center: CellPos, a: CellPos, b: CellPos) -> bool {
+        let Some(rune) = self.virtual_matchable_rune(center, a, b) else {
+            return false;
+        };
+        let count_dir = |dc: isize, dr: isize| -> usize {
+            let mut matched = 0usize;
+            for step in 1isize..=2 {
+                let nc = center.col as isize + dc * step;
+                let nr = center.row as isize + dr * step;
+                if nc < 0 || nr < 0 || (nc as usize) >= self.cols || (nr as usize) >= self.rows {
+                    break;
+                }
+                let p = CellPos::new(nc as usize, nr as usize);
+                if self.virtual_matchable_rune(p, a, b) == Some(rune) {
+                    matched += 1;
+                } else {
+                    break;
+                }
+            }
+            matched
+        };
+        1 + count_dir(-1, 0) + count_dir(1, 0) >= MIN_MATCH_LEN
+            || 1 + count_dir(0, -1) + count_dir(0, 1) >= MIN_MATCH_LEN
     }
 
     /// Recovers a deadlocked board: shuffles the free runes first, then falls back to
@@ -1709,6 +1801,7 @@ impl Board {
                             cells: priority,
                             spawned_boosters: Vec::new(),
                             converted_boosters: Vec::new(),
+                            consumed_boosters: Vec::new(),
                             is_direct_blast: true,
                         }),
                         Vec::new(),
@@ -1729,6 +1822,7 @@ impl Board {
                             cells: sorted_positions(set),
                             spawned_boosters: Vec::new(),
                             converted_boosters: Vec::new(),
+                            consumed_boosters: Vec::new(),
                             is_direct_blast: true,
                         }),
                         Vec::new(),
@@ -1819,6 +1913,7 @@ impl Board {
                             && c.crate_layers == 0
                             && !c.relic
                             && c.booster == Booster::None
+                            && c.curse_turns == 0
                             && c.rune.is_some()
                     })
                     .collect();
@@ -1827,6 +1922,7 @@ impl Board {
                     let idx = self.idx(pos);
                     self.cells[idx].crate_layers = 1;
                     self.cells[idx].rune = None;
+                    self.cells[idx].curse_turns = 0;
                     hit.push(pos);
                 }
             }
@@ -1867,7 +1963,11 @@ fn sorted_positions(positions: impl IntoIterator<Item = CellPos>) -> Vec<CellPos
     list
 }
 
-type SpecialSwapCombo = (HashSet<CellPos>, Vec<(CellPos, Booster)>);
+struct SpecialSwapCombo {
+    affected: HashSet<CellPos>,
+    converted: Vec<(CellPos, Booster)>,
+    consumed: Vec<CellPos>,
+}
 
 struct MatchGroup {
     rune: RuneType,

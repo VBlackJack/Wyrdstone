@@ -16,6 +16,7 @@
 
 //! Recovery-aware save loading, backup rotation and atomic write behavior.
 
+use rand::SeedableRng;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use wyrdstone_core::save::{LoadOutcome, ReadOnlyResolution, SAVE_SCHEMA_VERSION};
@@ -656,4 +657,63 @@ fn prepare_replace_removes_the_first_copy_when_the_second_fails() {
         "the first copy is rolled back"
     );
     assert_eq!(dir_entries(&dir.0), before);
+}
+
+#[test]
+fn tampered_expedition_save_is_sanitized_and_does_not_freeze_or_overflow() {
+    let dir = TempDir::new("tampered_expedition");
+    let path = dir.save_path();
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut save = SaveData::new_game(&data.balance, Language::En);
+    save.active_expedition = Some(wyrdstone_core::ExpeditionRun {
+        wave: 0,
+        extra_moves: u32::MAX,
+        score_bonus_pct: u32::MAX,
+        starting_boosters: u32::MAX,
+        fury_headstart: u32::MAX,
+        pending_boons: vec![wyrdstone_core::ExpeditionBoon::StartingBooster; 20],
+    });
+    save.save_to_path(&path).unwrap();
+
+    let loaded = match SaveData::load_with_recovery(&path) {
+        LoadOutcome::Loaded(s) => s,
+        other => panic!("expected Loaded, got {other:?}"),
+    };
+    let mut run = loaded.active_expedition.expect("expedition preserved");
+    assert_eq!(run.wave, 1);
+    assert!(run.starting_boosters <= 64);
+    assert!(run.extra_moves <= data.balance.expedition.moves_cap);
+    assert!(run.score_bonus_pct <= wyrdstone_core::expedition::MAX_EXPEDITION_SCORE_BONUS_PCT);
+    assert!(run.fury_headstart <= wyrdstone_core::FURY_CHARGE_MAX);
+    assert!(run.pending_boons.len() <= data.balance.expedition.boon_choices);
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(9);
+    let session = wyrdstone_core::LevelSession::start_expedition_wave_with(
+        &run,
+        &data.balance.expedition,
+        None,
+        wyrdstone_core::CityBonuses::default(),
+        wyrdstone_core::PatronGod::Thor,
+        &mut rng,
+    );
+    assert_eq!(session.level.id, "expedition_w1");
+    run.wave = u32::MAX;
+    run.apply_boon(
+        wyrdstone_core::ExpeditionBoon::StartingBooster,
+        &mut save.city,
+    );
+    assert_eq!(run.wave, u32::MAX);
+}
+
+#[test]
+fn preserve_copy_within_same_second_does_not_overwrite() {
+    let dir = TempDir::new("preserve_same_sec");
+    let path = dir.save_path();
+    std::fs::write(&path, newer_json(1)).unwrap();
+    let first = SaveData::preserve_copy(&path, "newer").unwrap();
+    std::fs::write(&path, newer_json(2)).unwrap();
+    let second = SaveData::preserve_copy(&path, "newer").unwrap();
+    assert_ne!(first, second);
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), newer_json(1));
+    assert_eq!(std::fs::read_to_string(&second).unwrap(), newer_json(2));
 }

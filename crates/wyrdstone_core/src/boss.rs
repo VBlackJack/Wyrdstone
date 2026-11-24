@@ -16,7 +16,7 @@
 
 //! Mythological Boss Raid definitions, HP tracking, weakness multipliers, and counter-attacks.
 
-use crate::balance::BossTuning;
+use crate::balance::{add_pct_u32, BossTuning};
 use crate::board::{Board, CellPos, MatchStepOutcome, RuneType};
 use crate::city::{ResourceBundle, ToolInventory};
 use crate::level::{LevelDef, Objective};
@@ -212,12 +212,15 @@ impl BossState {
                     .saturating_mul(mult),
             );
         }
-        let obstacles = step.ice_broken + step.chains_broken + step.crates_broken;
+        let obstacles = step
+            .ice_broken
+            .saturating_add(step.chains_broken)
+            .saturating_add(step.crates_broken);
         raw_dmg = raw_dmg.saturating_add(obstacles.saturating_mul(self.tuning.damage_per_obstacle));
         let combo_mult =
             1.0 + step.max_combo.saturating_sub(1) as f32 * self.tuning.combo_damage_step;
         let boosted = (raw_dmg as f32 * combo_mult).round() as u32;
-        let total = boosted + (boosted * score_bonus_pct) / 100;
+        let total = add_pct_u32(boosted, score_bonus_pct);
         self.hp = self.hp.saturating_sub(total);
         self.last_damage_dealt = total;
         if !self.phase2_triggered && self.is_phase2() {

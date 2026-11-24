@@ -933,9 +933,10 @@ pub fn check_scenario(n: usize, run: &Run) {
     assert_eq!(
         got.len(),
         want.len(),
-        "scenario S{n}: {} lines expected, {} observed",
+        "scenario S{n}: {} lines expected, {} observed:\n{}",
         want.len(),
-        got.len()
+        got.len(),
+        got.join("\n")
     );
     for (index, (g, e)) in got.iter().zip(want.iter()).enumerate() {
         assert_eq!(g, e, "scenario S{n} digest line {index}");

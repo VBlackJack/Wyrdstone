@@ -76,6 +76,14 @@ impl I18nCatalog {
         self.language = self.language.toggle();
     }
 
+    /// Returns true when `key` is defined in the given language table.
+    pub fn has_key(&self, language: Language, key: &str) -> bool {
+        match language {
+            Language::En => self.en.contains_key(key),
+            Language::Fr => self.fr.contains_key(key),
+        }
+    }
+
     /// Resolves a translation key for the active language, falling back to English, then the key.
     pub fn t<'a>(&'a self, key: &'a str) -> &'a str {
         let active = match self.language {

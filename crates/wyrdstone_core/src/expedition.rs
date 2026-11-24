@@ -16,7 +16,7 @@
 
 //! Endless Drakkar Expedition: roguelite Match-3 waves with escalating challenges and boons.
 
-use crate::balance::ExpeditionTuning;
+use crate::balance::{BalanceConfig, ExpeditionTuning};
 use crate::board::RuneType;
 use crate::city::{CityState, ResourceBundle};
 use crate::level::{LevelDef, Objective};
@@ -29,10 +29,21 @@ use serde::{Deserialize, Serialize};
 pub const EXPEDITION_BUILDING_ID: &str = "expedition";
 /// Number of cells along each side of an expedition board.
 const EXPEDITION_BOARD_SIZE: usize = 8;
+/// Start/end inclusive indices of the central ice field.
+const EXPEDITION_ICE_MIN: usize = 2;
+const EXPEDITION_ICE_MAX: usize = 5;
 /// Rows of the central ice field filled in reading order.
-const EXPEDITION_ICE_ROWS: std::ops::RangeInclusive<usize> = 2..=5;
+const EXPEDITION_ICE_ROWS: std::ops::RangeInclusive<usize> =
+    EXPEDITION_ICE_MIN..=EXPEDITION_ICE_MAX;
 /// Columns of the central ice field filled in reading order.
-const EXPEDITION_ICE_COLS: std::ops::RangeInclusive<usize> = 2..=5;
+const EXPEDITION_ICE_COLS: std::ops::RangeInclusive<usize> =
+    EXPEDITION_ICE_MIN..=EXPEDITION_ICE_MAX;
+/// Maximum number of ice cells that can be placed in an expedition wave.
+pub(crate) const MAX_EXPEDITION_ICE_CELLS: u32 = ((EXPEDITION_ICE_MAX - EXPEDITION_ICE_MIN + 1)
+    * (EXPEDITION_ICE_MAX - EXPEDITION_ICE_MIN + 1))
+    as u32;
+/// Upper bound applied when sanitizing persisted expedition score bonuses.
+pub const MAX_EXPEDITION_SCORE_BONUS_PCT: u32 = 1_000;
 
 /// Roguelite blessing offered between Expedition waves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +114,17 @@ impl ExpeditionRun {
         }
     }
 
+    /// Clamps persisted expedition run fields to legal bounds so tampered saves cannot freeze or overflow.
+    pub fn sanitize(&mut self, balance: &BalanceConfig) {
+        self.wave = self.wave.max(1);
+        let max_board_cells = (EXPEDITION_BOARD_SIZE * EXPEDITION_BOARD_SIZE) as u32;
+        self.starting_boosters = self.starting_boosters.min(max_board_cells);
+        self.extra_moves = self.extra_moves.min(balance.expedition.moves_cap);
+        self.score_bonus_pct = self.score_bonus_pct.min(MAX_EXPEDITION_SCORE_BONUS_PCT);
+        self.fury_headstart = self.fury_headstart.min(FURY_CHARGE_MAX);
+        self.pending_boons.truncate(balance.expedition.boon_choices);
+    }
+
     /// Generates an escalating procedural board for the current expedition wave.
     pub fn generate_wave_level<R: Rng>(&self, rng: &mut R) -> LevelDef {
         self.generate_wave_level_with(&ExpeditionTuning::default(), rng)
@@ -110,7 +132,7 @@ impl ExpeditionRun {
 
     /// Generates the current wave board driven by the given expedition tuning.
     pub fn generate_wave_level_with<R: Rng>(&self, t: &ExpeditionTuning, rng: &mut R) -> LevelDef {
-        let w = self.wave;
+        let w = self.wave.max(1);
         let rune_types_count = if w == 1 {
             t.wave_one_rune_types.min(RuneType::ALL.len())
         } else {
@@ -162,9 +184,10 @@ impl ExpeditionRun {
             vec![]
         };
 
+        let placed_ice = ice_cells.len() as u32;
         let objectives = if w.is_multiple_of(t.score_wave_interval) {
             vec![
-                Objective::ClearIce { target: ice_target },
+                Objective::ClearIce { target: placed_ice },
                 Objective::ReachScore {
                     target: t
                         .score_base
@@ -173,7 +196,7 @@ impl ExpeditionRun {
             ]
         } else {
             vec![
-                Objective::ClearIce { target: ice_target },
+                Objective::ClearIce { target: placed_ice },
                 Objective::CollectRune {
                     rune: target_rune,
                     target: rune_target,
@@ -255,6 +278,6 @@ impl ExpeditionRun {
             }
         }
         self.pending_boons.clear();
-        self.wave += 1;
+        self.wave = self.wave.saturating_add(1);
     }
 }
