@@ -166,7 +166,7 @@ impl GameDataBundle {
         let i18n = I18nCatalog::from_json_strs(BUNDLED_EN_JSON, BUNDLED_FR_JSON, initial_language)
             .map_err(|e| format!("Failed to parse locales: {e}"))?;
 
-        Ok(Self {
+        let bundle = Self {
             balance,
             buildings,
             levels,
@@ -177,7 +177,14 @@ impl GameDataBundle {
             bosses,
             achievements,
             i18n,
-        })
+        };
+        crate::validate::validate_bundle(&bundle).map_err(|problems| {
+            format!(
+                "Invalid bundled game data:
+{problems}"
+            )
+        })?;
+        Ok(bundle)
     }
 
     /// Finds a boss definition by its unique identifier.

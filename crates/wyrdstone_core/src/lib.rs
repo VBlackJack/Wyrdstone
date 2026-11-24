@@ -29,19 +29,21 @@ pub mod save;
 pub mod validate;
 
 pub use achievements::{achievement_progress, is_achievement_unlocked, AchievementDef, ClanRank};
-pub use balance::BalanceConfig;
+pub use balance::{BalanceConfig, BossTuning, DailyTuning, ExpeditionTuning, SessionTuning};
 pub use board::{
     ActiveTool, Board, Booster, Cell, CellPos, FallMove, MatchStepOutcome, PreparedClear, RuneType,
 };
-pub use boss::{BossDef, BossRiposteKind, BossState};
+pub use boss::{BossDef, BossRiposteKind, BossState, BOSS_RAID_BUILDING_ID};
 pub use city::{
-    AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats, CollectionDef,
-    QuestCondition, QuestDef, ResourceBundle, ToolInventory, ToolRecipeDef,
+    validate_city_content, AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats,
+    CollectionDef, QuestCondition, QuestDef, ResourceBundle, ToolInventory, ToolRecipeDef,
+    HUB_BUILDING_ID,
 };
-pub use expedition::{ExpeditionBoon, ExpeditionRun};
+pub use expedition::{ExpeditionBoon, ExpeditionRun, EXPEDITION_BUILDING_ID};
 pub use i18n::{I18nCatalog, Language};
 pub use level::{
     DailyBlessing, LevelDef, LevelOutcome, LevelSession, Objective, ObjectiveProgress,
+    DAILY_TRIAL_BUILDING_ID,
 };
 pub use patron::{PatronGod, FURY_CHARGE_MAX};
 pub use save::{GameDataBundle, SaveData};

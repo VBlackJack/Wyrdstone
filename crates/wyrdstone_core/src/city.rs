@@ -23,7 +23,6 @@ use crate::boss::BossDef;
 use crate::patron::PatronGod;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
 
 /// Maximum mastery star rank per building location.
 pub const MAX_MASTERY_STARS: u8 = 5;
@@ -47,27 +46,6 @@ pub const DEFAULT_AMULET_SCORE_PER_TIER: u32 = 15;
 pub const DEFAULT_AMULET_TIME_PER_TIER: u32 = 15;
 /// Fallback amulet tier step for starting boosters effects without an explicit `tier_step`.
 pub const DEFAULT_AMULET_BOOSTERS_PER_TIER: u32 = 1;
-
-/// Balance document holding only required fields (zeroed); every tunable falls back to its
-/// serde default, which backs the legacy no-balance wrappers.
-const LEGACY_DEFAULTS_RON: &str =
-    "(default_board_cols: 0, default_board_rows: 0, points_per_tile: 0, \
-combo_multiplier_step: 0.0, booster_activation_bonus: 0, ice_break_bonus: 0, chain_break_bonus: 0, \
-crate_break_bonus: 0, relic_drop_bonus: 0, remaining_move_bonus: 0, max_energy: 0, \
-energy_cost_per_level: 0, energy_regen_seconds: 0, mead_refill_cost: 0, mead_refill_energy: 0, \
-starting_wood: 0, starting_stone: 0, starting_gold: 0, starting_mead: 0, starting_mjolnir: 0, \
-starting_surtr_ember: 0, starting_loki_shuffle: 0, starting_thor_bolt: 0, \
-starting_bifrost_prism: 0, starting_drakkar_charge: 0, swap_anim_seconds: 0.0, \
-clear_anim_seconds: 0.0, fall_anim_seconds: 0.0, swipe_threshold_px: 0.0)";
-
-/// Returns a balance whose tunables all hold their built-in defaults (current game numbers).
-fn legacy_defaults() -> &'static BalanceConfig {
-    static DEFAULTS: OnceLock<BalanceConfig> = OnceLock::new();
-    DEFAULTS.get_or_init(|| {
-        BalanceConfig::from_ron_str(LEGACY_DEFAULTS_RON)
-            .expect("legacy defaults document must parse")
-    })
-}
 
 /// Bundle of village resources used for costs and rewards.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -446,7 +424,7 @@ impl CityState {
 
     /// Returns the escalating reward bundle and optional Runic Tool for a given login day (1..=7).
     pub fn login_tribute_reward(day: u8) -> (ResourceBundle, Option<ActiveTool>) {
-        Self::login_tribute_reward_with(day, legacy_defaults())
+        Self::login_tribute_reward_with(day, &BalanceConfig::default())
     }
 
     /// Returns the login tribute reward of a day (1..=7) from the balance table; days outside the
@@ -468,7 +446,7 @@ impl CityState {
         &mut self,
         today_day_index: u64,
     ) -> Option<(u8, ResourceBundle, Option<ActiveTool>)> {
-        self.try_claim_login_tribute_with(today_day_index, legacy_defaults())
+        self.try_claim_login_tribute_with(today_day_index, &BalanceConfig::default())
     }
 
     /// Claims today's Fjord Login Tribute using the balance reward table.
@@ -902,7 +880,7 @@ impl CityState {
 
     /// Applies the default Daily Trial streak multiplier (`+10%` per consecutive day beyond day 1).
     pub fn scale_daily_rewards(rewards: &ResourceBundle, streak: u32) -> ResourceBundle {
-        Self::scale_daily_rewards_with(rewards, streak, legacy_defaults())
+        Self::scale_daily_rewards_with(rewards, streak, &BalanceConfig::default())
     }
 
     /// Applies the Daily Trial streak multiplier using the balance percent per extra streak day.

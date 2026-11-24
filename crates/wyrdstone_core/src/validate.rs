@@ -19,13 +19,22 @@
 
 use crate::balance::BalanceConfig;
 use crate::board::RuneType;
-use crate::city::{QuestCondition, LOGIN_TRIBUTE_DAYS, MAX_DAILY_STREAK_CYCLE};
+use crate::boss::BOSS_RAID_BUILDING_ID;
+use crate::city::{
+    validate_city_content, QuestCondition, LOGIN_TRIBUTE_DAYS, MAX_DAILY_STREAK_CYCLE,
+};
+use crate::expedition::EXPEDITION_BUILDING_ID;
+use crate::level::DAILY_TRIAL_BUILDING_ID;
 use crate::save::GameDataBundle;
 use std::collections::HashSet;
 
 /// Identifiers that levels and collections may use as a building source without being a village
 /// building: the synthetic Daily Trial, Boss Raid and Expedition boards.
-pub const RESERVED_BUILDING_IDS: [&str; 3] = ["daily_trial", "boss_raid", "expedition"];
+pub const RESERVED_BUILDING_IDS: [&str; 3] = [
+    DAILY_TRIAL_BUILDING_ID,
+    BOSS_RAID_BUILDING_ID,
+    EXPEDITION_BUILDING_ID,
+];
 
 /// Smallest number of rune types a board can be played with.
 const MIN_RUNE_TYPES: usize = 3;
@@ -36,6 +45,11 @@ pub fn validate_bundle(b: &GameDataBundle) -> Result<(), String> {
     check_unique_ids(b, &mut problems);
     check_references(b, &mut problems);
     check_balance(&b.balance, b, &mut problems);
+    problems.extend(validate_city_content(
+        &b.buildings,
+        &b.amulets,
+        &b.achievements,
+    ));
     if problems.is_empty() {
         Ok(())
     } else {
@@ -93,6 +107,12 @@ fn check_references(b: &GameDataBundle, problems: &mut Vec<String>) {
     }
 
     for building in &b.buildings {
+        if RESERVED_BUILDING_IDS.contains(&building.id.as_str()) {
+            problems.push(format!(
+                "building '{}': collides with a reserved building id",
+                building.id
+            ));
+        }
         let linked = [
             Some(building.level_id.as_str()),
             building.mastery_level_id.as_deref(),

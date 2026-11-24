@@ -27,7 +27,7 @@ use wyrdstone_core::save::{
 };
 use wyrdstone_core::{
     ActiveTool, BalanceConfig, CityState, DailyBlessing, ExpeditionRun, GameDataBundle, Language,
-    LevelOutcome, LevelSession, ResourceBundle, SaveData,
+    LevelOutcome, LevelSession, ResourceBundle, SaveData, HUB_BUILDING_ID,
 };
 
 /// File name of the primary save inside the platform data directory.
@@ -277,7 +277,7 @@ impl GameContext {
             .buildings
             .first()
             .map(|b| b.id.clone())
-            .unwrap_or_else(|| "great_hall".to_string());
+            .unwrap_or_else(|| HUB_BUILDING_ID.to_string());
         let regen_secs = data.balance.energy_regen_seconds as f32;
 
         Self {
@@ -566,7 +566,7 @@ impl GameContext {
             .buildings
             .first()
             .map(|b| b.id.clone())
-            .unwrap_or_else(|| "great_hall".to_string());
+            .unwrap_or_else(|| HUB_BUILDING_ID.to_string());
         self.selected_difficulty = 0;
         self.active_modal = ActiveModal::None;
         self.confirm_reset = false;
@@ -591,7 +591,8 @@ impl GameContext {
     /// Launches today's deterministic Daily Trial board (free of Endurance cost once per day).
     pub fn start_daily_trial(&mut self) -> Result<(), &'static str> {
         let day_idx = today_day_index();
-        let level_def = wyrdstone_core::LevelDef::daily_challenge(day_idx);
+        let level_def =
+            wyrdstone_core::LevelDef::daily_challenge_with(day_idx, &self.data.balance.daily);
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
         let mut session = LevelSession::start_full(
@@ -602,7 +603,8 @@ impl GameContext {
             None,
             &mut self.rng,
         );
-        session.apply_daily_blessing(DailyBlessing::for_day(day_idx));
+        session
+            .apply_daily_blessing_with(DailyBlessing::for_day(day_idx), &self.data.balance.session);
         self.active_level_id = Some(format!("daily_{day_idx}"));
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -629,7 +631,7 @@ impl GameContext {
             None,
             &mut self.rng,
         );
-        session.apply_daily_blessing(self.today_blessing());
+        session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -652,14 +654,15 @@ impl GameContext {
         }
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let mut session = LevelSession::start_boss(
+        let mut session = LevelSession::start_boss_with(
             boss_def,
             amulet,
             city_bonuses,
             self.city.selected_patron,
+            &self.data.balance,
             &mut self.rng,
         );
-        session.apply_daily_blessing(self.today_blessing());
+        session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.active_level_id = Some(boss_id.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -678,14 +681,15 @@ impl GameContext {
             }
             let amulet = self.city.active_amulet_effect(&self.data.amulets);
             let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-            let mut session = LevelSession::start_expedition_wave(
+            let mut session = LevelSession::start_expedition_wave_with(
                 &run,
+                &self.data.balance.expedition,
                 amulet,
                 city_bonuses,
                 self.city.selected_patron,
                 &mut self.rng,
             );
-            session.apply_daily_blessing(self.today_blessing());
+            session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
             self.active_level_id = Some(session.level.id.clone());
             self.active_session = Some(session);
             self.active_modal = ActiveModal::None;
@@ -704,14 +708,15 @@ impl GameContext {
         let run = ExpeditionRun::new();
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let mut session = LevelSession::start_expedition_wave(
+        let mut session = LevelSession::start_expedition_wave_with(
             &run,
+            &self.data.balance.expedition,
             amulet,
             city_bonuses,
             self.city.selected_patron,
             &mut self.rng,
         );
-        session.apply_daily_blessing(self.today_blessing());
+        session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
         self.active_session = Some(session);
@@ -734,14 +739,15 @@ impl GameContext {
         run.apply_boon(boon, &mut self.city);
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let mut session = LevelSession::start_expedition_wave(
+        let mut session = LevelSession::start_expedition_wave_with(
             &run,
+            &self.data.balance.expedition,
             amulet,
             city_bonuses,
             self.city.selected_patron,
             &mut self.rng,
         );
-        session.apply_daily_blessing(self.today_blessing());
+        session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
         self.active_session = Some(session);
@@ -890,7 +896,7 @@ mod progress_tests {
     #[test]
     fn built_tiers_count_as_progress() {
         let mut city = fresh_city();
-        city.building_tiers.insert("great_hall".to_string(), 1);
+        city.building_tiers.insert(HUB_BUILDING_ID.to_string(), 1);
         assert!(has_saved_progress(&city, 0));
     }
 

@@ -1868,7 +1868,8 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                     &rewards,
                     &balance,
                 );
-                ctx.last_rewards = wyrdstone_core::CityState::scale_daily_rewards(&rewards, streak);
+                ctx.last_rewards =
+                    wyrdstone_core::CityState::scale_daily_rewards_with(&rewards, streak, &balance);
                 ctx.last_daily_streak = Some(streak);
             } else {
                 ctx.city
