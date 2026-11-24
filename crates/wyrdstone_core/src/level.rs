@@ -23,7 +23,7 @@ use crate::balance::{
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, PreparedClear, RuneType};
 use crate::boss::{BossDef, BossState};
 use crate::city::{AmuletEffect, CityBonuses, ResourceBundle};
-use crate::expedition::ExpeditionRun;
+use crate::expedition::{ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITION_BUILDING_ID};
 use crate::patron::{
     PatronGod, FURY_CHARGE_MAX, FURY_PER_COMBO_STEP, FURY_PER_OBSTACLE, FURY_PER_TILE,
 };
@@ -454,6 +454,7 @@ pub struct LevelSession {
     pub blitz_freeze_secs: f32,
     pub blitz_bonus_time_earned: f32,
     pub blitz_tuning: BlitzTuning,
+    pub expedition_relics: Vec<ExpeditionRelic>,
     pub daily_blessing: Option<DailyBlessing>,
     pub boss: Option<BossState>,
 }
@@ -574,6 +575,104 @@ impl LevelSession {
         session
     }
 
+    /// Starts an Endless Drakkar Expedition wave with Relics, Skald's Oaths, and Wave-5 Boss Raids.
+    pub fn start_expedition_wave_full<R: Rng>(
+        run: &ExpeditionRun,
+        balance: &BalanceConfig,
+        bosses: &[BossDef],
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        rng: &mut R,
+    ) -> Self {
+        let mut session = if run.is_boss_wave() && !bosses.is_empty() {
+            let boss_idx = ((run.wave / 5).saturating_sub(1) as usize) % bosses.len();
+            let mut boss = bosses[boss_idx].clone();
+            let hp_pct = 60u64.saturating_add(u64::from(run.wave).saturating_mul(8));
+            boss.max_hp = ((u64::from(boss.max_hp) * hp_pct) / 100).max(1_200) as u32;
+            let base_lvl = run.generate_wave_level_v2(&balance.expedition, rng);
+            boss.max_moves = base_lvl.max_moves;
+            let mut level = boss.to_level_def();
+            level.id = format!("expedition_w{}", run.wave);
+            level.building_id = EXPEDITION_BUILDING_ID.to_string();
+            level.base_reward = base_lvl.base_reward;
+            level.frost_spread = base_lvl.frost_spread;
+            if run.active_oath == Some(ExpeditionOath::BerserkerRage) {
+                level.cursed_cells.extend([
+                    (2, 5, balance.boss.curse_turns),
+                    (5, 2, balance.boss.curse_turns),
+                ]);
+            }
+            Self::start_full(
+                level,
+                amulet,
+                city_bonuses,
+                patron,
+                Some(BossState::new_with(boss, &balance.boss)),
+                rng,
+            )
+        } else {
+            let level = run.generate_wave_level_v2(&balance.expedition, rng);
+            Self::start_full(level, amulet, city_bonuses, patron, None, rng)
+        };
+        session.apply_session_tuning(&balance.session);
+        session.score_bonus_pct = session.score_bonus_pct.saturating_add(run.score_bonus_pct);
+        session.fury = session
+            .fury
+            .saturating_add(run.fury_headstart)
+            .min(FURY_CHARGE_MAX);
+        for _ in 0..run.starting_boosters {
+            if session.board.spawn_random_starting_booster(rng).is_none() {
+                break;
+            }
+        }
+        session.expedition_relics = run.relics.clone();
+        let mut extra_boosters = 0u32;
+        for &relic in &run.relics {
+            match relic {
+                ExpeditionRelic::ValkyrieFeathers => {
+                    session.fury_charge_bonus_pct =
+                        session.fury_charge_bonus_pct.saturating_add(25);
+                }
+                ExpeditionRelic::SurtrCoal => {
+                    let half = session.overdrive_max / 2;
+                    session.add_overdrive_charge(half);
+                }
+                ExpeditionRelic::MimirScroll => {
+                    session.resource_bonus_pct = session.resource_bonus_pct.saturating_add(15);
+                    extra_boosters = extra_boosters.saturating_add(1);
+                }
+                ExpeditionRelic::Gjallarhorn => {
+                    session.boss_damage_bonus_pct =
+                        session.boss_damage_bonus_pct.saturating_add(35);
+                }
+                ExpeditionRelic::FrostbreakerAxe | ExpeditionRelic::BifrostCompass => {}
+            }
+        }
+        if let Some(oath) = run.active_oath {
+            match oath {
+                ExpeditionOath::IronVow => {
+                    session.resource_bonus_pct = session.resource_bonus_pct.saturating_add(60);
+                }
+                ExpeditionOath::Frostbound => {
+                    session.resource_bonus_pct = session.resource_bonus_pct.saturating_add(50);
+                    extra_boosters = extra_boosters.saturating_add(1);
+                }
+                ExpeditionOath::BerserkerRage => {
+                    session.score_bonus_pct = session.score_bonus_pct.saturating_add(40);
+                    session.fury_charge_bonus_pct =
+                        session.fury_charge_bonus_pct.saturating_add(30);
+                }
+            }
+        }
+        for _ in 0..extra_boosters {
+            if session.board.spawn_random_starting_booster(rng).is_none() {
+                break;
+            }
+        }
+        session
+    }
+
     /// Full session constructor supporting Patron God, optional Boss Raid, amulet, and city bonuses.
     pub fn start_full<R: Rng>(
         level: LevelDef,
@@ -675,6 +774,7 @@ impl LevelSession {
             blitz_freeze_secs: 0.0,
             blitz_bonus_time_earned: 0.0,
             blitz_tuning: BlitzTuning::default(),
+            expedition_relics: Vec::new(),
             daily_blessing: None,
             boss,
         }
@@ -1011,15 +1111,34 @@ impl LevelSession {
             .ice_broken
             .saturating_add(step.chains_broken)
             .saturating_add(step.crates_broken);
+        if self
+            .expedition_relics
+            .contains(&ExpeditionRelic::FrostbreakerAxe)
+            && obstacles_broken > 0
+        {
+            self.score = self
+                .score
+                .saturating_add(obstacles_broken.saturating_mul(150));
+            self.add_overdrive_charge(obstacles_broken.saturating_mul(10));
+        }
         let combo_bonus = step
             .max_combo
             .saturating_sub(1)
             .saturating_mul(FURY_PER_COMBO_STEP);
+        let gjallarhorn_fury = if self
+            .expedition_relics
+            .contains(&ExpeditionRelic::Gjallarhorn)
+        {
+            step.boosters_used.saturating_mul(10)
+        } else {
+            0
+        };
         let raw_fury = tiles_cleared
             .saturating_mul(FURY_PER_TILE)
             .saturating_add(favored_fury_bonus)
             .saturating_add(obstacles_broken.saturating_mul(FURY_PER_OBSTACLE))
-            .saturating_add(combo_bonus);
+            .saturating_add(combo_bonus)
+            .saturating_add(gjallarhorn_fury);
         let fury_gain = add_pct_u32(raw_fury, self.fury_charge_bonus_pct);
         self.fury = self.fury.saturating_add(fury_gain).min(self.fury_max);
 

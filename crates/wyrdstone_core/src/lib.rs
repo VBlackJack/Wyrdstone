@@ -43,7 +43,9 @@ pub use city::{
     CollectionDef, QuestCondition, QuestDef, ResourceBundle, ToolInventory, ToolRecipeDef,
     HUB_BUILDING_ID, MAX_DAILY_STREAK_CYCLE,
 };
-pub use expedition::{ExpeditionBoon, ExpeditionRun, EXPEDITION_BUILDING_ID};
+pub use expedition::{
+    ExpeditionBoon, ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITION_BUILDING_ID,
+};
 pub use i18n::{I18nCatalog, Language};
 pub use level::{
     BlitzMedal, DailyBlessing, LevelDef, LevelOutcome, LevelSession, Objective, ObjectiveProgress,

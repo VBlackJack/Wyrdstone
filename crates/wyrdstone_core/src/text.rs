@@ -74,7 +74,7 @@ pub fn format_boon_desc(i18n: &I18nCatalog, boon: ExpeditionBoon) -> String {
         | ExpeditionBoon::ScoreBoostPct(v)
         | ExpeditionBoon::GrantMjolnir(v)
         | ExpeditionBoon::FuryHeadstart(v) => i18n.t_fmt(key, &[("val", v.to_string())]),
-        ExpeditionBoon::StartingBooster => i18n.t(key).to_string(),
+        ExpeditionBoon::StartingBooster | ExpeditionBoon::Relic(_) => i18n.t(key).to_string(),
     }
 }
 

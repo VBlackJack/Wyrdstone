@@ -45,6 +45,78 @@ pub(crate) const MAX_EXPEDITION_ICE_CELLS: u32 = ((EXPEDITION_ICE_MAX - EXPEDITI
 /// Upper bound applied when sanitizing persisted expedition score bonuses.
 pub const MAX_EXPEDITION_SCORE_BONUS_PCT: u32 = 1_000;
 
+/// Build-defining roguelite Relic collected during an Endless Drakkar Expedition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ExpeditionRelic {
+    ValkyrieFeathers,
+    SurtrCoal,
+    FrostbreakerAxe,
+    MimirScroll,
+    Gjallarhorn,
+    BifrostCompass,
+}
+
+impl ExpeditionRelic {
+    pub const ALL: [Self; 6] = [
+        Self::ValkyrieFeathers,
+        Self::SurtrCoal,
+        Self::FrostbreakerAxe,
+        Self::MimirScroll,
+        Self::Gjallarhorn,
+        Self::BifrostCompass,
+    ];
+
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            Self::ValkyrieFeathers => "expedition.relic.feathers.name",
+            Self::SurtrCoal => "expedition.relic.coal.name",
+            Self::FrostbreakerAxe => "expedition.relic.axe.name",
+            Self::MimirScroll => "expedition.relic.scroll.name",
+            Self::Gjallarhorn => "expedition.relic.horn.name",
+            Self::BifrostCompass => "expedition.relic.compass.name",
+        }
+    }
+
+    pub const fn desc_key(self) -> &'static str {
+        match self {
+            Self::ValkyrieFeathers => "expedition.relic.feathers.desc",
+            Self::SurtrCoal => "expedition.relic.coal.desc",
+            Self::FrostbreakerAxe => "expedition.relic.axe.desc",
+            Self::MimirScroll => "expedition.relic.scroll.desc",
+            Self::Gjallarhorn => "expedition.relic.horn.desc",
+            Self::BifrostCompass => "expedition.relic.compass.desc",
+        }
+    }
+}
+
+/// Optional risk/reward Skald's Oath contract taken before an Expedition wave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ExpeditionOath {
+    IronVow,
+    Frostbound,
+    BerserkerRage,
+}
+
+impl ExpeditionOath {
+    pub const ALL: [Self; 3] = [Self::IronVow, Self::Frostbound, Self::BerserkerRage];
+
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            Self::IronVow => "expedition.oath.iron.name",
+            Self::Frostbound => "expedition.oath.frost.name",
+            Self::BerserkerRage => "expedition.oath.berserker.name",
+        }
+    }
+
+    pub const fn desc_key(self) -> &'static str {
+        match self {
+            Self::IronVow => "expedition.oath.iron.desc",
+            Self::Frostbound => "expedition.oath.frost.desc",
+            Self::BerserkerRage => "expedition.oath.berserker.desc",
+        }
+    }
+}
+
 /// Roguelite blessing offered between Expedition waves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExpeditionBoon {
@@ -53,6 +125,7 @@ pub enum ExpeditionBoon {
     GrantMjolnir(u32),
     StartingBooster,
     FuryHeadstart(u32),
+    Relic(ExpeditionRelic),
 }
 
 impl ExpeditionBoon {
@@ -71,6 +144,7 @@ impl ExpeditionBoon {
             ExpeditionBoon::GrantMjolnir(_) => "expedition.boon.mjolnir.name",
             ExpeditionBoon::StartingBooster => "expedition.boon.booster.name",
             ExpeditionBoon::FuryHeadstart(_) => "expedition.boon.fury.name",
+            ExpeditionBoon::Relic(relic) => relic.name_key(),
         }
     }
 
@@ -81,6 +155,7 @@ impl ExpeditionBoon {
             ExpeditionBoon::GrantMjolnir(_) => "expedition.boon.mjolnir.desc",
             ExpeditionBoon::StartingBooster => "expedition.boon.booster.desc",
             ExpeditionBoon::FuryHeadstart(_) => "expedition.boon.fury.desc",
+            ExpeditionBoon::Relic(relic) => relic.desc_key(),
         }
     }
 }
@@ -94,6 +169,14 @@ pub struct ExpeditionRun {
     pub starting_boosters: u32,
     pub fury_headstart: u32,
     pub pending_boons: Vec<ExpeditionBoon>,
+    #[serde(default)]
+    pub relics: Vec<ExpeditionRelic>,
+    #[serde(default)]
+    pub pending_oath: Option<ExpeditionOath>,
+    #[serde(default)]
+    pub oath_accepted: bool,
+    #[serde(default)]
+    pub active_oath: Option<ExpeditionOath>,
 }
 
 impl Default for ExpeditionRun {
@@ -111,7 +194,16 @@ impl ExpeditionRun {
             starting_boosters: 0,
             fury_headstart: 0,
             pending_boons: Vec::new(),
+            relics: Vec::new(),
+            pending_oath: None,
+            oath_accepted: false,
+            active_oath: None,
         }
+    }
+
+    /// True on every 5th Expedition wave (Mythological Boss encounter).
+    pub const fn is_boss_wave(&self) -> bool {
+        self.wave > 0 && self.wave.is_multiple_of(5)
     }
 
     /// Clamps persisted expedition run fields to legal bounds so tampered saves cannot freeze or overflow.
@@ -123,6 +215,15 @@ impl ExpeditionRun {
         self.score_bonus_pct = self.score_bonus_pct.min(MAX_EXPEDITION_SCORE_BONUS_PCT);
         self.fury_headstart = self.fury_headstart.min(FURY_CHARGE_MAX);
         self.pending_boons.truncate(balance.expedition.boon_choices);
+        let mut seen = Vec::new();
+        self.relics.retain(|&r| {
+            if seen.contains(&r) {
+                false
+            } else {
+                seen.push(r);
+                true
+            }
+        });
     }
 
     /// Generates an escalating procedural board for the current expedition wave.
@@ -245,6 +346,61 @@ impl ExpeditionRun {
         }
     }
 
+    /// Generates an Expedition 2.0 wave with rotating board shapes, Relics, and Skald's Oaths.
+    pub fn generate_wave_level_v2<R: Rng>(&self, t: &ExpeditionTuning, rng: &mut R) -> LevelDef {
+        let mut lvl = self.generate_wave_level_with(t, rng);
+        let w = self.wave.max(1);
+        let mut max_moves = t.base_moves.saturating_add(self.extra_moves);
+        if self.relics.contains(&ExpeditionRelic::BifrostCompass) {
+            max_moves = max_moves.saturating_add(2);
+        }
+        if self.active_oath == Some(ExpeditionOath::IronVow) {
+            max_moves = max_moves.saturating_sub(3).max(12);
+        }
+        lvl.max_moves = max_moves.min(t.moves_cap);
+        lvl.blocked_cells = match (w - 1) % 6 {
+            0 => vec![(0, 0), (7, 0), (0, 7), (7, 7)],
+            1 => vec![(0, 3), (0, 4), (7, 3), (7, 4)],
+            2 => vec![(3, 0), (4, 0), (3, 7), (4, 7)],
+            3 => vec![
+                (0, 0),
+                (1, 0),
+                (0, 1),
+                (7, 0),
+                (6, 0),
+                (7, 1),
+                (0, 7),
+                (7, 7),
+            ],
+            4 => vec![
+                (0, 2),
+                (0, 3),
+                (0, 4),
+                (0, 5),
+                (7, 2),
+                (7, 3),
+                (7, 4),
+                (7, 5),
+            ],
+            _ => vec![(0, 1), (0, 6), (7, 1), (7, 6)],
+        };
+        if self.active_oath == Some(ExpeditionOath::Frostbound) {
+            lvl.frost_spread = true;
+        }
+        if self.active_oath == Some(ExpeditionOath::BerserkerRage) {
+            for cpos in [(2, 5, t.curse_turns), (5, 2, t.curse_turns)] {
+                if !lvl
+                    .cursed_cells
+                    .iter()
+                    .any(|&(c, r, _)| c == cpos.0 && r == cpos.1)
+                {
+                    lvl.cursed_cells.push(cpos);
+                }
+            }
+        }
+        lvl
+    }
+
     /// Rolls 3 distinct roguelite boons to choose from after winning a wave.
     pub fn roll_boon_choices<R: Rng>(&mut self, rng: &mut R) {
         self.roll_boon_choices_with(&ExpeditionTuning::default(), rng);
@@ -256,6 +412,26 @@ impl ExpeditionRun {
         pool.shuffle(rng);
         pool.truncate(tuning.boon_choices);
         self.pending_boons = pool;
+    }
+
+    /// Rolls Expedition 2.0 choices: offers an unowned Relic slot and rolls an optional Skald's Oath.
+    pub fn roll_boon_choices_v2<R: Rng>(&mut self, tuning: &ExpeditionTuning, rng: &mut R) {
+        self.roll_boon_choices_with(tuning, rng);
+        let unowned: Vec<ExpeditionRelic> = ExpeditionRelic::ALL
+            .iter()
+            .copied()
+            .filter(|r| !self.relics.contains(r))
+            .collect();
+        if !unowned.is_empty() && !self.pending_boons.is_empty() {
+            let pick = unowned[rng.gen_range(0..unowned.len())];
+            self.pending_boons[0] = ExpeditionBoon::Relic(pick);
+        }
+        self.oath_accepted = false;
+        self.pending_oath = if self.wave >= 2 {
+            Some(ExpeditionOath::ALL[rng.gen_range(0..ExpeditionOath::ALL.len())])
+        } else {
+            None
+        };
     }
 
     /// Applies a chosen boon and advances to the next wave.
@@ -276,7 +452,19 @@ impl ExpeditionRun {
             ExpeditionBoon::FuryHeadstart(f) => {
                 self.fury_headstart = self.fury_headstart.saturating_add(f).min(FURY_CHARGE_MAX);
             }
+            ExpeditionBoon::Relic(relic) => {
+                if !self.relics.contains(&relic) {
+                    self.relics.push(relic);
+                }
+            }
         }
+        self.active_oath = if self.oath_accepted {
+            self.pending_oath.take()
+        } else {
+            self.pending_oath = None;
+            None
+        };
+        self.oath_accepted = false;
         self.pending_boons.clear();
         self.wave = self.wave.saturating_add(1);
     }

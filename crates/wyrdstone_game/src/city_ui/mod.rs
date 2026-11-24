@@ -180,6 +180,7 @@ pub enum CityAction {
     StartExpedition,
     StartValhallaBlitz,
     PickExpeditionBoon(usize),
+    ToggleExpeditionOath,
     EndExpedition,
     FightBoss(String),
     SelectPatron(PatronGod),
@@ -2512,6 +2513,16 @@ pub fn handle_city_buttons(
                     rebuild = true;
                 }
             },
+            CityAction::ToggleExpeditionOath => {
+                if let Some(run) = ctx.active_expedition.as_mut() {
+                    if run.pending_oath.is_some() {
+                        run.oath_accepted = !run.oath_accepted;
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                        ctx.persist();
+                        rebuild = true;
+                    }
+                }
+            }
             CityAction::EndExpedition => {
                 if !ctx.confirm_end_expedition {
                     ctx.confirm_end_expedition = true;

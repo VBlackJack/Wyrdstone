@@ -2072,7 +2072,28 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
             if ctx.tutorial_step == 1 {
                 ctx.tutorial_step = 2;
             }
-            if let Some(boss) = boss_def {
+            if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
+                let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
+                ctx.city
+                    .record_expedition_wave(wave, &rewards, &ctx.data.balance);
+                if boss_def.is_some() {
+                    ctx.city.glory = ctx.city.glory.saturating_add(25);
+                }
+                if ctx
+                    .active_expedition
+                    .as_ref()
+                    .is_some_and(|r| r.active_oath == Some(wyrdstone_core::ExpeditionOath::IronVow))
+                {
+                    ctx.city.glory = ctx.city.glory.saturating_add(15);
+                }
+                if let Some(run) = ctx.active_expedition.as_mut() {
+                    run.roll_boon_choices_v2(&ctx.data.balance.expedition, &mut ctx.rng);
+                }
+                ctx.active_modal = ActiveModal::ExpeditionBoons;
+                ctx.persist();
+                next_state.set(AppState::FjordCity);
+                return;
+            } else if let Some(boss) = boss_def {
                 ctx.last_glory_reward = boss.glory_reward;
                 ctx.city.record_boss_victory_with_rewards(&boss, &rewards);
                 ctx.last_rewards = rewards;
@@ -2083,17 +2104,6 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                 ctx.last_blitz_medal = Some(medal);
                 ctx.last_blitz_new_best = is_new_best;
                 ctx.last_glory_reward = glory;
-            } else if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
-                let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
-                ctx.city
-                    .record_expedition_wave(wave, &rewards, &ctx.data.balance);
-                if let Some(run) = ctx.active_expedition.as_mut() {
-                    run.roll_boon_choices_with(&ctx.data.balance.expedition, &mut ctx.rng);
-                }
-                ctx.active_modal = ActiveModal::ExpeditionBoons;
-                ctx.persist();
-                next_state.set(AppState::FjordCity);
-                return;
             } else if building_id == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID {
                 let streak = ctx.city.record_daily_victory(
                     crate::state::today_day_index(),

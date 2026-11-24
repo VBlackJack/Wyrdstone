@@ -672,6 +672,7 @@ fn tampered_expedition_save_is_sanitized_and_does_not_freeze_or_overflow() {
         starting_boosters: u32::MAX,
         fury_headstart: u32::MAX,
         pending_boons: vec![wyrdstone_core::ExpeditionBoon::StartingBooster; 20],
+        ..Default::default()
     });
     save.save_to_path(&path).unwrap();
 

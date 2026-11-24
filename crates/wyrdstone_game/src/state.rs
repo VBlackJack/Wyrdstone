@@ -759,15 +759,15 @@ impl GameContext {
             }
             let amulet = self.city.active_amulet_effect(&self.data.amulets);
             let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-            let mut session = LevelSession::start_expedition_wave_with(
+            let mut session = LevelSession::start_expedition_wave_full(
                 &run,
-                &self.data.balance.expedition,
+                &self.data.balance,
+                &self.data.bosses,
                 amulet,
                 city_bonuses,
                 self.city.selected_patron,
                 &mut self.rng,
             );
-            session.apply_session_tuning(&self.data.balance.session);
             session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
             self.active_level_id = Some(session.level.id.clone());
             self.active_session = Some(session);
@@ -787,15 +787,15 @@ impl GameContext {
         let run = ExpeditionRun::new();
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let mut session = LevelSession::start_expedition_wave_with(
+        let mut session = LevelSession::start_expedition_wave_full(
             &run,
-            &self.data.balance.expedition,
+            &self.data.balance,
+            &self.data.bosses,
             amulet,
             city_bonuses,
             self.city.selected_patron,
             &mut self.rng,
         );
-        session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
@@ -819,15 +819,15 @@ impl GameContext {
         run.apply_boon(boon, &mut self.city);
         let amulet = self.city.active_amulet_effect(&self.data.amulets);
         let city_bonuses = self.city.compute_bonuses(&self.data.balance);
-        let mut session = LevelSession::start_expedition_wave_with(
+        let mut session = LevelSession::start_expedition_wave_full(
             &run,
-            &self.data.balance.expedition,
+            &self.data.balance,
+            &self.data.bosses,
             amulet,
             city_bonuses,
             self.city.selected_patron,
             &mut self.rng,
         );
-        session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);

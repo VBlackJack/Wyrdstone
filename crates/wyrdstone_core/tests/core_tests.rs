@@ -2683,3 +2683,68 @@ fn save_data_deserializes_without_blitz_stats_fields() {
     assert_eq!(loaded.city.stats.best_blitz_score, 0);
     assert_eq!(loaded.city.stats.blitz_runs_completed, 0);
 }
+
+#[test]
+fn expedition_v2_relics_oaths_varied_layouts_and_wave5_boss() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut rng = StdRng::seed_from_u64(601);
+    let mut city = CityState::new(&data.balance);
+    let mut run = ExpeditionRun::new();
+
+    // Board layouts vary across waves.
+    let w1_def = run.generate_wave_level_v2(&data.balance.expedition, &mut rng);
+    run.wave = 2;
+    let w2_def = run.generate_wave_level_v2(&data.balance.expedition, &mut rng);
+    assert_ne!(w1_def.blocked_cells, w2_def.blocked_cells);
+
+    // Rolling choices at wave >= 2 offers an unowned Relic plus a Skald's Oath.
+    run.roll_boon_choices_v2(&data.balance.expedition, &mut rng);
+    assert!(run.pending_oath.is_some());
+    assert!(matches!(
+        run.pending_boons.first(),
+        Some(wyrdstone_core::ExpeditionBoon::Relic(_))
+    ));
+    run.oath_accepted = true;
+    run.pending_boons[0] =
+        wyrdstone_core::ExpeditionBoon::Relic(wyrdstone_core::ExpeditionRelic::SurtrCoal);
+    run.apply_boon(run.pending_boons[0], &mut city);
+    assert!(run
+        .relics
+        .contains(&wyrdstone_core::ExpeditionRelic::SurtrCoal));
+    assert!(run.active_oath.is_some());
+
+    // Wave 5 spawns an Expedition Boss Raid while keeping Relics & Overdrive headstart.
+    run.wave = 5;
+    assert!(run.is_boss_wave());
+    let session = LevelSession::start_expedition_wave_full(
+        &run,
+        &data.balance,
+        &data.bosses,
+        None,
+        CityBonuses::default(),
+        PatronGod::Thor,
+        &mut rng,
+    );
+    assert!(session.boss.is_some());
+    assert!(session.overdrive_charge >= session.overdrive_max / 2);
+}
+
+#[test]
+fn save_data_deserializes_legacy_expedition_without_relics_or_oaths() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut base = SaveData::new_game(&data.balance, Language::En);
+    base.active_expedition = Some(ExpeditionRun::new());
+    let mut val = serde_json::to_value(&base).expect("serialize");
+    let exp_obj = val["active_expedition"]
+        .as_object_mut()
+        .expect("active_expedition map");
+    exp_obj.remove("relics");
+    exp_obj.remove("pending_oath");
+    exp_obj.remove("oath_accepted");
+    exp_obj.remove("active_oath");
+    let json = serde_json::to_string(&val).expect("to string");
+    let loaded: SaveData = serde_json::from_str(&json).expect("backward-compat load");
+    let run = loaded.active_expedition.expect("loaded run");
+    assert!(run.relics.is_empty());
+    assert!(run.active_oath.is_none());
+}

@@ -2001,7 +2001,23 @@ pub(super) fn spawn_expedition_boons_modal(
         CityAction::CloseModal,
         scroll_offset_y,
         |modal| {
+            if (run.wave + 1).is_multiple_of(5) {
+                modal.spawn((
+                    Text::new(i18n.t_fmt(
+                        "city.panel.expedition.next_boss_wave",
+                        &[("wave", (run.wave + 1).to_string())],
+                    )),
+                    TextFont {
+                        font_size: FONT_BODY,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_CRIMSON_TEXT),
+                ));
+            }
             let mut active_parts = Vec::new();
+            for &relic in &run.relics {
+                active_parts.push(i18n.t(relic.name_key()).to_string());
+            }
             if run.extra_moves > 0 {
                 active_parts.push(i18n.t_fmt(
                     "expedition.boon.moves.desc",
@@ -2049,6 +2065,7 @@ pub(super) fn spawn_expedition_boons_modal(
             }
 
             for (idx, boon) in run.pending_boons.iter().enumerate() {
+                let is_relic = matches!(boon, wyrdstone_core::ExpeditionBoon::Relic(_));
                 modal
                     .spawn((
                         Button,
@@ -2061,17 +2078,34 @@ pub(super) fn spawn_expedition_boons_modal(
                             ..default()
                         },
                         BackgroundColor(COLOR_PANEL_CARD),
-                        BorderColor(COLOR_ACCENT_GOLD),
+                        BorderColor(if is_relic {
+                            COLOR_ACCENT_TEAL
+                        } else {
+                            COLOR_ACCENT_GOLD
+                        }),
                         BorderRadius::all(Val::Px(10.0)),
                     ))
                     .with_children(|card| {
+                        let title_lbl = if is_relic {
+                            format!(
+                                "{} {}",
+                                i18n.t("city.panel.expedition.relic_tag"),
+                                i18n.t(boon.name_key())
+                            )
+                        } else {
+                            i18n.t(boon.name_key()).to_string()
+                        };
                         card.spawn((
-                            Text::new(i18n.t(boon.name_key())),
+                            Text::new(title_lbl),
                             TextFont {
                                 font_size: FONT_HEADING,
                                 ..default()
                             },
-                            TextColor(COLOR_ACCENT_GOLD),
+                            TextColor(if is_relic {
+                                COLOR_ACCENT_TEAL_TEXT
+                            } else {
+                                COLOR_ACCENT_GOLD
+                            }),
                         ));
                         card.spawn((
                             Text::new(format_boon_desc(i18n, *boon)),
@@ -2081,6 +2115,80 @@ pub(super) fn spawn_expedition_boons_modal(
                             },
                             TextColor(COLOR_TEXT_PRIMARY),
                         ));
+                    });
+            }
+
+            if let Some(oath) = run.pending_oath {
+                let accepted = run.oath_accepted;
+                modal
+                    .spawn((
+                        Node {
+                            flex_wrap: FlexWrap::Wrap,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(10.0)),
+                            column_gap: Val::Px(10.0),
+                            row_gap: Val::Px(6.0),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(if accepted {
+                            Color::srgba(0.32, 0.14, 0.14, 0.94)
+                        } else {
+                            COLOR_PANEL_CARD
+                        }),
+                        BorderColor(if accepted {
+                            COLOR_ACCENT_CRIMSON
+                        } else {
+                            COLOR_PANEL_BORDER
+                        }),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|orow| {
+                        orow.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            flex_shrink: 1.0,
+                            row_gap: Val::Px(2.0),
+                            ..default()
+                        })
+                        .with_children(|oinfo| {
+                            oinfo.spawn((
+                                Text::new(i18n.t(oath.name_key())),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_CRIMSON_TEXT),
+                            ));
+                            oinfo.spawn((
+                                Text::new(i18n.t(oath.desc_key())),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                        });
+                        spawn_small_button_colored(
+                            orow,
+                            if accepted {
+                                i18n.t("city.panel.expedition.oath_active")
+                            } else {
+                                i18n.t("city.panel.expedition.oath_accept")
+                            },
+                            CityAction::ToggleExpeditionOath,
+                            if accepted {
+                                COLOR_ACCENT_CRIMSON
+                            } else {
+                                COLOR_ACCENT_GOLD
+                            },
+                            if accepted {
+                                COLOR_TEXT_ON_ACCENT
+                            } else {
+                                COLOR_TEXT_DARK
+                            },
+                            true,
+                        );
                     });
             }
 
