@@ -1221,7 +1221,7 @@ pub fn tick_board_animation(
                 };
                 ctx.city.stats.record_clear(report.stats);
                 let combo = report.combo;
-                let gained_score = report.score_raw;
+                let gained_score = report.score_awarded;
                 let boss_damaged = report.boss.as_ref().is_some_and(|hit| hit.damage > 0);
                 let boss_phase2_name = report
                     .boss
@@ -1573,18 +1573,7 @@ pub fn tick_board_animation(
         } => {
             if input_state.skip_valhalla {
                 input_state.skip_valhalla = false;
-                let balance = ctx.data.balance.clone();
-                // Detonate any remaining boosters synchronously so skipping never forfeits points.
-                {
-                    let ctx_ref = ctx.as_mut();
-                    if let Some(session) = ctx_ref.active_session.as_mut() {
-                        session.detonate_bonus_boosters(
-                            &balance,
-                            &mut ctx_ref.rng,
-                            VICTORY_SKIP_MAX_DETONATIONS,
-                        );
-                    }
-                }
+                flush_remaining_bonus_boosters(ctx.as_mut());
                 finalize_level_transition(&mut ctx, &mut next_state);
                 input_state.phase = BoardAnimPhase::Idle;
                 return;
@@ -1609,10 +1598,11 @@ pub fn tick_board_animation(
                 };
 
                 if let Some(blast) = blast {
+                    ctx.city.stats.record_clear(blast.stats);
                     next_burst_at += ctx.anim_duration(VICTORY_BURST_INTERVAL_SECS);
                     let b_pos = blast.pos;
                     let b_kind = blast.booster;
-                    let gained_pts = blast.score_raw;
+                    let gained_pts = blast.score_awarded;
                     let cleared_cells = blast.cleared;
                     let (cols, rows) = ctx
                         .active_session
@@ -1742,6 +1732,7 @@ pub fn tick_board_animation(
             }
 
             if elapsed >= duration {
+                flush_remaining_bonus_boosters(ctx.as_mut());
                 finalize_level_transition(&mut ctx, &mut next_state);
                 input_state.phase = BoardAnimPhase::Idle;
             } else {
@@ -1753,6 +1744,21 @@ pub fn tick_board_animation(
                 };
             }
         }
+    }
+}
+
+fn flush_remaining_bonus_boosters(ctx: &mut GameContext) {
+    let balance = ctx.data.balance.clone();
+    let Some(session) = ctx.active_session.as_mut() else {
+        return;
+    };
+    let blasts = session.detonate_bonus_boosters_detailed(
+        &balance,
+        &mut ctx.rng,
+        VICTORY_SKIP_MAX_DETONATIONS,
+    );
+    for blast in blasts {
+        ctx.city.stats.record_clear(blast.stats);
     }
 }
 

@@ -566,6 +566,12 @@ pub fn legacy_fury(w: &mut World) -> Option<LegacyFury> {
         .as_ref()
         .map(|p| p.cells.clone())
         .unwrap_or(spawned_positions);
+    if prepared.is_none()
+        && !w.session.board.has_valid_moves()
+        && w.session.board.ensure_playable(&mut w.rng)
+    {
+        w.session.last_shuffled = true;
+    }
     let pending = prepared.map(|prep| LegacyPending {
         prepared: prep,
         combo: 1,

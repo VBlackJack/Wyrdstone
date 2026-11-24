@@ -36,7 +36,10 @@ use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 use bevy::window::{PrimaryWindow, WindowResized};
-use wyrdstone_core::{ActiveTool, BuildingDef, I18nCatalog, PatronGod, QuestCondition};
+use wyrdstone_core::{
+    format_blessing_desc, format_rank_perk, ActiveTool, BuildingDef, I18nCatalog, PatronGod,
+    QuestCondition,
+};
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
 const BACKUP_NOTICE_DURATION_SECS: f32 = 6.0;
@@ -402,13 +405,13 @@ fn spawn_city_tree(
                             &[("rank", rank_label.to_string()), ("mastery", mastery_label)],
                         )
                     } else {
-                        let perk_label = i18n.t(rank.perk_key());
+                        let perk_label = format_rank_perk(i18n, rank, &ctx.data.balance);
                         i18n.t_fmt(
                             "city.header.subtitle_full",
                             &[
                                 ("rank", rank_label.to_string()),
                                 ("mastery", mastery_label),
-                                ("perk", perk_label.to_string()),
+                                ("perk", perk_label),
                             ],
                         )
                     };
@@ -486,12 +489,18 @@ fn spawn_city_tree(
                                 TextColor(Color::srgb(0.45, 0.84, 0.96)),
                             ));
                         });
-                    if ctx.city.stats.win_streak >= 2 {
+                    if ctx.city.stats.win_streak >= ctx.data.balance.win_streak_booster_threshold {
                         spawn_resource_pill(
                             pills,
                             &i18n.t_fmt(
                                 "city.header.win_streak",
-                                &[("streak", ctx.city.stats.win_streak.to_string())],
+                                &[
+                                    ("streak", ctx.city.stats.win_streak.to_string()),
+                                    (
+                                        "boosters",
+                                        ctx.data.balance.win_streak_starting_boosters.to_string(),
+                                    ),
+                                ],
                             ),
                             COLOR_ACCENT_GOLD,
                         );
@@ -504,7 +513,10 @@ fn spawn_city_tree(
                             "city.header.blessing_pill",
                             &[
                                 ("name", i18n.t(blessing.name_key()).to_string()),
-                                ("desc", i18n.t(blessing.desc_key()).to_string()),
+                                (
+                                    "desc",
+                                    format_blessing_desc(i18n, blessing, &ctx.data.balance.session),
+                                ),
                             ],
                         )
                     };

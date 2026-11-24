@@ -166,7 +166,10 @@ pub struct BonusBlast {
     pub booster: Booster,
     /// Score before bonuses.
     pub score_raw: u32,
+    /// Score actually added to the session, after the score bonus.
+    pub score_awarded: u32,
     pub cleared: Vec<CellPos>,
+    pub stats: ClearStatsDelta,
 }
 
 #[derive(Debug, Clone)]
@@ -266,8 +269,8 @@ impl LevelSession {
     }
 
     /// Unleashes the Patron God's Divine Fury when the gauge is full. Clearing gods (Thor,
-    /// Freya) return a turn that consumes no move; Loki and Odin only place pieces and, as
-    /// shipped, skip the shuffle check and finalize.
+    /// Freya) return a turn that consumes no move; Loki and Odin place pieces and ensure the board
+    /// retains a valid move, skipping end-of-turn obstacle hooks.
     pub fn trigger_fury<R: Rng>(
         &mut self,
         tuning: &SessionTuning,
@@ -284,6 +287,9 @@ impl LevelSession {
         let vfx_targets = prepared
             .as_ref()
             .map_or(spawned, |prepared| prepared.cells.clone());
+        if prepared.is_none() && !self.board.has_valid_moves() && self.board.ensure_playable(rng) {
+            self.last_shuffled = true;
+        }
         let turn = prepared
             .map(|prepared| start_turn(&self.board, prepared, false, TurnOrigin::Fury(patron)));
         Some(FuryOutcome {
@@ -315,37 +321,61 @@ impl LevelSession {
     fn detonate_bonus_booster_at<R: Rng>(
         &mut self,
         pos: CellPos,
+        booster: Booster,
         balance: &BalanceConfig,
         rng: &mut R,
-    ) -> Option<MatchStepOutcome> {
+    ) -> Option<BonusBlast> {
         let prepared = self.board.prepare_booster_detonation(pos)?;
+        let score_before = self.score;
         let step = self
             .board
             .commit_clear_step(&prepared, BONUS_DETONATION_COMBO, balance);
+        let runes_cleared: u64 = step.cleared_runes.values().map(|&v| u64::from(v)).sum();
         self.apply_step_progress(&step);
         self.board.apply_gravity_and_refill_tracked(rng);
-        Some(step)
+        Some(BonusBlast {
+            pos,
+            booster,
+            score_raw: step.score_gained,
+            score_awarded: self.score.saturating_sub(score_before),
+            cleared: step.cleared_positions,
+            stats: ClearStatsDelta {
+                runes_cleared,
+                combo: BONUS_DETONATION_COMBO,
+            },
+        })
     }
 
     /// Detonates the first remaining booster of the board (one victory celebration burst).
-    /// Refill matches are not resolved and nothing is added to the lifetime statistics.
+    /// Refill matches are not resolved, and lifetime statistics are returned on [`BonusBlast::stats`].
     pub fn detonate_next_bonus_booster<R: Rng>(
         &mut self,
         balance: &BalanceConfig,
         rng: &mut R,
     ) -> Option<BonusBlast> {
         let (pos, booster) = self.board.find_remaining_boosters().into_iter().next()?;
-        let (score_raw, cleared) = self
-            .detonate_bonus_booster_at(pos, balance, rng)
-            .map_or((0, Vec::new()), |step| {
-                (step.score_gained, step.cleared_positions)
-            });
-        Some(BonusBlast {
-            pos,
-            booster,
-            score_raw,
-            cleared,
-        })
+        self.detonate_bonus_booster_at(pos, booster, balance, rng)
+    }
+
+    /// Synchronously detonates up to `max` remaining boosters and returns each [`BonusBlast`]
+    /// so callers can record lifetime statistics and scores accurately.
+    pub fn detonate_bonus_boosters_detailed<R: Rng>(
+        &mut self,
+        balance: &BalanceConfig,
+        rng: &mut R,
+        max: usize,
+    ) -> Vec<BonusBlast> {
+        let mut blasts = Vec::new();
+        for _ in 0..max {
+            let Some((pos, booster)) = self.board.find_remaining_boosters().into_iter().next()
+            else {
+                break;
+            };
+            if let Some(blast) = self.detonate_bonus_booster_at(pos, booster, balance, rng) {
+                blasts.push(blast);
+            }
+        }
+        blasts
     }
 
     /// Synchronously detonates up to `max` remaining boosters (the victory skip) and returns how
@@ -356,16 +386,8 @@ impl LevelSession {
         rng: &mut R,
         max: usize,
     ) -> u32 {
-        let mut detonated = 0;
-        for _ in 0..max {
-            let Some((pos, _)) = self.board.find_remaining_boosters().into_iter().next() else {
-                break;
-            };
-            if self.detonate_bonus_booster_at(pos, balance, rng).is_some() {
-                detonated += 1;
-            }
-        }
-        detonated
+        self.detonate_bonus_boosters_detailed(balance, rng, max)
+            .len() as u32
     }
 
     /// Clears the boss hit marker once the portrait flash is over.
@@ -466,8 +488,8 @@ impl Turn {
         balance: &BalanceConfig,
         rng: &mut R,
     ) -> TurnStep {
-        // Buried relics that reached the bottom are collected before any cascade. As shipped,
-        // this step resets `last_combo` to 0 and the boss hit marker through the progress call.
+        // Buried relics that reached the bottom are collected before any cascade. Relic collection
+        // preserves `last_combo`, `last_shuffled`, and boss damage state across the step.
         let relic_step = session.board.collect_bottom_relics(balance);
         if relic_step.relics_dropped > 0 {
             let positions = relic_step.cleared_positions.clone();

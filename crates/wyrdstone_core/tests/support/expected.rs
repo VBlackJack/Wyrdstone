@@ -56,8 +56,8 @@ const S2: [&str; 6] = [
 const S3: [&str; 5] = [
     "a0: pending combo=1 consumes_turn=true direct=false cells=[1,7 2,7 3,7] spawned=[] converted=[] fired=[] | score=0 fury=0 moves=23 last_combo=1 shuffled=false ice=0 frost=None obj=[0, 0] boss(none) out=InProgress stats=(0,0) curses=[] board=366e1e3bdc61f2ff",
     "a0: cleared combo=1 raw=150 runes=3 cleared=[1,7 2,7 3,7] fall=23:70dfd487e38252ae boss_hit=false phase2=None | score=150 fury=15 moves=23 last_combo=1 shuffled=false ice=0 frost=None obj=[0, 0] boss(none) out=InProgress stats=(3,1) curses=[] board=cbf4406e74a58359",
-    "a0: relics positions=[3,7] fall=7:a843fafb3d91a69c | score=500 fury=15 moves=23 last_combo=0 shuffled=false ice=0 frost=None obj=[1, 0] boss(none) out=InProgress stats=(3,1) curses=[] board=0927d40d9fb861d1",
-    "a0: ended frost=None curse_hits=[] riposte=[]None cursed_remain=false shuffled=false outcome=InProgress boosters_left=0 | score=500 fury=15 moves=23 last_combo=0 shuffled=false ice=0 frost=None obj=[1, 0] boss(none) out=InProgress stats=(3,1) curses=[] board=0927d40d9fb861d1",
+    "a0: relics positions=[3,7] fall=7:a843fafb3d91a69c | score=500 fury=15 moves=23 last_combo=1 shuffled=false ice=0 frost=None obj=[1, 0] boss(none) out=InProgress stats=(3,1) curses=[] board=0927d40d9fb861d1",
+    "a0: ended frost=None curse_hits=[] riposte=[]None cursed_remain=false shuffled=false outcome=InProgress boosters_left=0 | score=500 fury=15 moves=23 last_combo=1 shuffled=false ice=0 frost=None obj=[1, 0] boss(none) out=InProgress stats=(3,1) curses=[] board=0927d40d9fb861d1",
     "rng_next=17172080263765897934",
 ];
 

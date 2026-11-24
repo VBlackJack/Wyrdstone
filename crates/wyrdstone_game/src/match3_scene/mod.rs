@@ -34,7 +34,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
 use wyrdstone_core::{
-    ActiveTool, Booster, CellPos, ClearPreview, LevelOutcome, LevelSession, Turn, TurnStep,
+    format_patron_desc, ActiveTool, Booster, CellPos, ClearPreview, LevelOutcome, LevelSession,
+    Turn, TurnStep,
 };
 
 pub(super) const PARTICLES_PER_CLEARED_TILE: usize = 9;
@@ -1448,15 +1449,16 @@ pub fn handle_match3_hud_buttons(
         if !help_open && ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
             match *interaction {
                 Interaction::Hovered => {
-                    let tip_key = match *action {
-                        Match3UiAction::SelectTool(tool) => Some(tool_hint_key(tool)),
-                        Match3UiAction::TriggerFury => {
-                            ctx.active_session.as_ref().map(|s| s.patron.desc_key())
+                    let tip_txt = match *action {
+                        Match3UiAction::SelectTool(tool) => {
+                            Some(ctx.data.i18n.t(tool_hint_key(tool)).to_string())
                         }
+                        Match3UiAction::TriggerFury => ctx.active_session.as_ref().map(|s| {
+                            format_patron_desc(&ctx.data.i18n, s.patron, &ctx.data.balance.session)
+                        }),
                         _ => None,
                     };
-                    if let Some(k) = tip_key {
-                        let txt = ctx.data.i18n.t(k).to_string();
+                    if let Some(txt) = tip_txt {
                         for (mut t, mut node) in &mut tooltip_q {
                             t.0 = txt.clone();
                             node.display = Display::Flex;
@@ -1582,9 +1584,9 @@ pub fn handle_match3_hud_buttons(
                     .map(|s| s.can_trigger_fury())
                     .unwrap_or(false);
                 if !ready {
-                    if let Some(desc_key) = ctx.active_session.as_ref().map(|s| s.patron.desc_key())
-                    {
-                        let txt = ctx.data.i18n.t(desc_key).to_string();
+                    if let Some(patron) = ctx.active_session.as_ref().map(|s| s.patron) {
+                        let txt =
+                            format_patron_desc(&ctx.data.i18n, patron, &ctx.data.balance.session);
                         for (mut t, mut node) in &mut tooltip_q {
                             t.0 = txt.clone();
                             node.display = Display::Flex;

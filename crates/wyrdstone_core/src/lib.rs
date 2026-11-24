@@ -26,6 +26,7 @@ pub mod i18n;
 pub mod level;
 pub mod patron;
 pub mod save;
+pub mod text;
 pub mod turn;
 pub mod validate;
 
@@ -38,7 +39,7 @@ pub use boss::{BossDef, BossRiposteKind, BossState, BOSS_RAID_BUILDING_ID};
 pub use city::{
     validate_city_content, AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats,
     CollectionDef, QuestCondition, QuestDef, ResourceBundle, ToolInventory, ToolRecipeDef,
-    HUB_BUILDING_ID,
+    HUB_BUILDING_ID, MAX_DAILY_STREAK_CYCLE,
 };
 pub use expedition::{ExpeditionBoon, ExpeditionRun, EXPEDITION_BUILDING_ID};
 pub use i18n::{I18nCatalog, Language};
@@ -48,6 +49,10 @@ pub use level::{
 };
 pub use patron::{PatronGod, FURY_CHARGE_MAX};
 pub use save::{GameDataBundle, SaveData};
+pub use text::{
+    format_achievement_desc, format_blessing_desc, format_boon_desc, format_boss_desc,
+    format_building_bonus, format_patron_desc, format_rank_perk,
+};
 pub use turn::{
     BonusBlast, BossHit, ClearPreview, ClearReport, ClearStatsDelta, FuryOutcome, RelicReport,
     SwapRejected, ToolRejected, Turn, TurnEnd, TurnOrigin, TurnStep, VICTORY_SKIP_MAX_DETONATIONS,

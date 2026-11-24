@@ -401,6 +401,14 @@ pub(super) fn spawn_match3_hud(
                                                 ("hp", boss.hp.to_string()),
                                                 ("max", boss.def.max_hp.to_string()),
                                                 (
+                                                    "mult",
+                                                    ctx.data
+                                                        .balance
+                                                        .boss
+                                                        .weakness_multiplier
+                                                        .to_string(),
+                                                ),
+                                                (
                                                     "rune",
                                                     i18n.t(boss.active_weakness().i18n_key())
                                                         .to_string(),

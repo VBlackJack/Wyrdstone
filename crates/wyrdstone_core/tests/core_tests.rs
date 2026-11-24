@@ -71,7 +71,6 @@ fn bundled_data_loads_and_i18n_has_full_parity() {
 
     for a in &data.amulets {
         assert_ne!(data.i18n.t(&a.name_key), a.name_key);
-        assert_ne!(data.i18n.t(&a.desc_key), a.desc_key);
     }
 
     let mut city = CityState::new(&data.balance);
@@ -421,12 +420,30 @@ fn procedural_daily_trial_and_streak_rewards() {
     assert_eq!(city.record_daily_victory(105, &reward, &data.balance), 1);
 }
 
+struct TestTempDir(std::path::PathBuf);
+
+impl TestTempDir {
+    fn new(prefix: &str) -> Self {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("{prefix}_{}_{}", std::process::id(), seq));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("create temp test dir");
+        Self(path)
+    }
+}
+
+impl Drop for TestTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn atomic_save_and_corrupt_backup() {
     let data = GameDataBundle::load_bundled(Language::En).unwrap();
-    let dir = std::env::temp_dir().join("wyrdstone_save_test");
-    let path = dir.join("test_save.json");
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = TestTempDir::new("wyrdstone_save_test");
+    let path = dir.0.join("test_save.json");
 
     let save = SaveData::new_game(&data.balance, Language::En);
     save.save_to_path(&path).expect("atomic save must succeed");
@@ -439,8 +456,6 @@ fn atomic_save_and_corrupt_backup() {
     std::fs::write(&path, "{ invalid json").unwrap();
     assert!(SaveData::load_from_path(&path).is_err());
     assert!(path.with_extension("json.corrupt").exists());
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -862,7 +877,13 @@ fn typography_guard_recursively_scans_all_project_text_files() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if path.is_dir() {
-                if matches!(name_str.as_ref(), ".git" | ".claude" | "target" | "local") {
+                let is_hidden_skip = name_str.starts_with('.') && name_str != ".github";
+                let is_android_build = name_str == "build"
+                    && dir.file_name().is_some_and(|parent| parent == "android");
+                if is_hidden_skip
+                    || is_android_build
+                    || matches!(name_str.as_ref(), "target" | "local")
+                {
                     continue;
                 }
                 // A nested checkout (for example a worktree) is not part of this project tree.
@@ -878,8 +899,12 @@ fn typography_guard_recursively_scans_all_project_text_files() {
                 if rel.components().count() >= 3 {
                     *visited_nested = true;
                 }
-                let Ok(content) = std::fs::read_to_string(&path) else {
-                    continue;
+                let content = match std::fs::read_to_string(&path) {
+                    Ok(text) => text,
+                    Err(err) => {
+                        violations.push(format!("{}: invalid UTF-8: {err}", rel.display()));
+                        continue;
+                    }
                 };
                 if content.starts_with('\u{FEFF}') {
                     violations.push(format!("{}:1 BOM", rel.display()));
@@ -2069,4 +2094,314 @@ fn clear_cell_set_does_not_duplicate_cleared_positions_on_direct_blast() {
         .filter(|&&p| p == CellPos::new(1, 1))
         .count();
     assert_eq!(count, 1);
+}
+
+#[test]
+fn locale_placeholders_match_between_en_and_fr() {
+    use std::collections::{BTreeSet, HashMap};
+
+    fn extract_placeholders(template: &str) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let mut chars = template.char_indices().peekable();
+        while let Some((idx, ch)) = chars.next() {
+            if ch == '{' {
+                let start = idx + 1;
+                let mut end = None;
+                for (j, c2) in chars.by_ref() {
+                    if c2 == '}' {
+                        end = Some(j);
+                        break;
+                    }
+                }
+                if let Some(end_idx) = end {
+                    out.insert(template[start..end_idx].to_string());
+                }
+            }
+        }
+        out
+    }
+
+    let en_map: HashMap<String, String> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/locales/en.json"
+    )))
+    .expect("en.json must parse");
+    let fr_map: HashMap<String, String> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/locales/fr.json"
+    )))
+    .expect("fr.json must parse");
+
+    assert_eq!(en_map.len(), fr_map.len());
+    for (key, en_val) in &en_map {
+        let fr_val = fr_map
+            .get(key)
+            .unwrap_or_else(|| panic!("missing French locale key '{key}'"));
+        assert_eq!(
+            extract_placeholders(en_val),
+            extract_placeholders(fr_val),
+            "placeholder mismatch for key '{key}' (en='{en_val}', fr='{fr_val}')"
+        );
+    }
+}
+
+#[test]
+fn text_formatters_resolve_all_placeholders_in_en_and_fr() {
+    let mut data = GameDataBundle::load_bundled(Language::En).expect("bundled data loads");
+    for lang in [Language::En, Language::Fr] {
+        data.i18n.set_language(lang);
+        let mut rendered = Vec::new();
+        for rank in [
+            wyrdstone_core::ClanRank::Scout,
+            wyrdstone_core::ClanRank::Huscarl,
+            wyrdstone_core::ClanRank::Jarl,
+            wyrdstone_core::ClanRank::HighKing,
+        ] {
+            rendered.push(wyrdstone_core::format_rank_perk(
+                &data.i18n,
+                rank,
+                &data.balance,
+            ));
+        }
+        for blessing in wyrdstone_core::DailyBlessing::ALL {
+            rendered.push(wyrdstone_core::format_blessing_desc(
+                &data.i18n,
+                blessing,
+                &data.balance.session,
+            ));
+        }
+        for patron in PatronGod::ALL {
+            rendered.push(wyrdstone_core::format_patron_desc(
+                &data.i18n,
+                patron,
+                &data.balance.session,
+            ));
+        }
+        for boon in wyrdstone_core::ExpeditionBoon::ALL {
+            rendered.push(wyrdstone_core::format_boon_desc(&data.i18n, boon));
+        }
+        for building in &data.buildings {
+            rendered.push(wyrdstone_core::format_building_bonus(
+                &data.i18n,
+                building,
+                &data.balance,
+            ));
+        }
+        for boss in &data.bosses {
+            rendered.push(wyrdstone_core::format_boss_desc(&data.i18n, boss));
+        }
+        for ach in &data.achievements {
+            rendered.push(wyrdstone_core::format_achievement_desc(&data.i18n, ach));
+        }
+        for text in rendered {
+            assert!(!text.is_empty());
+            assert!(
+                !text.contains('{') && !text.contains('}'),
+                "unreplaced placeholder in '{text}' ({lang:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn match4_and_lt_shapes_spawn_expected_boosters() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(4444);
+
+    fn checkerboard_cells(cols: usize, rows: usize) -> Vec<Cell> {
+        (0..cols * rows)
+            .map(|idx| {
+                let r = idx / cols;
+                let c = idx % cols;
+                Cell::playable(if (r + c).is_multiple_of(2) {
+                    RuneType::Water
+                } else {
+                    RuneType::Wood
+                })
+            })
+            .collect()
+    }
+
+    // 4-in-a-row horizontal match by swapping (2, 1) Fire with (2, 0) Stone:
+    // Row 0 becomes Fire, Fire, Fire, Fire, Water -> spawns LineHorizontal/LineVertical.
+    let mut cells4 = checkerboard_cells(5, 4);
+    cells4[0] = Cell::playable(RuneType::Fire);
+    cells4[1] = Cell::playable(RuneType::Fire);
+    cells4[2] = Cell::playable(RuneType::Stone);
+    cells4[3] = Cell::playable(RuneType::Fire);
+    cells4[7] = Cell::playable(RuneType::Fire); // (2, 1)
+    let mut board4 = Board::from_cells(5, 4, 6, cells4);
+    let prep4 = board4
+        .begin_swap_step(CellPos::new(2, 0), CellPos::new(2, 1))
+        .expect("4-match swap must be valid");
+    assert_eq!(prep4.spawned_boosters.len(), 1);
+    assert!(matches!(
+        prep4.spawned_boosters[0].2,
+        Booster::LineHorizontal | Booster::LineVertical
+    ));
+    let step4 = board4.commit_clear_step(&prep4, 1, &data.balance);
+    assert!(step4.valid);
+
+    // T-shape 5-tile match by swapping (2, 2) Stone with (2, 3) Fire on 5x5 grid:
+    // Horizontal at row 2 (cols 1, 2, 3) + vertical at col 2 (rows 0, 1, 2) -> spawns Bomb.
+    let mut cells_t = checkerboard_cells(5, 5);
+    cells_t[2 * 5 + 1] = Cell::playable(RuneType::Fire); // (1, 2)
+    cells_t[2 * 5 + 2] = Cell::playable(RuneType::Stone); // (2, 2)
+    cells_t[2 * 5 + 3] = Cell::playable(RuneType::Fire); // (3, 2)
+    cells_t[2] = Cell::playable(RuneType::Fire); // (2, 0)
+    cells_t[5 + 2] = Cell::playable(RuneType::Fire); // (2, 1)
+    cells_t[3 * 5 + 2] = Cell::playable(RuneType::Fire); // (2, 3) -> swapped to (2, 2)
+    let mut board_t = Board::from_cells(5, 5, 6, cells_t);
+    let prep_t = board_t
+        .begin_swap_step(CellPos::new(2, 2), CellPos::new(2, 3))
+        .expect("T-shape swap must be valid");
+    assert_eq!(prep_t.spawned_boosters.len(), 1);
+    assert_eq!(prep_t.spawned_boosters[0].2, Booster::Bomb);
+    let _ = board_t.commit_clear_step(&prep_t, 1, &data.balance);
+    let _ = board_t.apply_gravity_and_refill_tracked(&mut rng);
+}
+
+#[test]
+fn portal_transfers_piece_across_columns_during_gravity() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(7070);
+    let mut level = data.level_by_id("great_hall_1").unwrap().clone();
+    level.cols = 3;
+    level.rows = 3;
+    level.rune_types_count = 3;
+    level.ice_cells.clear();
+    level.chained_cells.clear();
+    level.crate_cells.clear();
+    level.relic_cells.clear();
+    level.fog_cells.clear();
+    level.cursed_cells.clear();
+    level.blocked_cells = vec![(0, 1), (0, 2), (1, 0)];
+    level.portals = vec![((0, 0), (1, 1))];
+    level.objectives = vec![wyrdstone_core::Objective::ReachScore { target: 500 }];
+
+    let mut board = Board::new_for_level(&level, &mut rng);
+    // Place a relic at portal source (0, 0) and empty portal destination (1, 1).
+    let src = CellPos::new(0, 0);
+    let dst = CellPos::new(1, 1);
+    let src_cell = board.get_mut(src).unwrap();
+    src_cell.relic = true;
+    src_cell.rune = None;
+    let dst_cell = board.get_mut(dst).unwrap();
+    dst_cell.rune = None;
+    dst_cell.relic = false;
+    dst_cell.booster = Booster::None;
+
+    board.apply_gravity_and_refill_tracked(&mut rng);
+    assert!(
+        board.get(dst).unwrap().relic,
+        "portal destination (1,1) must receive the relic from (0,0)"
+    );
+    assert!(
+        !board.get(src).unwrap().relic,
+        "portal source (0,0) must release its relic after transfer"
+    );
+}
+
+#[test]
+fn try_drink_mead_restores_energy_and_checks_bounds() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut city = CityState::new(&data.balance);
+    let cap = city.max_energy(&data.balance);
+
+    // At full cap, try_drink_mead is a no-op without spending Mead.
+    let initial_mead = city.resources.mead;
+    assert_eq!(city.try_drink_mead(&data.balance), Ok(cap));
+    assert_eq!(city.resources.mead, initial_mead);
+
+    // Below cap but insufficient Mead returns the exact shortage error key.
+    city.energy = 0;
+    city.resources.mead = data.balance.mead_refill_cost.saturating_sub(1);
+    assert_eq!(
+        city.try_drink_mead(&data.balance),
+        Err("city.error.not_enough_resources")
+    );
+    assert_eq!(city.energy, 0);
+
+    // Valid refill spends Mead and clamps at cap.
+    city.resources.mead = data.balance.mead_refill_cost + 5;
+    city.energy = cap.saturating_sub(3);
+    assert_eq!(city.try_drink_mead(&data.balance), Ok(cap));
+    assert_eq!(city.resources.mead, 5);
+}
+
+#[test]
+fn i18n_catalog_toggle_and_fallback() {
+    let mut catalog = wyrdstone_core::I18nCatalog::from_json_strs(
+        r#"{"only_en": "English Only", "greet": "Hello {name}"}"#,
+        r#"{"greet": "Bonjour {name}"}"#,
+        Language::Fr,
+    )
+    .expect("valid locale json parses");
+
+    assert_eq!(catalog.language(), Language::Fr);
+    assert!(catalog.has_key(Language::En, "only_en"));
+    assert!(!catalog.has_key(Language::Fr, "only_en"));
+    assert_eq!(catalog.t("only_en"), "English Only");
+    assert_eq!(catalog.t("missing.key"), "missing.key");
+    assert_eq!(
+        catalog.t_fmt("greet", &[("name", "Halvar".to_string())]),
+        "Bonjour Halvar"
+    );
+
+    catalog.toggle_language();
+    assert_eq!(catalog.language(), Language::En);
+    assert_eq!(
+        catalog.t_fmt("greet", &[("name", "Halvar".to_string())]),
+        "Hello Halvar"
+    );
+}
+
+#[test]
+fn loki_fury_keeps_board_playable_and_bonus_blasts_report_awarded_score_and_stats() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(8181);
+    let mut level = data.level_by_id("great_hall_1").unwrap().clone();
+    level.cols = 3;
+    level.rows = 3;
+    level.ice_cells.clear();
+    level.chained_cells.clear();
+    level.crate_cells.clear();
+    level.relic_cells.clear();
+    level.fog_cells.clear();
+    level.cursed_cells.clear();
+    level.blocked_cells.clear();
+    level.objectives = vec![wyrdstone_core::Objective::ReachScore { target: 999_999 }];
+
+    let mut session = LevelSession::start_full(
+        level,
+        None,
+        CityBonuses {
+            score_bonus_pct: 50,
+            ..CityBonuses::default()
+        },
+        PatronGod::Loki,
+        None,
+        &mut rng,
+    );
+    session.fury = session.fury_max;
+    let outcome = session
+        .trigger_fury(&data.balance.session, &mut rng)
+        .expect("Loki fury succeeds on 3x3 free board");
+    assert_eq!(outcome.patron, PatronGod::Loki);
+    assert!(outcome.turn.is_none());
+    assert!(
+        session.board.has_valid_moves(),
+        "Loki fury must leave at least one valid move"
+    );
+
+    let blasts = session.detonate_bonus_boosters_detailed(
+        &data.balance,
+        &mut rng,
+        wyrdstone_core::VICTORY_SKIP_MAX_DETONATIONS,
+    );
+    assert!(!blasts.is_empty());
+    for blast in blasts {
+        assert!(blast.score_awarded >= blast.score_raw);
+        assert!(blast.stats.runes_cleared > 0 || !blast.cleared.is_empty());
+    }
 }

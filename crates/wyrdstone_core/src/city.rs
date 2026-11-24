@@ -102,7 +102,6 @@ pub enum AmuletEffect {
 pub struct AmuletDef {
     pub id: String,
     pub name_key: String,
-    pub desc_key: String,
     pub cost: ResourceBundle,
     pub effect: AmuletEffect,
     /// Effect gained per extra tier; `None` uses the named per-effect default.

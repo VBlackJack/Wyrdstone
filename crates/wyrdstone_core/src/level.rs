@@ -727,8 +727,16 @@ impl LevelSession {
     pub fn apply_step_progress(&mut self, step: &MatchStepOutcome) {
         let boosted_score = add_pct_u32(step.score_gained, self.score_bonus_pct);
         self.score = self.score.saturating_add(boosted_score);
-        self.last_combo = step.max_combo;
-        self.last_shuffled = step.shuffled;
+        let is_relic_only_step = step.relics_dropped > 0
+            && step.max_combo == 0
+            && step.cleared_runes.is_empty()
+            && step.ice_broken == 0
+            && step.chains_broken == 0
+            && step.crates_broken == 0;
+        if !is_relic_only_step {
+            self.last_combo = step.max_combo;
+            self.last_shuffled = step.shuffled;
+        }
         self.turn_ice_broken = self.turn_ice_broken.saturating_add(step.ice_broken);
 
         let tiles_cleared: u32 = step
@@ -751,12 +759,14 @@ impl LevelSession {
         let fury_gain = add_pct_u32(raw_fury, self.fury_charge_bonus_pct);
         self.fury = self.fury.saturating_add(fury_gain).min(self.fury_max);
 
-        if let Some(boss) = self.boss.as_mut() {
-            boss.apply_step_damage(
-                step,
-                self.score_bonus_pct
-                    .saturating_add(self.boss_damage_bonus_pct),
-            );
+        if !is_relic_only_step {
+            if let Some(boss) = self.boss.as_mut() {
+                boss.apply_step_damage(
+                    step,
+                    self.score_bonus_pct
+                        .saturating_add(self.boss_damage_bonus_pct),
+                );
+            }
         }
 
         for prog in &mut self.objectives {

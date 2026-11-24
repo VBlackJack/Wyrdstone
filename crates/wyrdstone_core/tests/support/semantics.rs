@@ -63,8 +63,8 @@ pub fn check(n: usize, run: &Run) -> Result<(), String> {
             if end.snap.objectives.first() != Some(&1) {
                 return fail("S3 completes the relic objective");
             }
-            if end.snap.last_combo != 0 {
-                return fail("S3 ends with last_combo 0 (relic step resets it)");
+            if end.snap.last_combo != 1 {
+                return fail("S3 ends with last_combo 1 (relic step preserves it)");
             }
         }
         4 => {

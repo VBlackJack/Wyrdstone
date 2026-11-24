@@ -27,7 +27,9 @@ use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use wyrdstone_core::{
-    achievement_progress, AmuletEffect, CityState, I18nCatalog, PatronGod, ResourceBundle,
+    achievement_progress, format_achievement_desc, format_boon_desc, format_boss_desc,
+    format_patron_desc, AmuletEffect, CityState, I18nCatalog, PatronGod, ResourceBundle,
+    MAX_DAILY_STREAK_CYCLE,
 };
 
 pub(super) fn format_reward_summary(i18n: &I18nCatalog, res: ResourceBundle, glory: u32) -> String {
@@ -836,7 +838,10 @@ pub(super) fn spawn_stats_modal(
                 ),
                 i18n.t_fmt(
                     "city.panel.stats.streak",
-                    &[("val", st.daily_streak.to_string())],
+                    &[
+                        ("val", st.daily_streak.to_string()),
+                        ("max", MAX_DAILY_STREAK_CYCLE.to_string()),
+                    ],
                 ),
                 i18n.t_fmt(
                     "city.panel.stats.bosses",
@@ -1176,7 +1181,11 @@ pub(super) fn spawn_patrons_modal(
                                     TextColor(COLOR_ACCENT_GOLD),
                                 ));
                                 info.spawn((
-                                    Text::new(i18n.t(god.desc_key())),
+                                    Text::new(format_patron_desc(
+                                        i18n,
+                                        god,
+                                        &ctx.data.balance.session,
+                                    )),
                                     TextFont {
                                         font_size: FONT_SMALL,
                                         ..default()
@@ -1318,7 +1327,7 @@ pub(super) fn spawn_raids_modal(
                                     TextColor(COLOR_ACCENT_GOLD),
                                 ));
                                 info.spawn((
-                                    Text::new(i18n.t(&boss.desc_key)),
+                                    Text::new(format_boss_desc(i18n, boss)),
                                     TextFont {
                                         font_size: FONT_SMALL,
                                         ..default()
@@ -1326,13 +1335,26 @@ pub(super) fn spawn_raids_modal(
                                     TextColor(COLOR_TEXT_PRIMARY),
                                 ));
                                 info.spawn((
-                                    Text::new(i18n.t_fmt(
-                                        "city.panel.raids.weakness",
-                                        &[
-                                            ("rune", i18n.t(boss.weakness.i18n_key()).to_string()),
-                                            ("hp", boss.max_hp.to_string()),
-                                        ],
-                                    )),
+                                    Text::new(
+                                        i18n.t_fmt(
+                                            "city.panel.raids.weakness",
+                                            &[
+                                                (
+                                                    "rune",
+                                                    i18n.t(boss.weakness.i18n_key()).to_string(),
+                                                ),
+                                                (
+                                                    "mult",
+                                                    ctx.data
+                                                        .balance
+                                                        .boss
+                                                        .weakness_multiplier
+                                                        .to_string(),
+                                                ),
+                                                ("hp", boss.max_hp.to_string()),
+                                            ],
+                                        ),
+                                    ),
                                     TextFont {
                                         font_size: FONT_SMALL,
                                         ..default()
@@ -1504,7 +1526,7 @@ pub(super) fn spawn_achievements_modal(
                                 }),
                             ));
                             info.spawn((
-                                Text::new(i18n.t(&ach.desc_key)),
+                                Text::new(format_achievement_desc(i18n, ach)),
                                 TextFont {
                                     font_size: FONT_SMALL,
                                     ..default()
@@ -1624,7 +1646,7 @@ pub(super) fn spawn_expedition_boons_modal(
                             TextColor(COLOR_ACCENT_GOLD),
                         ));
                         card.spawn((
-                            Text::new(i18n.t(boon.desc_key())),
+                            Text::new(format_boon_desc(i18n, *boon)),
                             TextFont {
                                 font_size: FONT_BODY,
                                 ..default()
@@ -1923,4 +1945,54 @@ pub(super) fn spawn_chapter_dialogue_modal(
                 });
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wyrdstone_core::{GameDataBundle, Language};
+
+    #[test]
+    fn reward_summary_formats_glory_and_non_zero_resources() {
+        let data = GameDataBundle::load_bundled(Language::En).expect("bundled data loads");
+        let res = ResourceBundle {
+            wood: 15,
+            stone: 0,
+            gold: 25,
+            mead: 5,
+        };
+        let en = format_reward_summary(&data.i18n, res, 40);
+        assert!(en.contains("+40 Glory"));
+        assert!(en.contains("+15 Timber"));
+        assert!(!en.contains("Stone"));
+        assert!(en.contains("+25 Gold"));
+        assert!(en.contains("+5 Mead"));
+
+        let mut fr_i18n = data.i18n.clone();
+        fr_i18n.set_language(Language::Fr);
+        let fr = format_reward_summary(&fr_i18n, res, 40);
+        assert!(fr.contains("+40 Gloire"));
+        assert!(fr.contains("+15 Bois"));
+        assert!(!fr.contains("Pierre"));
+    }
+
+    #[test]
+    fn amulet_effect_formats_all_variants_without_raw_placeholders() {
+        let data = GameDataBundle::load_bundled(Language::En).expect("bundled data loads");
+        let effects = [
+            AmuletEffect::ResourceBonusPct(25),
+            AmuletEffect::ExtraMoves(3),
+            AmuletEffect::ScoreBonusPct(20),
+            AmuletEffect::StartingBoosters(2),
+            AmuletEffect::ExtraTimePct(30),
+        ];
+        for eff in effects {
+            let rendered = format_amulet_effect(&data.i18n, eff);
+            assert!(!rendered.is_empty());
+            assert!(
+                !rendered.contains("{val}"),
+                "unreplaced placeholder in {rendered}"
+            );
+        }
+    }
 }

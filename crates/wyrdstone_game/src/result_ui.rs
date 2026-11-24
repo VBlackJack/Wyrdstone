@@ -26,7 +26,7 @@ use crate::ui_style::{
 };
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
-use wyrdstone_core::{LevelOutcome, Objective};
+use wyrdstone_core::{LevelOutcome, Objective, MAX_DAILY_STREAK_CYCLE};
 
 #[derive(Component)]
 pub struct ResultRoot;
@@ -271,12 +271,13 @@ pub fn setup_result_ui(
                         });
                         if let Some(streak) = ctx.last_daily_streak {
                             card.spawn((
-                                Text::new(
-                                    i18n.t_fmt(
-                                        "result.daily.streak",
-                                        &[("days", streak.to_string())],
-                                    ),
-                                ),
+                                Text::new(i18n.t_fmt(
+                                    "result.daily.streak",
+                                    &[
+                                        ("days", streak.to_string()),
+                                        ("max", MAX_DAILY_STREAK_CYCLE.to_string()),
+                                    ],
+                                )),
                                 TextFont {
                                     font_size: FONT_BODY,
                                     ..default()

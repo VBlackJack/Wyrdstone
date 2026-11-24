@@ -368,7 +368,6 @@ fn check_i18n_keys(b: &GameDataBundle, problems: &mut Vec<String>) {
     for a in &b.amulets {
         let owner = format!("amulet '{}'", a.id);
         check_key(&owner, &a.name_key);
-        check_key(&owner, &a.desc_key);
     }
     for c in &b.collections {
         let owner = format!("collection '{}'", c.id);

@@ -955,3 +955,42 @@ mod read_only_notice_tests {
         assert_eq!(read_only_notice(None), NOTICE_SAVE_READ_ONLY);
     }
 }
+
+#[cfg(test)]
+mod energy_regen_tests {
+    use super::*;
+
+    fn test_balance() -> BalanceConfig {
+        BalanceConfig::from_ron_str(include_str!("../../../assets/data/balance.ron"))
+            .expect("bundled balance parses")
+    }
+
+    #[test]
+    fn wall_clock_regen_preserves_partial_tick_and_respects_cap() {
+        let balance = test_balance();
+        let mut city = CityState::new(&balance);
+        city.energy = 10;
+        let cap = city.max_energy(&balance);
+        let regen_secs = balance.energy_regen_seconds;
+
+        let mut anchor = 1_000;
+        // Elapsed = 2.5 ticks at 100% speed -> gains 2 points and advances anchor by 2 ticks.
+        let gained = advance_energy_regen(
+            &mut city,
+            &mut anchor,
+            1_000 + regen_secs * 2 + regen_secs / 2,
+            100,
+            &balance,
+        );
+        assert_eq!(gained, 2);
+        assert_eq!(city.energy, 12);
+        assert_eq!(anchor, 1_000 + regen_secs * 2);
+
+        // Filling past cap snaps anchor to `now`.
+        let now = anchor + regen_secs * 1_000;
+        let gained_to_cap = advance_energy_regen(&mut city, &mut anchor, now, 200, &balance);
+        assert_eq!(gained_to_cap, cap - 12);
+        assert_eq!(city.energy, cap);
+        assert_eq!(anchor, now);
+    }
+}

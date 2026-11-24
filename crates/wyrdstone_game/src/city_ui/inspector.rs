@@ -27,7 +27,7 @@ use crate::theme::*;
 use crate::ui_style::{button_shadow, display_font};
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
-use wyrdstone_core::{BuildingDef, I18nCatalog, Objective};
+use wyrdstone_core::{format_building_bonus, BuildingDef, I18nCatalog, Objective, HUB_BUILDING_ID};
 
 pub(super) fn spawn_building_inspector(
     inspector: &mut ChildBuilder,
@@ -251,7 +251,7 @@ pub(super) fn spawn_building_inspector(
                             TextColor(COLOR_ACCENT_GOLD),
                         ));
                         box_node.spawn((
-                            Text::new(i18n.t(&b.bonus_key)),
+                            Text::new(format_building_bonus(i18n, b, &ctx.data.balance)),
                             TextFont {
                                 font_size: FONT_SMALL,
                                 ..default()
@@ -543,8 +543,18 @@ pub(super) fn spawn_building_inspector(
 
                     // Upgrade cost breakdown
                     if !unlocked {
+                        let hub_name = ctx
+                            .data
+                            .building_by_id(HUB_BUILDING_ID)
+                            .map_or_else(String::new, |hub| i18n.t(&hub.name_key).to_string());
                         top.spawn((
-                            Text::new(i18n.t("city.panel.building.locked")),
+                            Text::new(i18n.t_fmt(
+                                "city.panel.building.locked_tier",
+                                &[
+                                    ("building", hub_name),
+                                    ("tier", b.requires_great_hall_tier.to_string()),
+                                ],
+                            )),
                             TextFont {
                                 font_size: FONT_BODY,
                                 ..default()

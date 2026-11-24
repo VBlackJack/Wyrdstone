@@ -273,7 +273,7 @@ fn s2_two_deep_cascade_scores_and_charges_fury_per_step() {
 }
 
 #[test]
-fn s3_relic_drop_resets_last_combo_to_zero() {
+fn s3_relic_drop_preserves_last_combo() {
     replay(3);
 }
 
