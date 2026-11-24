@@ -241,7 +241,7 @@
 
   "city.panel.expedition.button": "Expedition",
   "city.panel.expedition.boons_title": "Wave {wave} Cleared! Choose a Blessing",
-  "city.panel.expedition.cashout": "Return to Fjord",
+  "city.panel.expedition.cashout": "End Run & Cash Out",
   "expedition.boon.moves.name": "Wind of Njord",
   "expedition.boon.moves.desc": "+{val} max moves on all remaining waves",
   "expedition.boon.score.name": "Skald's Ballad",

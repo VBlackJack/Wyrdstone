@@ -38,13 +38,14 @@ pub struct TitleLogoFloat;
 
 #[derive(Component)]
 pub struct TitleAurora {
-    pub base_left_pct: f32,
     pub phase: f32,
     pub base_alpha: f32,
 }
 
 #[derive(Component)]
 pub struct TitleSnowflake {
+    pub base_x_pct: f32,
+    pub base_y_pct: f32,
     pub x_pct: f32,
     pub y_pct: f32,
     pub speed_y: f32,
@@ -149,7 +150,6 @@ fn spawn_title_tree(
             for (left, top, w, h, color, phase) in auroras {
                 bg.spawn((
                     TitleAurora {
-                        base_left_pct: left,
                         phase,
                         base_alpha: color.alpha(),
                     },
@@ -173,6 +173,8 @@ fn spawn_title_tree(
                 let size = 4.0 + (i % 4) as f32 * 2.2;
                 bg.spawn((
                     TitleSnowflake {
+                        base_x_pct: x_pct,
+                        base_y_pct: y_pct,
                         x_pct,
                         y_pct,
                         speed_y: 3.2 + (i % 5) as f32 * 1.1,
@@ -369,13 +371,21 @@ fn spawn_title_tree(
         });
 }
 
-/// Animates the floating WYRDSTONE emblem, aurora ribbons, and snowfall on the Title screen.
+/// Animates the floating WYRDSTONE emblem, aurora ribbons, and snowfall on the Title screen via GPU transforms.
 #[allow(clippy::type_complexity)]
 pub fn animate_title_ambience(
     time: Res<Time>,
     ctx: Res<GameContext>,
+    parent_nodes: Query<
+        &ComputedNode,
+        (
+            Without<TitleLogoFloat>,
+            Without<TitleAurora>,
+            Without<TitleSnowflake>,
+        ),
+    >,
     mut logos: Query<
-        &mut Node,
+        (&ComputedNode, &mut Transform),
         (
             With<TitleLogoFloat>,
             Without<TitleAurora>,
@@ -383,11 +393,11 @@ pub fn animate_title_ambience(
         ),
     >,
     mut auroras: Query<
-        (&TitleAurora, &mut Node, &mut ImageNode),
+        (&TitleAurora, &Parent, &mut Transform, &mut ImageNode),
         (Without<TitleLogoFloat>, Without<TitleSnowflake>),
     >,
     mut flakes: Query<
-        (&mut TitleSnowflake, &mut Node),
+        (&mut TitleSnowflake, &Parent, &mut Transform),
         (Without<TitleLogoFloat>, Without<TitleAurora>),
     >,
 ) {
@@ -398,26 +408,35 @@ pub fn animate_title_ambience(
     let elapsed = time.elapsed_secs();
 
     let float_px = (elapsed * 1.6).sin() * 5.0;
-    for mut node in &mut logos {
-        node.margin.top = Val::Px(float_px);
-        node.margin.bottom = Val::Px(2.0 - float_px);
+    for (computed, mut tf) in &mut logos {
+        let scale_factor = computed.inverse_scale_factor().max(0.01).recip();
+        tf.translation.y += float_px * scale_factor;
     }
 
-    for (aurora, mut node, mut img) in &mut auroras {
+    for (aurora, parent, mut tf, mut img) in &mut auroras {
         let drift = (elapsed * 0.32 + aurora.phase).sin() * 4.5;
-        node.left = Val::Percent(aurora.base_left_pct + drift);
+        let pw = parent_nodes
+            .get(parent.get())
+            .map(|n| n.size().x)
+            .unwrap_or(0.0);
+        tf.translation.x += drift * 0.01 * pw;
         let shimmer = 0.72 + 0.28 * (elapsed * 0.78 + aurora.phase * 1.4).cos();
         img.color = img.color.with_alpha(aurora.base_alpha * shimmer);
     }
 
-    for (mut flake, mut node) in &mut flakes {
+    for (mut flake, parent, mut tf) in &mut flakes {
         flake.y_pct += flake.speed_y * dt;
         if flake.y_pct > 102.0 {
             flake.y_pct = -3.0;
         }
         let sway = (elapsed * 1.1 + flake.phase).sin() * 1.4;
-        node.left = Val::Percent((flake.x_pct + sway).clamp(0.0, 99.0));
-        node.top = Val::Percent(flake.y_pct);
+        let target_x = (flake.x_pct + sway).clamp(0.0, 99.0);
+        let psize = parent_nodes
+            .get(parent.get())
+            .map(|n| n.size())
+            .unwrap_or(Vec2::ZERO);
+        tf.translation.x += (target_x - flake.base_x_pct) * 0.01 * psize.x;
+        tf.translation.y += (flake.y_pct - flake.base_y_pct) * 0.01 * psize.y;
     }
 }
 

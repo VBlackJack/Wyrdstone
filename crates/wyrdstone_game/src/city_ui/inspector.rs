@@ -149,16 +149,10 @@ pub(super) fn spawn_building_inspector(
                             } else {
                                 COLOR_PANEL_BORDER
                             }),
-                            BorderRadius::all(Val::Px(10.0)),
+                            BorderRadius::all(Val::Px(RADIUS_LG)),
                             button_shadow(),
                         ));
                     }
-
-                    top.spawn((
-                        Text::new(i18n.t(&b.name_key)),
-                        display_font(fjord_art, FONT_TITLE_MD - 3.0),
-                        TextColor(COLOR_ACCENT_GOLD),
-                    ));
 
                     let level_text = if tier == 0 {
                         i18n.t("city.panel.building.status.ruined").to_string()

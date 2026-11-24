@@ -16,6 +16,7 @@
 
 //! Wyrdstone Bevy application crate supporting both Windows desktop and Android.
 
+mod art_util;
 mod audio;
 mod city_ui;
 mod fjord_art;
@@ -111,10 +112,13 @@ pub fn run_app() {
         )
         .add_systems(
             Update,
-            (
-                title_ui::handle_title_buttons,
-                title_ui::animate_title_ambience,
-            )
+            title_ui::handle_title_buttons.run_if(in_state(AppState::Title)),
+        )
+        .add_systems(
+            PostUpdate,
+            title_ui::animate_title_ambience
+                .after(bevy::ui::UiSystem::Layout)
+                .before(bevy::transform::TransformSystem::TransformPropagate)
                 .run_if(in_state(AppState::Title)),
         )
         .add_systems(OnExit(AppState::Title), title_ui::cleanup_title_ui)
@@ -128,9 +132,15 @@ pub fn run_app() {
             (
                 city_ui::handle_city_buttons,
                 city_ui::sync_map_building_layout,
-                city_ui::animate_city_ambience,
             )
                 .chain()
+                .run_if(in_state(AppState::FjordCity)),
+        )
+        .add_systems(
+            PostUpdate,
+            city_ui::animate_city_ambience
+                .after(bevy::ui::UiSystem::Layout)
+                .before(bevy::transform::TransformSystem::TransformPropagate)
                 .run_if(in_state(AppState::FjordCity)),
         )
         .add_systems(OnExit(AppState::FjordCity), city_ui::cleanup_city_ui)

@@ -189,22 +189,7 @@ fn finish_overlay_image(pixels: Vec<u8>) -> Image {
 }
 
 fn blend_overlay_px(pixels: &mut [u8], x: usize, y: usize, rgba: [u8; 4]) {
-    if x >= OVERLAY_TEX_SIZE || y >= OVERLAY_TEX_SIZE {
-        return;
-    }
-    let idx = (y * OVERLAY_TEX_SIZE + x) * 4;
-    let src_a = rgba[3] as f32 / 255.0;
-    let dst_a = pixels[idx + 3] as f32 / 255.0;
-    let out_a = src_a + dst_a * (1.0 - src_a);
-    if out_a <= 0.0001 {
-        return;
-    }
-    for c in 0..3 {
-        let s = rgba[c] as f32;
-        let d = pixels[idx + c] as f32;
-        pixels[idx + c] = ((s * src_a + d * dst_a * (1.0 - src_a)) / out_a).clamp(0.0, 255.0) as u8;
-    }
-    pixels[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0) as u8;
+    crate::art_util::blend_px(pixels, OVERLAY_TEX_SIZE, OVERLAY_TEX_SIZE, x, y, rgba);
 }
 
 type LineSeg = ((f32, f32), (f32, f32));

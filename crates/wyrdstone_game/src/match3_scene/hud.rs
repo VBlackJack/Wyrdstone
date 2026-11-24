@@ -17,9 +17,10 @@
 //! Match-3 HUD overlay: moves, live countdown timer, objectives, active tools bar, and Guide modal.
 
 use super::{
-    FuryReadyPulse, LowMovesPulse, Match3Cleanup, Match3ComboText, Match3FuryText, Match3HudBar,
-    Match3HudRoot, Match3MovesText, Match3ObjectiveText, Match3ScoreText, Match3TimerText,
-    Match3TooltipText, Match3UiAction, LOW_MOVES_THRESHOLD,
+    FuryReadyPulse, LowMovesPulse, Match3BossHpFill, Match3BossHpText, Match3Cleanup,
+    Match3ComboText, Match3FuryText, Match3HudBar, Match3HudRoot, Match3MovesText,
+    Match3ObjectiveText, Match3ScoreText, Match3TimerText, Match3TooltipText, Match3UiAction,
+    LOW_MOVES_THRESHOLD,
 };
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
@@ -34,7 +35,9 @@ use crate::vfx_art::VfxTextures;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
-use wyrdstone_core::{ActiveTool, I18nCatalog, LevelSession, Objective, ObjectiveProgress};
+use wyrdstone_core::{
+    ActiveTool, BossState, I18nCatalog, LevelSession, Objective, ObjectiveProgress, RuneType,
+};
 
 fn moves_label(i18n: &I18nCatalog, session: &LevelSession) -> String {
     i18n.t_fmt(
@@ -98,6 +101,28 @@ fn fury_label(i18n: &I18nCatalog, session: &LevelSession, is_compact: bool) -> S
     }
 }
 
+fn boss_hp_label(i18n: &I18nCatalog, boss: &BossState, weakness_mult: u32) -> String {
+    let boss_hp_key = if boss.is_phase2() {
+        "match3.boss.phase2_badge"
+    } else {
+        "match3.boss.hp"
+    };
+    i18n.t_fmt(
+        boss_hp_key,
+        &[
+            ("boss", i18n.t(&boss.def.name_key).to_string()),
+            ("hp", boss.hp.to_string()),
+            ("max", boss.def.max_hp.to_string()),
+            ("mult", weakness_mult.to_string()),
+            (
+                "rune",
+                i18n.t(boss.active_weakness().i18n_key()).to_string(),
+            ),
+            ("turns", boss.turns_until_riposte.to_string()),
+        ],
+    )
+}
+
 /// Which optional top-bar banner is showing next to the Undo button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HudBanner {
@@ -108,12 +133,15 @@ pub enum HudBanner {
 }
 
 /// Everything in the HUD that changes its structure, colours or widget set (not just a text).
-/// When the shape is unchanged between two states, the dynamic texts can be updated in place;
+/// When the shape is unchanged between two states, the dynamic texts and boss HP bar can be updated in place;
 /// otherwise the HUD must be rebuilt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HudShape {
     low_moves: bool,
     has_boss: bool,
+    boss_phase2: bool,
+    boss_hit_flash: bool,
+    boss_weakness: Option<RuneType>,
     banner: HudBanner,
     fury_ready: bool,
     objectives_complete: Vec<bool>,
@@ -129,19 +157,22 @@ pub(super) fn hud_shape(session: &LevelSession) -> HudShape {
     } else {
         HudBanner::None
     };
+    let boss = session.boss.as_ref();
     HudShape {
         low_moves: session.moves_left <= LOW_MOVES_THRESHOLD,
-        has_boss: session.boss.is_some(),
+        has_boss: boss.is_some(),
+        boss_phase2: boss.is_some_and(|b| b.is_phase2()),
+        boss_hit_flash: boss.is_some_and(|b| b.last_damage_dealt > 0),
+        boss_weakness: boss.map(|b| b.active_weakness()),
         banner,
         fury_ready: session.can_trigger_fury(),
         objectives_complete: session.objectives.iter().map(|o| o.is_complete()).collect(),
     }
 }
 
-/// True when the HUD can follow `new` from `old` by rewriting texts only. Boss fights always
-/// rebuild: the boss panel carries an HP bar and portrait state that texts alone cannot express.
+/// True when the HUD can follow `new` from `old` by rewriting texts and boss HP fill in place.
 pub(super) fn can_update_in_place(old: Option<&HudShape>, new: &HudShape) -> bool {
-    !new.has_boss && old == Some(new)
+    old == Some(new)
 }
 
 type HudTextItems = (
@@ -151,6 +182,7 @@ type HudTextItems = (
     Option<&'static Match3ObjectiveText>,
     Option<&'static Match3ComboText>,
     Option<&'static Match3FuryText>,
+    Option<&'static Match3BossHpText>,
 );
 
 type HudTextFilter = Or<(
@@ -159,22 +191,25 @@ type HudTextFilter = Or<(
     With<Match3ObjectiveText>,
     With<Match3ComboText>,
     With<Match3FuryText>,
+    With<Match3BossHpText>,
 )>;
 
-/// Dynamic HUD texts that cascade steps rewrite in place instead of rebuilding the whole HUD.
+/// Dynamic HUD texts and boss HP bar that cascade steps rewrite in place instead of rebuilding the whole HUD.
 #[derive(SystemParam)]
 pub struct HudTextQueries<'w, 's> {
     texts: Query<'w, 's, HudTextItems, HudTextFilter>,
+    boss_hp_fills: Query<'w, 's, &'static mut Node, With<Match3BossHpFill>>,
 }
 
 impl HudTextQueries<'_, '_> {
-    /// Rewrites moves, score, objective, combo and fury texts from the live session.
+    /// Rewrites moves, score, objective, combo, fury texts and boss HP bar from the live session.
     pub(super) fn refresh(&mut self, ctx: &GameContext, is_compact: bool) {
         let Some(session) = &ctx.active_session else {
             return;
         };
         let i18n = &ctx.data.i18n;
-        for (mut text, moves, score, objective, combo, fury) in &mut self.texts {
+        let weakness_mult = ctx.data.balance.boss.weakness_multiplier;
+        for (mut text, moves, score, objective, combo, fury, boss_hp) in &mut self.texts {
             let label = if moves.is_some() {
                 moves_label(i18n, session)
             } else if score.is_some() {
@@ -188,11 +223,25 @@ impl HudTextQueries<'_, '_> {
                 combo_label(i18n, session)
             } else if fury.is_some() {
                 fury_label(i18n, session, is_compact)
+            } else if boss_hp.is_some() {
+                match &session.boss {
+                    Some(boss) => boss_hp_label(i18n, boss, weakness_mult),
+                    None => continue,
+                }
             } else {
                 continue;
             };
             if text.0 != label {
                 text.0 = label;
+            }
+        }
+        if let Some(boss) = &session.boss {
+            let hp_pct = (boss.hp as f32 / boss.def.max_hp.max(1) as f32 * 100.0).clamp(0.0, 100.0);
+            let target = Val::Percent(hp_pct);
+            for mut node in &mut self.boss_hp_fills {
+                if node.width != target {
+                    node.width = target;
+                }
             }
         }
     }
@@ -378,7 +427,7 @@ pub(super) fn spawn_match3_hud(
                                     },
                                     BackgroundColor(COLOR_PANEL_CARD),
                                     BorderColor(COLOR_ACCENT_TEAL),
-                                    BorderRadius::all(Val::Px(8.0)),
+                                    BorderRadius::all(Val::Px(RADIUS_MD)),
                                 ))
                                 .with_children(|wbox| {
                                     wbox.spawn((
@@ -398,36 +447,13 @@ pub(super) fn spawn_match3_hud(
                                 ..default()
                             })
                             .with_children(|bcol| {
-                                let boss_hp_key = if boss.is_phase2() {
-                                    "match3.boss.phase2_badge"
-                                } else {
-                                    "match3.boss.hp"
-                                };
                                 bcol.spawn((
-                                    Text::new(
-                                        i18n.t_fmt(
-                                            boss_hp_key,
-                                            &[
-                                                ("boss", i18n.t(&boss.def.name_key).to_string()),
-                                                ("hp", boss.hp.to_string()),
-                                                ("max", boss.def.max_hp.to_string()),
-                                                (
-                                                    "mult",
-                                                    ctx.data
-                                                        .balance
-                                                        .boss
-                                                        .weakness_multiplier
-                                                        .to_string(),
-                                                ),
-                                                (
-                                                    "rune",
-                                                    i18n.t(boss.active_weakness().i18n_key())
-                                                        .to_string(),
-                                                ),
-                                                ("turns", boss.turns_until_riposte.to_string()),
-                                            ],
-                                        ),
-                                    ),
+                                    Match3BossHpText,
+                                    Text::new(boss_hp_label(
+                                        i18n,
+                                        boss,
+                                        ctx.data.balance.boss.weakness_multiplier,
+                                    )),
                                     TextFont {
                                         font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
                                         ..default()
@@ -451,6 +477,7 @@ pub(super) fn spawn_match3_hud(
                                 ))
                                 .with_children(|track| {
                                     track.spawn((
+                                        Match3BossHpFill,
                                         Node {
                                             width: Val::Percent(hp_pct),
                                             height: Val::Percent(100.0),
@@ -1272,6 +1299,9 @@ mod tests {
         HudShape {
             low_moves: false,
             has_boss: false,
+            boss_phase2: false,
+            boss_hit_flash: false,
+            boss_weakness: None,
             banner: HudBanner::None,
             fury_ready: false,
             objectives_complete: vec![false, false],
@@ -1309,9 +1339,22 @@ mod tests {
     }
 
     #[test]
-    fn boss_fights_always_rebuild() {
+    fn boss_hud_updates_in_place_until_phase_flash_or_weakness_changes() {
         let mut boss = shape();
         boss.has_boss = true;
-        assert!(!can_update_in_place(Some(&boss), &boss));
+        boss.boss_weakness = Some(RuneType::Fire);
+        assert!(can_update_in_place(Some(&boss), &boss));
+
+        let mut phase2 = boss.clone();
+        phase2.boss_phase2 = true;
+        assert!(!can_update_in_place(Some(&boss), &phase2));
+
+        let mut flashed = boss.clone();
+        flashed.boss_hit_flash = true;
+        assert!(!can_update_in_place(Some(&boss), &flashed));
+
+        let mut rotated_weakness = boss.clone();
+        rotated_weakness.boss_weakness = Some(RuneType::Ice);
+        assert!(!can_update_in_place(Some(&boss), &rotated_weakness));
     }
 }

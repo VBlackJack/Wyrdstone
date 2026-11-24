@@ -489,21 +489,7 @@ fn build_gold_button_9slice_image(size: usize) -> Image {
 }
 
 fn blend_icon_px(px: &mut [u8], size: usize, x: usize, y: usize, rgba: [u8; 4]) {
-    if x >= size || y >= size {
-        return;
-    }
-    let idx = (y * size + x) * 4;
-    let sa = rgba[3] as f32 / 255.0;
-    let da = px[idx + 3] as f32 / 255.0;
-    let oa = sa + da * (1.0 - sa);
-    if oa <= 0.001 {
-        return;
-    }
-    for c in 0..3 {
-        px[idx + c] = ((rgba[c] as f32 * sa + px[idx + c] as f32 * da * (1.0 - sa)) / oa)
-            .clamp(0.0, 255.0) as u8;
-    }
-    px[idx + 3] = (oa * 255.0).clamp(0.0, 255.0) as u8;
+    crate::art_util::blend_px(px, size, size, x, y, rgba);
 }
 
 /// Painted-style Nordic timber log icon for Wood.

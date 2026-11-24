@@ -175,12 +175,21 @@ pub fn init_fjord_textures(
     mut fonts: ResMut<Assets<Font>>,
 ) {
     // Replace Bevy's ASCII-only default font with Inter-Regular (full French/Latin-1 accents).
-    if let Ok(inter_font) = Font::try_from_bytes(INTER_REGULAR_TTF.to_vec()) {
-        fonts.insert(&Handle::default(), inter_font);
+    match Font::try_from_bytes(INTER_REGULAR_TTF.to_vec()) {
+        Ok(inter_font) => {
+            fonts.insert(&Handle::default(), inter_font);
+        }
+        Err(err) => {
+            warn!("Failed to load bundled Inter-Regular font: {err}");
+        }
     }
-    let display_font = Font::try_from_bytes(CINZEL_BOLD_TTF.to_vec())
-        .map(|f| fonts.add(f))
-        .unwrap_or_default();
+    let display_font = match Font::try_from_bytes(CINZEL_BOLD_TTF.to_vec()) {
+        Ok(font) => fonts.add(font),
+        Err(err) => {
+            warn!("Failed to load bundled Cinzel-Bold font: {err}");
+            Handle::default()
+        }
+    };
 
     let fjord_map = images.add(decode_png(FJORD_MAP_PNG));
     let match3_bg = images.add(decode_png(MATCH3_BG_PNG));

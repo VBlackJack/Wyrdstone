@@ -84,6 +84,8 @@ pub struct FjordAurora {
 /// Gentle falling snowflake drifting across the Fjord map.
 #[derive(Component)]
 pub struct FjordSnowflake {
+    pub base_x_pct: f32,
+    pub base_y_pct: f32,
     pub x_pct: f32,
     pub y_pct: f32,
     pub speed_y: f32,
@@ -94,6 +96,7 @@ pub struct FjordSnowflake {
 #[derive(Component)]
 pub struct FjordEmber {
     pub base_x_pct: f32,
+    pub base_y_pct: f32,
     pub y_pct: f32,
     pub phase: f32,
 }
@@ -109,7 +112,7 @@ pub struct FjordWaterShimmer {
 /// Soft chimney smoke puff drifting above rebuilt Forge, Meadery, and Great Hall roofs.
 #[derive(Component)]
 pub struct FjordSmokePuff {
-    pub base_x_pct: f32,
+    pub base_y_pct: f32,
     pub y_pct: f32,
     pub phase: f32,
 }
@@ -221,10 +224,12 @@ pub fn setup_city_ui(
         .get_single()
         .map(|w| w.width() < w.height())
         .unwrap_or(false);
-    if ctx.active_modal == ActiveModal::None
-        && ctx.city.is_login_tribute_available(today_day_index())
-    {
-        ctx.active_modal = ActiveModal::LoginCalendar;
+    if ctx.active_modal == ActiveModal::None {
+        if ctx.city.is_login_tribute_available(today_day_index()) {
+            ctx.active_modal = ActiveModal::LoginCalendar;
+        } else if ctx.pending_dialogue.is_some() {
+            ctx.active_modal = ActiveModal::ChapterDialogue;
+        }
     }
     let ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
     commands.insert_resource(CityLayoutMode {
@@ -334,6 +339,104 @@ fn count_ready_harvests(ctx: &GameContext, now: u64) -> usize {
         .iter()
         .filter(|b| ctx.city.is_harvest_ready(&b.id, now, &ctx.data.balance))
         .count()
+}
+
+/// Formats the "X (N)" badge label when `count > 0`, falling back to the bare `base_key` label.
+fn badged_label(i18n: &I18nCatalog, base_key: &str, count: usize) -> String {
+    if count > 0 {
+        i18n.t_fmt(
+            "city.button.label_with_count",
+            &[
+                ("label", i18n.t(base_key).to_string()),
+                ("count", count.to_string()),
+            ],
+        )
+    } else {
+        i18n.t(base_key).to_string()
+    }
+}
+
+/// Spawns the Raids and Expedition entry buttons shared by the landscape HUD bar and portrait Menu.
+fn spawn_play_mode_buttons(parent: &mut ChildBuilder, ctx: &GameContext) {
+    let i18n = &ctx.data.i18n;
+    spawn_small_button(
+        parent,
+        i18n.t("city.panel.raids.button"),
+        CityAction::ToggleModal(ActiveModal::Raids),
+        COLOR_ACCENT_CRIMSON,
+        true,
+    );
+    let exp_lbl = if let Some(run) = &ctx.active_expedition {
+        i18n.t_fmt(
+            "city.panel.expedition.resume",
+            &[("wave", run.wave.to_string())],
+        )
+    } else {
+        i18n.t("city.panel.expedition.button").to_string()
+    };
+    spawn_small_button(
+        parent,
+        &exp_lbl,
+        CityAction::StartExpedition,
+        if ctx.active_expedition.is_some() {
+            COLOR_ACCENT_GREEN
+        } else {
+            COLOR_ACCENT_TEAL
+        },
+        true,
+    );
+}
+
+/// Spawns Feats, Collections, Amulets, and Tool Shop buttons shared by the landscape bar and portrait Menu.
+fn spawn_progression_buttons(
+    parent: &mut ChildBuilder,
+    ctx: &GameContext,
+    claimable_feats: usize,
+    claimable_cols: usize,
+) {
+    let i18n = &ctx.data.i18n;
+    let feats_lbl = badged_label(i18n, "city.panel.feats.button", claimable_feats);
+    spawn_small_button(
+        parent,
+        &feats_lbl,
+        CityAction::ToggleModal(ActiveModal::Achievements),
+        if claimable_feats > 0 {
+            COLOR_ACCENT_GREEN
+        } else {
+            COLOR_PANEL_CARD
+        },
+        true,
+    );
+    let cols_lbl = badged_label(i18n, "city.panel.collections.button", claimable_cols);
+    spawn_small_button(
+        parent,
+        &cols_lbl,
+        CityAction::ToggleModal(ActiveModal::Collections),
+        if claimable_cols > 0 {
+            COLOR_ACCENT_GREEN
+        } else {
+            COLOR_PANEL_CARD
+        },
+        true,
+    );
+    spawn_small_button(
+        parent,
+        i18n.t("city.panel.amulets.button"),
+        CityAction::ToggleModal(ActiveModal::Amulets),
+        if ctx.city.equipped_amulet.is_some() {
+            COLOR_ACCENT_TEAL
+        } else {
+            COLOR_PANEL_CARD
+        },
+        true,
+    );
+    spawn_small_button(
+        parent,
+        i18n.t("city.panel.shop.button"),
+        CityAction::ToggleModal(ActiveModal::Shop),
+        COLOR_PANEL_CARD,
+        true,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -450,13 +553,13 @@ fn spawn_city_tree(
                         pills,
                         vfx.icon_wood.clone(),
                         &res_lbl("resources.label.wood", res.wood),
-                        Color::srgb(0.44, 0.80, 0.52),
+                        COLOR_RES_WOOD,
                     );
                     spawn_resource_pill_with_icon(
                         pills,
                         vfx.icon_stone.clone(),
                         &res_lbl("resources.label.stone", res.stone),
-                        Color::srgb(0.76, 0.74, 0.88),
+                        COLOR_RES_STONE,
                     );
                     spawn_resource_pill_with_icon(
                         pills,
@@ -468,7 +571,7 @@ fn spawn_city_tree(
                         pills,
                         vfx.icon_mead.clone(),
                         &res_lbl("resources.label.mead", res.mead),
-                        Color::srgb(0.95, 0.66, 0.30),
+                        COLOR_RES_MEAD,
                     );
                     pills
                         .spawn((
@@ -481,7 +584,7 @@ fn spawn_city_tree(
                             },
                             BackgroundColor(COLOR_PANEL_CARD),
                             BorderColor(COLOR_PANEL_BORDER),
-                            BorderRadius::all(Val::Px(6.0)),
+                            BorderRadius::all(Val::Px(RADIUS_SM)),
                         ))
                         .with_children(|pill| {
                             pill.spawn((
@@ -499,7 +602,7 @@ fn spawn_city_tree(
                                     font_size: FONT_SMALL,
                                     ..default()
                                 },
-                                TextColor(Color::srgb(0.45, 0.84, 0.96)),
+                                TextColor(COLOR_RES_ENERGY),
                             ));
                         });
                     if ctx.city.stats.win_streak >= ctx.data.balance.win_streak_booster_threshold {
@@ -576,9 +679,9 @@ fn spawn_city_tree(
                                 border: UiRect::all(Val::Px(1.0)),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgba(0.08, 0.11, 0.17, 0.72)),
+                            BackgroundColor(COLOR_HUD_GROUP_BG),
                             BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.28)),
-                            BorderRadius::all(Val::Px(8.0)),
+                            BorderRadius::all(Val::Px(RADIUS_MD)),
                         ))
                         .with_children(|btns| {
                             let ready_harvests = count_ready_harvests(ctx, now);
@@ -640,32 +743,7 @@ fn spawn_city_tree(
                                 daily_ready,
                             );
                             if !is_portrait {
-                                spawn_small_button(
-                                    btns,
-                                    i18n.t("city.panel.raids.button"),
-                                    CityAction::ToggleModal(ActiveModal::Raids),
-                                    COLOR_ACCENT_CRIMSON,
-                                    true,
-                                );
-                                let exp_lbl = if let Some(run) = &ctx.active_expedition {
-                                    i18n.t_fmt(
-                                        "city.panel.expedition.resume",
-                                        &[("wave", run.wave.to_string())],
-                                    )
-                                } else {
-                                    i18n.t("city.panel.expedition.button").to_string()
-                                };
-                                spawn_small_button(
-                                    btns,
-                                    &exp_lbl,
-                                    CityAction::StartExpedition,
-                                    if ctx.active_expedition.is_some() {
-                                        COLOR_ACCENT_GREEN
-                                    } else {
-                                        COLOR_ACCENT_TEAL
-                                    },
-                                    true,
-                                );
+                                spawn_play_mode_buttons(btns, ctx);
                             }
                         });
 
@@ -680,9 +758,9 @@ fn spawn_city_tree(
                                 border: UiRect::all(Val::Px(1.0)),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgba(0.08, 0.11, 0.17, 0.72)),
+                            BackgroundColor(COLOR_HUD_GROUP_BG),
                             BorderColor(COLOR_PANEL_BORDER),
-                            BorderRadius::all(Val::Px(8.0)),
+                            BorderRadius::all(Val::Px(RADIUS_MD)),
                         ))
                         .with_children(|btns| {
                             let claimable_feats = ctx.city.claimable_achievement_count(
@@ -695,73 +773,11 @@ fn spawn_city_tree(
                             let tribute_ready =
                                 ctx.city.is_login_tribute_available(today_day_index());
                             if !is_portrait {
-                                let feats_lbl = if claimable_feats > 0 {
-                                    i18n.t_fmt(
-                                        "city.button.label_with_count",
-                                        &[
-                                            (
-                                                "label",
-                                                i18n.t("city.panel.feats.button").to_string(),
-                                            ),
-                                            ("count", claimable_feats.to_string()),
-                                        ],
-                                    )
-                                } else {
-                                    i18n.t("city.panel.feats.button").to_string()
-                                };
-                                spawn_small_button(
+                                spawn_progression_buttons(
                                     btns,
-                                    &feats_lbl,
-                                    CityAction::ToggleModal(ActiveModal::Achievements),
-                                    if claimable_feats > 0 {
-                                        COLOR_ACCENT_GREEN
-                                    } else {
-                                        COLOR_PANEL_CARD
-                                    },
-                                    true,
-                                );
-                                let cols_lbl = if claimable_cols > 0 {
-                                    i18n.t_fmt(
-                                        "city.button.label_with_count",
-                                        &[
-                                            (
-                                                "label",
-                                                i18n.t("city.panel.collections.button").to_string(),
-                                            ),
-                                            ("count", claimable_cols.to_string()),
-                                        ],
-                                    )
-                                } else {
-                                    i18n.t("city.panel.collections.button").to_string()
-                                };
-                                spawn_small_button(
-                                    btns,
-                                    &cols_lbl,
-                                    CityAction::ToggleModal(ActiveModal::Collections),
-                                    if claimable_cols > 0 {
-                                        COLOR_ACCENT_GREEN
-                                    } else {
-                                        COLOR_PANEL_CARD
-                                    },
-                                    true,
-                                );
-                                spawn_small_button(
-                                    btns,
-                                    i18n.t("city.panel.amulets.button"),
-                                    CityAction::ToggleModal(ActiveModal::Amulets),
-                                    if ctx.city.equipped_amulet.is_some() {
-                                        COLOR_ACCENT_TEAL
-                                    } else {
-                                        COLOR_PANEL_CARD
-                                    },
-                                    true,
-                                );
-                                spawn_small_button(
-                                    btns,
-                                    i18n.t("city.panel.shop.button"),
-                                    CityAction::ToggleModal(ActiveModal::Shop),
-                                    COLOR_PANEL_CARD,
-                                    true,
+                                    ctx,
+                                    claimable_feats,
+                                    claimable_cols,
                                 );
                             }
                             let menu_badge_count = if is_portrait {
@@ -769,17 +785,7 @@ fn spawn_city_tree(
                             } else {
                                 0
                             };
-                            let menu_lbl = if menu_badge_count > 0 {
-                                i18n.t_fmt(
-                                    "city.button.label_with_count",
-                                    &[
-                                        ("label", i18n.t("city.button.menu").to_string()),
-                                        ("count", menu_badge_count.to_string()),
-                                    ],
-                                )
-                            } else {
-                                i18n.t("city.button.menu").to_string()
-                            };
+                            let menu_lbl = badged_label(i18n, "city.button.menu", menu_badge_count);
                             spawn_small_button_colored(
                                 btns,
                                 &menu_lbl,
@@ -830,98 +836,12 @@ fn spawn_city_tree(
                     },
                     BackgroundColor(Color::srgba(0.08, 0.12, 0.19, 0.96)),
                     BorderColor(COLOR_ACCENT_TEAL),
-                    BorderRadius::all(Val::Px(8.0)),
+                    BorderRadius::all(Val::Px(RADIUS_MD)),
                 ))
                 .with_children(|menu| {
                     if is_portrait {
-                        spawn_small_button(
-                            menu,
-                            i18n.t("city.panel.raids.button"),
-                            CityAction::ToggleModal(ActiveModal::Raids),
-                            COLOR_ACCENT_CRIMSON,
-                            true,
-                        );
-                        let exp_lbl = if let Some(run) = &ctx.active_expedition {
-                            i18n.t_fmt(
-                                "city.panel.expedition.resume",
-                                &[("wave", run.wave.to_string())],
-                            )
-                        } else {
-                            i18n.t("city.panel.expedition.button").to_string()
-                        };
-                        spawn_small_button(
-                            menu,
-                            &exp_lbl,
-                            CityAction::StartExpedition,
-                            if ctx.active_expedition.is_some() {
-                                COLOR_ACCENT_GREEN
-                            } else {
-                                COLOR_ACCENT_TEAL
-                            },
-                            true,
-                        );
-                        let feats_lbl = if claimable_feats > 0 {
-                            i18n.t_fmt(
-                                "city.button.label_with_count",
-                                &[
-                                    ("label", i18n.t("city.panel.feats.button").to_string()),
-                                    ("count", claimable_feats.to_string()),
-                                ],
-                            )
-                        } else {
-                            i18n.t("city.panel.feats.button").to_string()
-                        };
-                        spawn_small_button(
-                            menu,
-                            &feats_lbl,
-                            CityAction::ToggleModal(ActiveModal::Achievements),
-                            if claimable_feats > 0 {
-                                COLOR_ACCENT_GREEN
-                            } else {
-                                COLOR_PANEL_CARD
-                            },
-                            true,
-                        );
-                        let cols_lbl = if claimable_cols > 0 {
-                            i18n.t_fmt(
-                                "city.button.label_with_count",
-                                &[
-                                    ("label", i18n.t("city.panel.collections.button").to_string()),
-                                    ("count", claimable_cols.to_string()),
-                                ],
-                            )
-                        } else {
-                            i18n.t("city.panel.collections.button").to_string()
-                        };
-                        spawn_small_button(
-                            menu,
-                            &cols_lbl,
-                            CityAction::ToggleModal(ActiveModal::Collections),
-                            if claimable_cols > 0 {
-                                COLOR_ACCENT_GREEN
-                            } else {
-                                COLOR_PANEL_CARD
-                            },
-                            true,
-                        );
-                        spawn_small_button(
-                            menu,
-                            i18n.t("city.panel.amulets.button"),
-                            CityAction::ToggleModal(ActiveModal::Amulets),
-                            if ctx.city.equipped_amulet.is_some() {
-                                COLOR_ACCENT_TEAL
-                            } else {
-                                COLOR_PANEL_CARD
-                            },
-                            true,
-                        );
-                        spawn_small_button(
-                            menu,
-                            i18n.t("city.panel.shop.button"),
-                            CityAction::ToggleModal(ActiveModal::Shop),
-                            COLOR_PANEL_CARD,
-                            true,
-                        );
+                        spawn_play_mode_buttons(menu, ctx);
+                        spawn_progression_buttons(menu, ctx, claimable_feats, claimable_cols);
                     }
                     spawn_small_button_colored(
                         menu,
@@ -1270,6 +1190,8 @@ fn spawn_city_tree(
                         let size = if i % 3 == 0 { 7.0 } else { 4.5 };
                         map.spawn((
                             FjordSnowflake {
+                                base_x_pct: x_pct,
+                                base_y_pct: y_pct,
                                 x_pct,
                                 y_pct,
                                 speed_y: 4.5 + (i % 5) as f32 * 1.4,
@@ -1660,6 +1582,7 @@ fn spawn_map_building_pin(
                             img_box.spawn((
                                 FjordEmber {
                                     base_x_pct: base_x,
+                                    base_y_pct: start_y,
                                     y_pct: start_y,
                                     phase: k as f32 * 2.1 + b.map_x_pct * 0.1,
                                 },
@@ -1685,7 +1608,7 @@ fn spawn_map_building_pin(
                                 let sy = 14.0 - s as f32 * 10.0;
                                 img_box.spawn((
                                     FjordSmokePuff {
-                                        base_x_pct: sx,
+                                        base_y_pct: sy,
                                         y_pct: sy,
                                         phase: s as f32 * 2.1 + b.map_x_pct * 0.08,
                                     },
@@ -2060,6 +1983,9 @@ pub fn handle_city_buttons(
 
     if keys.just_pressed(KeyCode::Escape) {
         if ctx.active_modal != ActiveModal::None {
+            if ctx.active_modal == ActiveModal::ChapterDialogue {
+                ctx.pending_dialogue = None;
+            }
             ctx.active_modal = ActiveModal::None;
             ctx.confirm_import_backup = false;
             ctx.confirm_end_expedition = false;
@@ -2103,10 +2029,12 @@ pub fn handle_city_buttons(
             }
         }
         if keys.just_pressed(KeyCode::KeyC) {
-            let buildings = ctx.data.buildings.clone();
-            let balance = ctx.data.balance.clone();
             let now = now_unix_secs();
-            let (count, _) = ctx.city.collect_all_harvests(&buildings, now, &balance);
+            let (count, _) = {
+                let s = &mut *ctx;
+                s.city
+                    .collect_all_harvests(&s.data.buildings, now, &s.data.balance)
+            };
             if count > 0 {
                 ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
                     "city.harvest.collected_all",
@@ -2204,10 +2132,12 @@ pub fn handle_city_buttons(
         }
     }
 
-    // Open queued Chapter Dialogue after the building rise animation finishes on the map.
-    if layout_mode.pending_chapter_delay_secs > 0.0 {
-        layout_mode.pending_chapter_delay_secs -= time.delta_secs();
-        if layout_mode.pending_chapter_delay_secs <= 0.0 && ctx.pending_dialogue.is_some() {
+    // Open queued Chapter Dialogue once the building rise animation finishes and no other modal is open.
+    if ctx.pending_dialogue.is_some() && ctx.active_modal == ActiveModal::None {
+        if layout_mode.pending_chapter_delay_secs > 0.0 {
+            layout_mode.pending_chapter_delay_secs -= time.delta_secs();
+        }
+        if layout_mode.pending_chapter_delay_secs <= 0.0 {
             ctx.active_modal = ActiveModal::ChapterDialogue;
             scroll_mem.modal_offset_y = 0.0;
             rebuild = true;
@@ -2402,9 +2332,14 @@ pub fn handle_city_buttons(
             }
             CityAction::CollectHarvest(building_id) => {
                 if let Some(def) = ctx.data.building_by_id(building_id).cloned() {
-                    let balance = ctx.data.balance.clone();
                     let now = now_unix_secs();
-                    if ctx.city.try_collect_harvest(&def, now, &balance).is_some() {
+                    let harvested = {
+                        let s = &mut *ctx;
+                        s.city
+                            .try_collect_harvest(&def, now, &s.data.balance)
+                            .is_some()
+                    };
+                    if harvested {
                         let bname = ctx.data.i18n.t(&def.name_key).to_string();
                         ctx.celebration_message = Some(
                             ctx.data
@@ -2420,10 +2355,12 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::CollectAllHarvests => {
-                let buildings = ctx.data.buildings.clone();
-                let balance = ctx.data.balance.clone();
                 let now = now_unix_secs();
-                let (count, _) = ctx.city.collect_all_harvests(&buildings, now, &balance);
+                let (count, _) = {
+                    let s = &mut *ctx;
+                    s.city
+                        .collect_all_harvests(&s.data.buildings, now, &s.data.balance)
+                };
                 if count > 0 {
                     ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
                         "city.harvest.collected_all",
@@ -2597,8 +2534,11 @@ pub fn handle_city_buttons(
             }
             CityAction::UpgradeBuilding(building_id) => {
                 if let Some(def) = ctx.data.building_by_id(building_id).cloned() {
-                    let balance = ctx.data.balance.clone();
-                    match ctx.city.try_upgrade_building(&def, &balance) {
+                    let upgrade_res = {
+                        let s = &mut *ctx;
+                        s.city.try_upgrade_building(&def, &s.data.balance)
+                    };
+                    match upgrade_res {
                         Ok(new_tier) => {
                             ctx.status_notice_key = None;
                             if ctx.tutorial_step == 2 {
@@ -2634,8 +2574,11 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::DrinkMead => {
-                let balance = ctx.data.balance.clone();
-                match ctx.city.try_drink_mead(&balance) {
+                let drink_res = {
+                    let s = &mut *ctx;
+                    s.city.try_drink_mead(&s.data.balance)
+                };
+                match drink_res {
                     Ok(_) => {
                         ctx.status_notice_key = None;
                         ctx.persist();
@@ -2650,8 +2593,11 @@ pub fn handle_city_buttons(
             }
             CityAction::ClaimQuest(quest_id) => {
                 if let Some(quest) = ctx.data.quests.iter().find(|q| q.id == *quest_id).cloned() {
-                    let balance = ctx.data.balance.clone();
-                    if ctx.city.try_claim_quest(&quest, &balance) {
+                    let claimed = {
+                        let s = &mut *ctx;
+                        s.city.try_claim_quest(&quest, &s.data.balance)
+                    };
+                    if claimed {
                         let summary =
                             modals::format_reward_summary(&ctx.data.i18n, quest.reward, 0);
                         ctx.celebration_message = Some(celebration_claim_line(
@@ -2762,6 +2708,9 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::ToggleModal(modal) => {
+                if ctx.active_modal == ActiveModal::ChapterDialogue {
+                    ctx.pending_dialogue = None;
+                }
                 layout_mode.menu_open = false;
                 ctx.toggle_modal(*modal);
                 scroll_mem.modal_offset_y = 0.0;
@@ -2770,6 +2719,9 @@ pub fn handle_city_buttons(
             }
             CityAction::CloseModal => {
                 if ctx.active_modal != ActiveModal::None {
+                    if ctx.active_modal == ActiveModal::ChapterDialogue {
+                        ctx.pending_dialogue = None;
+                    }
                     ctx.active_modal = ActiveModal::None;
                     ctx.confirm_import_backup = false;
                     ctx.confirm_end_expedition = false;
@@ -2803,8 +2755,11 @@ pub fn handle_city_buttons(
                     .find(|c| c.id == *col_id)
                     .cloned()
                 {
-                    let balance = ctx.data.balance.clone();
-                    if ctx.city.try_claim_collection(&col, &balance) {
+                    let claimed = {
+                        let s = &mut *ctx;
+                        s.city.try_claim_collection(&col, &s.data.balance)
+                    };
+                    if claimed {
                         let summary =
                             modals::format_reward_summary(&ctx.data.i18n, col.reward_resources, 0);
                         ctx.celebration_message = Some(celebration_claim_line(
@@ -2821,16 +2776,18 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::ClaimAllCollections => {
-                let collections = ctx.data.collections.clone();
-                let balance = ctx.data.balance.clone();
-                let mut claimed_any = false;
-                let mut total_res = wyrdstone_core::ResourceBundle::default();
-                for col in &collections {
-                    if ctx.city.try_claim_collection(col, &balance) {
-                        claimed_any = true;
-                        total_res.add(&col.reward_resources);
+                let (claimed_any, total_res) = {
+                    let s = &mut *ctx;
+                    let mut claimed_any = false;
+                    let mut total_res = wyrdstone_core::ResourceBundle::default();
+                    for col in &s.data.collections {
+                        if s.city.try_claim_collection(col, &s.data.balance) {
+                            claimed_any = true;
+                            total_res.add(&col.reward_resources);
+                        }
                     }
-                }
+                    (claimed_any, total_res)
+                };
                 if claimed_any {
                     ctx.celebration_message =
                         Some(modals::format_reward_summary(&ctx.data.i18n, total_res, 0));
@@ -2843,8 +2800,11 @@ pub fn handle_city_buttons(
             }
             CityAction::CraftOrEquipAmulet(amulet_id) => {
                 if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {
-                    let balance = ctx.data.balance.clone();
-                    match ctx.city.try_craft_amulet(&amulet, &balance) {
+                    let res = {
+                        let s = &mut *ctx;
+                        s.city.try_craft_amulet(&amulet, &s.data.balance)
+                    };
+                    match res {
                         Ok(()) => {
                             ctx.status_notice_key = None;
                             ctx.persist();
@@ -2860,8 +2820,11 @@ pub fn handle_city_buttons(
             }
             CityAction::UpgradeAmulet(amulet_id) => {
                 if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {
-                    let balance = ctx.data.balance.clone();
-                    match ctx.city.try_upgrade_amulet(&amulet, &balance) {
+                    let res = {
+                        let s = &mut *ctx;
+                        s.city.try_upgrade_amulet(&amulet, &s.data.balance)
+                    };
+                    match res {
                         Ok(_) => {
                             ctx.status_notice_key = None;
                             ctx.persist();
@@ -2882,28 +2845,33 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::ToggleColorblind => {
+                ctx.confirm_import_backup = false;
                 ctx.colorblind_mode = !ctx.colorblind_mode;
                 ctx.persist();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
             CityAction::ToggleFastAnim => {
+                ctx.confirm_import_backup = false;
                 ctx.fast_animations = !ctx.fast_animations;
                 ctx.persist();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
             CityAction::ToggleReducedMotion => {
+                ctx.confirm_import_backup = false;
                 ctx.reduced_motion = !ctx.reduced_motion;
                 ctx.persist();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
             }
             CityAction::CycleBgmVolume => {
+                ctx.confirm_import_backup = false;
                 cycle_bgm_volume(&mut ctx, &mut sound_bank, &mut bgm_sinks);
                 rebuild = true;
             }
             CityAction::CycleSfxVolume => {
+                ctx.confirm_import_backup = false;
                 cycle_sfx_volume(&mut ctx, &mut sound_bank);
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 rebuild = true;
@@ -2968,11 +2936,13 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::ToggleLanguage => {
+                ctx.confirm_import_backup = false;
                 ctx.data.i18n.toggle_language();
                 ctx.persist();
                 rebuild = true;
             }
             CityAction::ToggleAudio => {
+                ctx.confirm_import_backup = false;
                 toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
                 rebuild = true;
             }
@@ -3026,58 +2996,75 @@ pub fn animate_city_ambience(
     mut commands: Commands,
     time: Res<Time>,
     ctx: Res<GameContext>,
+    parent_nodes: Query<
+        &ComputedNode,
+        (
+            Without<FjordSnowflake>,
+            Without<FjordAurora>,
+            Without<FjordEmber>,
+            Without<FjordWaterShimmer>,
+            Without<FjordSmokePuff>,
+            Without<BuildingBuildAnim>,
+            Without<BuildingBuildRing>,
+        ),
+    >,
     mut snow_q: Query<
-        (&mut FjordSnowflake, &mut Node),
+        (&mut FjordSnowflake, &Parent, &mut Transform),
         (
             Without<FjordAurora>,
             Without<FjordEmber>,
             Without<FjordWaterShimmer>,
             Without<FjordSmokePuff>,
             Without<FjordBeaconGlow>,
+            Without<BuildingBuildAnim>,
             Without<BuildingBuildRing>,
         ),
     >,
     mut aurora_q: Query<
-        (&FjordAurora, &mut Node, &mut ImageNode),
+        (&FjordAurora, &Parent, &mut Transform, &mut ImageNode),
         (
             Without<FjordSnowflake>,
             Without<FjordEmber>,
             Without<FjordWaterShimmer>,
             Without<FjordSmokePuff>,
             Without<FjordBeaconGlow>,
+            Without<BuildingBuildAnim>,
             Without<BuildingBuildRing>,
         ),
     >,
     mut ember_q: Query<
-        (&mut FjordEmber, &mut Node, &mut ImageNode),
+        (&mut FjordEmber, &Parent, &mut Transform, &mut ImageNode),
         (
             Without<FjordSnowflake>,
             Without<FjordAurora>,
             Without<FjordWaterShimmer>,
             Without<FjordSmokePuff>,
             Without<FjordBeaconGlow>,
+            Without<BuildingBuildAnim>,
             Without<BuildingBuildRing>,
         ),
     >,
     mut water_q: Query<
-        (&FjordWaterShimmer, &mut Node, &mut ImageNode),
+        (&FjordWaterShimmer, &Parent, &mut Transform, &mut ImageNode),
         (
             Without<FjordSnowflake>,
             Without<FjordAurora>,
             Without<FjordEmber>,
             Without<FjordSmokePuff>,
             Without<FjordBeaconGlow>,
+            Without<BuildingBuildAnim>,
             Without<BuildingBuildRing>,
         ),
     >,
     mut smoke_q: Query<
-        (&mut FjordSmokePuff, &mut Node, &mut ImageNode),
+        (&mut FjordSmokePuff, &Parent, &mut Transform, &mut ImageNode),
         (
             Without<FjordSnowflake>,
             Without<FjordAurora>,
             Without<FjordEmber>,
             Without<FjordWaterShimmer>,
             Without<FjordBeaconGlow>,
+            Without<BuildingBuildAnim>,
             Without<BuildingBuildRing>,
         ),
     >,
@@ -3094,7 +3081,14 @@ pub fn animate_city_ambience(
     >,
     mut build_anim_q: Query<
         (Entity, &mut BuildingBuildAnim, &mut Transform),
-        Without<BuildingBuildRing>,
+        (
+            Without<FjordSnowflake>,
+            Without<FjordAurora>,
+            Without<FjordEmber>,
+            Without<FjordWaterShimmer>,
+            Without<FjordSmokePuff>,
+            Without<BuildingBuildRing>,
+        ),
     >,
     mut build_ring_q: Query<
         (
@@ -3104,6 +3098,7 @@ pub fn animate_city_ambience(
             &mut ImageNode,
         ),
         (
+            Without<FjordSnowflake>,
             Without<FjordAurora>,
             Without<FjordEmber>,
             Without<FjordWaterShimmer>,
@@ -3118,47 +3113,67 @@ pub fn animate_city_ambience(
     let t = time.elapsed_secs();
 
     if !ctx.reduced_motion {
-        for (mut flake, mut node) in &mut snow_q {
+        for (mut flake, parent, mut tf) in &mut snow_q {
             flake.y_pct += flake.speed_y * dt;
             if flake.y_pct > 98.0 {
                 flake.y_pct = 1.0;
             }
             let sway = (t * 1.1 + flake.phase).sin() * 1.6;
-            node.top = Val::Percent(flake.y_pct);
-            node.left = Val::Percent((flake.x_pct + sway).clamp(1.0, 98.0));
+            let target_x = (flake.x_pct + sway).clamp(1.0, 98.0);
+            let psize = parent_nodes
+                .get(parent.get())
+                .map(|n| n.size())
+                .unwrap_or(Vec2::ZERO);
+            tf.translation.x += (target_x - flake.base_x_pct) * 0.01 * psize.x;
+            tf.translation.y += (flake.y_pct - flake.base_y_pct) * 0.01 * psize.y;
         }
 
-        for (aurora, mut node, mut img) in &mut aurora_q {
+        for (aurora, parent, mut tf, mut img) in &mut aurora_q {
             let drift = (t * 0.35 + aurora.phase).sin() * 5.0;
             let pulse = 0.72 + 0.28 * (t * 0.8 + aurora.phase).sin();
-            node.left = Val::Percent((aurora.base_left_pct + drift).clamp(0.0, 60.0));
+            let target_left = (aurora.base_left_pct + drift).clamp(0.0, 60.0);
+            let pw = parent_nodes
+                .get(parent.get())
+                .map(|n| n.size().x)
+                .unwrap_or(0.0);
+            tf.translation.x += (target_left - aurora.base_left_pct) * 0.01 * pw;
             img.color = img
                 .color
                 .with_alpha((aurora.base_alpha * pulse).clamp(0.05, 0.45));
         }
 
-        for (water, mut node, mut img) in &mut water_q {
+        for (water, parent, mut tf, mut img) in &mut water_q {
             let ripple = (t * 0.65 + water.phase).sin() * 2.2;
             let glint = 0.65 + 0.35 * (t * 1.4 + water.phase * 1.3).cos();
-            node.left = Val::Percent((water.base_left_pct + ripple).clamp(15.0, 70.0));
+            let target_left = (water.base_left_pct + ripple).clamp(15.0, 70.0);
+            let pw = parent_nodes
+                .get(parent.get())
+                .map(|n| n.size().x)
+                .unwrap_or(0.0);
+            tf.translation.x += (target_left - water.base_left_pct) * 0.01 * pw;
             img.color = img
                 .color
                 .with_alpha((water.base_alpha * glint).clamp(0.05, 0.36));
         }
 
-        for (mut ember, mut node, mut img) in &mut ember_q {
+        for (mut ember, parent, mut tf, mut img) in &mut ember_q {
             ember.y_pct -= 22.0 * dt;
             if ember.y_pct < 6.0 {
                 ember.y_pct = 86.0;
             }
             let sway = (t * 2.4 + ember.phase).sin() * 4.0;
             let alpha = ((ember.y_pct - 6.0) / 80.0).clamp(0.1, 0.9);
-            node.top = Val::Percent(ember.y_pct);
-            node.left = Val::Percent((ember.base_x_pct + sway).clamp(4.0, 94.0));
+            let target_x = (ember.base_x_pct + sway).clamp(4.0, 94.0);
+            let psize = parent_nodes
+                .get(parent.get())
+                .map(|n| n.size())
+                .unwrap_or(Vec2::ZERO);
+            tf.translation.x += (target_x - ember.base_x_pct) * 0.01 * psize.x;
+            tf.translation.y += (ember.y_pct - ember.base_y_pct) * 0.01 * psize.y;
             img.color = img.color.with_alpha(alpha);
         }
 
-        for (mut smoke, mut node, mut img) in &mut smoke_q {
+        for (mut smoke, parent, mut tf, mut img) in &mut smoke_q {
             smoke.y_pct -= 12.0 * dt;
             if smoke.y_pct < -24.0 {
                 smoke.y_pct = 18.0;
@@ -3166,10 +3181,13 @@ pub fn animate_city_ambience(
             let life = ((18.0 - smoke.y_pct) / 42.0).clamp(0.0, 1.0);
             let sway = (t * 1.4 + smoke.phase).sin() * (4.0 + life * 8.0);
             let size = 12.0 + life * 16.0;
-            node.top = Val::Percent(smoke.y_pct);
-            node.left = Val::Percent(smoke.base_x_pct + sway);
-            node.width = Val::Px(size);
-            node.height = Val::Px(size);
+            let psize = parent_nodes
+                .get(parent.get())
+                .map(|n| n.size())
+                .unwrap_or(Vec2::ZERO);
+            tf.translation.x += sway * 0.01 * psize.x;
+            tf.translation.y += (smoke.y_pct - smoke.base_y_pct) * 0.01 * psize.y;
+            tf.scale = Vec3::splat(size / 16.0);
             img.color = img.color.with_alpha((1.0 - life) * 0.28);
         }
 

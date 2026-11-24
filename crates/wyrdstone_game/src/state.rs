@@ -359,6 +359,10 @@ impl GameContext {
             return Ok(());
         };
         if self.save_read_only {
+            if self.save_read_only_cause == Some(ReadOnlyCause::NewerVersion) {
+                self.status_notice_key = self.save_read_only_notice().map(str::to_string);
+                return Err("newer-version save is read-only".to_string());
+            }
             // A newer-version `.bak` must be copied aside before anything can replace it. Do it
             // before resolving: resolving copies an unreadable primary aside, and a failure after
             // that would repeat the copy on every later persist.
@@ -881,9 +885,41 @@ fn advance_energy_regen(
 /// The countdown timer shown by the city header is kept in sync in scaled units (its duration
 /// is one regeneration period at base speed; the header divides the remainder by the speed).
 pub fn tick_energy_regen(mut ctx: ResMut<GameContext>) {
-    let ctx = &mut *ctx;
     let now = now_unix_secs();
+    let max_energy = ctx.city.max_energy(&ctx.data.balance);
+    if ctx.city.energy >= max_energy {
+        if ctx.energy_regen_anchor_unix_secs != now || !ctx.energy_regen_timer.elapsed().is_zero() {
+            let unflagged = ctx.bypass_change_detection();
+            unflagged.energy_regen_anchor_unix_secs = now;
+            unflagged.energy_regen_timer.reset();
+        }
+        return;
+    }
+    let regen_secs = ctx.data.balance.energy_regen_seconds;
+    if now < ctx.energy_regen_anchor_unix_secs || regen_secs == 0 {
+        if ctx.energy_regen_anchor_unix_secs != now || !ctx.energy_regen_timer.elapsed().is_zero() {
+            let unflagged = ctx.bypass_change_detection();
+            unflagged.energy_regen_anchor_unix_secs = now;
+            unflagged.energy_regen_timer.reset();
+        }
+        return;
+    }
     let speed_pct = regen_speed_pct(&ctx.city, &ctx.data.balance);
+    let would_gain = (now - ctx.energy_regen_anchor_unix_secs) * speed_pct / 100 / regen_secs > 0;
+    if !would_gain {
+        let duration = ctx.energy_regen_timer.duration();
+        let elapsed_real = now.saturating_sub(ctx.energy_regen_anchor_unix_secs) as f32;
+        let elapsed_scaled = elapsed_real * speed_pct as f32 / 100.0;
+        let target_elapsed = Duration::from_secs_f32(elapsed_scaled).min(duration);
+        if (ctx.energy_regen_timer.elapsed_secs() - target_elapsed.as_secs_f32()).abs() > 0.01 {
+            ctx.bypass_change_detection()
+                .energy_regen_timer
+                .set_elapsed(target_elapsed);
+        }
+        return;
+    }
+
+    let ctx = &mut *ctx;
     let gained = advance_energy_regen(
         &mut ctx.city,
         &mut ctx.energy_regen_anchor_unix_secs,
@@ -962,6 +998,99 @@ mod read_only_notice_tests {
             NOTICE_SAVE_READ_ONLY
         );
         assert_eq!(read_only_notice(None), NOTICE_SAVE_READ_ONLY);
+    }
+
+    struct TempSaveDir {
+        path: PathBuf,
+    }
+
+    impl TempSaveDir {
+        fn new(tag: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let path = std::env::temp_dir().join(format!(
+                "wyrdstone_state_test_{}_{}_{}",
+                tag,
+                std::process::id(),
+                unique
+            ));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempSaveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn persist_checked_refuses_newer_version_without_touching_disk() {
+        let dir = TempSaveDir::new("newer_version");
+        let save_file = dir.path.join("save.json");
+        let original = r#"{"version":9999}"#;
+        std::fs::write(&save_file, original).expect("write newer save");
+
+        let data = GameDataBundle::load_bundled(Language::En).expect("bundled data loads");
+        let city = CityState::new(&data.balance);
+        let mut ctx = GameContext {
+            data,
+            city,
+            has_existing_save: true,
+            selected_building_id: HUB_BUILDING_ID.to_string(),
+            selected_difficulty: 0,
+            active_modal: ActiveModal::None,
+            confirm_reset: false,
+            confirm_import_backup: false,
+            confirm_end_expedition: false,
+            audio_muted: false,
+            bgm_volume: DEFAULT_BGM_VOLUME,
+            sfx_volume: DEFAULT_SFX_VOLUME,
+            colorblind_mode: false,
+            fast_animations: false,
+            reduced_motion: false,
+            tutorial_step: 0,
+            active_session: None,
+            active_level_id: None,
+            active_expedition: None,
+            armed_tool: None,
+            last_outcome: None,
+            last_rewards: ResourceBundle::default(),
+            last_score: 0,
+            last_stars: 0,
+            last_daily_streak: None,
+            last_discovered_relic_key: None,
+            status_notice_key: None,
+            celebration_message: None,
+            celebration_timer_secs: 0.0,
+            pending_dialogue: None,
+            energy_regen_timer: Timer::from_seconds(60.0, TimerMode::Repeating),
+            energy_regen_anchor_unix_secs: 0,
+            save_path: Some(save_file.clone()),
+            save_read_only: true,
+            save_read_only_cause: Some(ReadOnlyCause::NewerVersion),
+            save_read_only_has_progress: false,
+            save_file_verified: false,
+            primary_copied_aside: false,
+            newer_backup_preserved: false,
+            rng: StdRng::seed_from_u64(42),
+        };
+
+        let err = ctx
+            .persist_checked()
+            .expect_err("newer-version save must refuse persistence");
+        assert!(err.contains("newer-version"));
+        assert_eq!(
+            ctx.status_notice_key.as_deref(),
+            Some(NOTICE_SAVE_NEWER_VERSION)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&save_file).expect("read save"),
+            original
+        );
     }
 }
 

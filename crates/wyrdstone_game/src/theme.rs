@@ -88,6 +88,18 @@ pub const COLOR_ACCENT_CRIMSON_TEXT: Color = Color::srgb(0.96, 0.50, 0.50);
 /// Minimum logical size in px for tappable controls.
 pub const MIN_TOUCH_TARGET_PX: f32 = 44.0;
 
+/// Shared corner radii for panels, pills, buttons, and cards.
+pub const RADIUS_SM: f32 = 6.0;
+pub const RADIUS_MD: f32 = 8.0;
+pub const RADIUS_LG: f32 = 10.0;
+
+/// Grouped HUD button tray background and header resource pill accent colors.
+pub const COLOR_HUD_GROUP_BG: Color = Color::srgba(0.08, 0.11, 0.17, 0.72);
+pub const COLOR_RES_WOOD: Color = Color::srgb(0.44, 0.80, 0.52);
+pub const COLOR_RES_STONE: Color = Color::srgb(0.76, 0.74, 0.88);
+pub const COLOR_RES_MEAD: Color = Color::srgb(0.95, 0.66, 0.30);
+pub const COLOR_RES_ENERGY: Color = Color::srgb(0.45, 0.84, 0.96);
+
 /// Returns RGB tuple `[r, g, b]` in 0..=255 for procedural rune stone rendering.
 pub const fn rune_base_rgb(rune: RuneType) -> [u8; 3] {
     match rune {

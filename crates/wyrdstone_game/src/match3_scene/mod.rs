@@ -101,6 +101,14 @@ pub struct Match3ComboText;
 #[derive(Component)]
 pub struct Match3FuryText;
 
+/// Marker on the Boss HP / riposte / weakness text so unchanged-phase combat steps update in-place.
+#[derive(Component)]
+pub struct Match3BossHpText;
+
+/// Marker on the Boss HP fill bar so combat damage updates bar width in-place.
+#[derive(Component)]
+pub struct Match3BossHpFill;
+
 /// Marker on the bottom HUD tooltip/hint text so hovering tools/Fury updates in-place.
 #[derive(Component)]
 pub struct Match3TooltipText;
@@ -309,6 +317,7 @@ pub struct Match3InputState {
     pub reduced_motion: bool,
     pub idle_secs: f32,
     pub hint_pair: Option<(CellPos, CellPos)>,
+    pub hint_checked: bool,
     pub hover_cell: Option<CellPos>,
     /// Raised when the board was rebuilt: the hover and drag overlay entities (not Match3Entity)
     /// may still exist for a cell that no longer matches, so the pointer handler, their only
@@ -334,6 +343,7 @@ impl Match3InputState {
         if self.hint_pair.take().is_some() {
             self.dirty_board = true;
         }
+        self.hint_checked = false;
         self.idle_secs = 0.0;
     }
 
@@ -1099,15 +1109,24 @@ fn execute_loki_shuffle(
     sound_bank: &SoundBank,
     input_state: &mut Match3InputState,
 ) {
-    let balance = ctx.data.balance.clone();
+    let can_shuffle = ctx
+        .active_session
+        .as_ref()
+        .is_some_and(|s| s.outcome == LevelOutcome::InProgress);
+    if !can_shuffle {
+        return;
+    }
     if ctx.city.tools.consume(ActiveTool::LokiShuffle) {
         let (cols, rows) = ctx
             .active_session
             .as_ref()
             .map(|s| (s.board.cols(), s.board.rows()))
             .unwrap_or((8, 8));
-        if let Some(session) = ctx.active_session.as_mut() {
-            session.loki_shuffle(&balance, &mut ctx.rng);
+        {
+            let ctx_ref = &mut *ctx;
+            if let Some(session) = ctx_ref.active_session.as_mut() {
+                session.loki_shuffle(&ctx_ref.data.balance, &mut ctx_ref.rng);
+            }
         }
         ctx.armed_tool = None;
         ctx.persist();
@@ -1241,6 +1260,11 @@ pub fn handle_match3_hud_buttons(
         && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
     {
+        if input_state.confirm_retreat || input_state.confirm_loki_shuffle {
+            input_state.confirm_retreat = false;
+            input_state.confirm_loki_shuffle = false;
+            input_state.dirty_hud = true;
+        }
         execute_undo(&mut commands, &mut ctx, &sound_bank, &mut input_state);
         return;
     }
@@ -1410,6 +1434,11 @@ pub fn handle_match3_hud_buttons(
         && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
     {
+        if input_state.confirm_retreat || input_state.confirm_loki_shuffle {
+            input_state.confirm_retreat = false;
+            input_state.confirm_loki_shuffle = false;
+            input_state.dirty_hud = true;
+        }
         execute_patron_fury(&mut commands, &mut ctx, &vfx, &sound_bank, &mut input_state);
         return;
     }
@@ -1452,7 +1481,6 @@ pub fn handle_match3_hud_buttons(
                     };
                     input_state.selected = None;
                     input_state.overlays_stale = true;
-                    input_state.dirty_board = true;
                     input_state.dirty_hud = true;
                 }
             } else {
@@ -1565,7 +1593,7 @@ pub fn handle_match3_hud_buttons(
                 ctx.toggle_modal(ActiveModal::Help);
                 if ctx.active_modal == ActiveModal::Help {
                     ctx.armed_tool = None;
-                    input_state.dirty_board = true;
+                    input_state.overlays_stale = true;
                 }
                 scroll_mem.modal_offset_y = 0.0;
                 input_state.dirty_hud = true;
@@ -1663,7 +1691,7 @@ pub fn handle_match3_hud_buttons(
                     input_state.confirm_loki_shuffle = false;
                     ctx.armed_tool = Some(tool);
                     input_state.selected = None;
-                    input_state.dirty_board = true;
+                    input_state.overlays_stale = true;
                     input_state.dirty_hud = true;
                 }
             }
@@ -1672,7 +1700,6 @@ pub fn handle_match3_hud_buttons(
                 input_state.confirm_loki_shuffle = false;
                 input_state.overlays_stale = true;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
-                input_state.dirty_board = true;
                 input_state.dirty_hud = true;
             }
         }
@@ -2082,13 +2109,17 @@ pub fn sync_match3_visuals(
     sprites: Query<Entity, With<Match3Entity>>,
     huds: Query<Entity, With<Match3HudRoot>>,
     mut hud_texts: hud::HudTextQueries,
-    mut was_idle: Local<bool>,
+    mut was_idle: Local<Option<bool>>,
 ) {
     // The HUD derives Idle-dependent state (Undo, tools); refresh it on any Idle edge.
     let idle_now = input_state.is_idle();
-    if idle_now != *was_idle {
-        *was_idle = idle_now;
-        input_state.dirty_hud = true;
+    match *was_idle {
+        None => *was_idle = Some(idle_now),
+        Some(prev) if prev != idle_now => {
+            *was_idle = Some(idle_now);
+            input_state.dirty_hud = true;
+        }
+        _ => {}
     }
     // The HUD shows the mute state and volume labels; refresh when the sound bank changes.
     if sound_bank.is_changed() {
@@ -2195,5 +2226,17 @@ mod tests {
         assert!(hover_changed || std::mem::take(&mut state.overlays_stale));
         assert!(!state.overlays_stale, "flag must be lowered after use");
         assert!(!std::mem::take(&mut state.overlays_stale));
+    }
+
+    #[test]
+    fn clear_hint_resets_hint_checked() {
+        let mut state = Match3InputState {
+            hint_checked: true,
+            idle_secs: 6.0,
+            ..default()
+        };
+        state.clear_hint();
+        assert!(!state.hint_checked);
+        assert_eq!(state.idle_secs, 0.0);
     }
 }

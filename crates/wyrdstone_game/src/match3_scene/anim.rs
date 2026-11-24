@@ -934,7 +934,8 @@ pub fn tick_board_animation(
         BoardAnimPhase::Idle => {
             input_state.idle_secs += dt;
             if input_state.idle_secs >= HINT_IDLE_SECS {
-                if input_state.hint_pair.is_none() {
+                if !input_state.hint_checked {
+                    input_state.hint_checked = true;
                     input_state.hint_pair = ctx
                         .active_session
                         .as_ref()
@@ -1070,7 +1071,15 @@ pub fn tick_board_animation(
             }
 
             if elapsed >= duration {
-                input_state.dirty_board = true;
+                for (tile, mut tf, _) in &mut tile_q {
+                    if tile.pos == a {
+                        tf.translation.x = wa.x;
+                        tf.translation.y = wa.y;
+                    } else if tile.pos == b {
+                        tf.translation.x = wb.x;
+                        tf.translation.y = wb.y;
+                    }
+                }
                 input_state.phase = BoardAnimPhase::Idle;
             } else {
                 input_state.phase = BoardAnimPhase::SwapRevert {
@@ -1214,13 +1223,11 @@ pub fn tick_board_animation(
             }
 
             if elapsed >= duration {
-                let balance = ctx.data.balance.clone();
                 let step = {
                     let ctx_ref = ctx.as_mut();
-                    ctx_ref
-                        .active_session
-                        .as_mut()
-                        .and_then(|session| turn.advance(session, &balance, &mut ctx_ref.rng))
+                    ctx_ref.active_session.as_mut().and_then(|session| {
+                        turn.advance(session, &ctx_ref.data.balance, &mut ctx_ref.rng)
+                    })
                 };
                 let Some(TurnStep::Cleared(report)) = step else {
                     debug_assert!(false, "a pending clear must report its committed step");
@@ -1369,14 +1376,12 @@ pub fn tick_board_animation(
             }
 
             if elapsed >= duration {
-                let balance = ctx.data.balance.clone();
                 let consumes_turn = turn.consumes_turn();
                 let step = {
                     let ctx_ref = ctx.as_mut();
-                    ctx_ref
-                        .active_session
-                        .as_mut()
-                        .and_then(|session| turn.advance(session, &balance, &mut ctx_ref.rng))
+                    ctx_ref.active_session.as_mut().and_then(|session| {
+                        turn.advance(session, &ctx_ref.data.balance, &mut ctx_ref.rng)
+                    })
                 };
                 match step {
                     Some(TurnStep::RelicsDropped(relics)) => {
@@ -1609,11 +1614,10 @@ pub fn tick_board_animation(
             if elapsed >= next_burst_at && elapsed < duration - 0.20 {
                 burst_index += 1;
                 // Priority 1: Sequentially detonate every remaining charged rune (booster) on the board for real bonus points!
-                let balance = ctx.data.balance.clone();
                 let blast = {
                     let ctx_ref = ctx.as_mut();
                     ctx_ref.active_session.as_mut().and_then(|session| {
-                        session.detonate_next_bonus_booster(&balance, &mut ctx_ref.rng)
+                        session.detonate_next_bonus_booster(&ctx_ref.data.balance, &mut ctx_ref.rng)
                     })
                 };
 
@@ -1768,12 +1772,11 @@ pub fn tick_board_animation(
 }
 
 fn flush_remaining_bonus_boosters(ctx: &mut GameContext) {
-    let balance = ctx.data.balance.clone();
     let Some(session) = ctx.active_session.as_mut() else {
         return;
     };
     let blasts = session.detonate_bonus_boosters_detailed(
-        &balance,
+        &ctx.data.balance,
         &mut ctx.rng,
         VICTORY_SKIP_MAX_DETONATIONS,
     );
@@ -1795,16 +1798,15 @@ fn ease_out_back_soft(t: f32) -> f32 {
 }
 
 fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<AppState>) {
-    let balance = ctx.data.balance.clone();
     let finished = ctx.active_session.as_ref().and_then(|s| match s.outcome {
         LevelOutcome::InProgress => None,
         outcome => Some((
             outcome,
             s.level.id.clone(),
             s.level.building_id.clone(),
-            s.earned_rewards(&balance),
+            s.earned_rewards(&ctx.data.balance),
             s.score,
-            s.earned_stars_with(&balance.session),
+            s.earned_stars_with(&ctx.data.balance.session),
             s.boss.as_ref().map(|b| b.def.clone()),
         )),
     });
@@ -1825,32 +1827,39 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                 ctx.last_rewards = rewards;
             } else if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
-                ctx.city.record_expedition_wave(wave, &rewards, &balance);
-                let ctx_ref = ctx;
-                if let Some(run) = ctx_ref.active_expedition.as_mut() {
-                    run.roll_boon_choices_with(&balance.expedition, &mut ctx_ref.rng);
+                ctx.city
+                    .record_expedition_wave(wave, &rewards, &ctx.data.balance);
+                if let Some(run) = ctx.active_expedition.as_mut() {
+                    run.roll_boon_choices_with(&ctx.data.balance.expedition, &mut ctx.rng);
                 }
-                ctx_ref.active_modal = ActiveModal::ExpeditionBoons;
-                ctx_ref.persist();
+                ctx.active_modal = ActiveModal::ExpeditionBoons;
+                ctx.persist();
                 next_state.set(AppState::FjordCity);
                 return;
             } else if building_id == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID {
                 let streak = ctx.city.record_daily_victory(
                     crate::state::today_day_index(),
                     &rewards,
-                    &balance,
+                    &ctx.data.balance,
                 );
-                ctx.last_rewards =
-                    wyrdstone_core::CityState::scale_daily_rewards_with(&rewards, streak, &balance);
+                ctx.last_rewards = wyrdstone_core::CityState::scale_daily_rewards_with(
+                    &rewards,
+                    streak,
+                    &ctx.data.balance,
+                );
                 ctx.last_daily_streak = Some(streak);
             } else {
-                ctx.city
-                    .record_level_victory(&building_id, &level_id, stars, &rewards, &balance);
+                ctx.city.record_level_victory(
+                    &building_id,
+                    &level_id,
+                    stars,
+                    &rewards,
+                    &ctx.data.balance,
+                );
             }
-            let collections = ctx.data.collections.clone();
             ctx.last_discovered_relic_key = ctx
                 .city
-                .discover_next_relic_for_building(&building_id, &collections);
+                .discover_next_relic_for_building(&building_id, &ctx.data.collections);
         } else {
             if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 ctx.active_expedition = None;

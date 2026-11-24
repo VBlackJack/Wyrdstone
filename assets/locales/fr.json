@@ -241,7 +241,7 @@
 
   "city.panel.expedition.button": "Expédition",
   "city.panel.expedition.boons_title": "Vague {wave} vaincue ! Choisissez une Bénédiction",
-  "city.panel.expedition.cashout": "Rentrer au Fjord",
+  "city.panel.expedition.cashout": "Terminer et encaisser",
   "expedition.boon.moves.name": "Vent de Njord",
   "expedition.boon.moves.desc": "+{val} coups max sur toutes les vagues suivantes",
   "expedition.boon.score.name": "Chant du Scalde",
