@@ -18,6 +18,7 @@ All notable changes to Wyrdstone are documented in this file.
 - **Dedicated Boss Raid Audio & VFX**: Intense Boss Raid BGM track, distinct Divine Fury war-horn and Boss Riposte roar SFX, 2-stage `Bifrost + Line/Bomb` super-combo charge animation, and golden halo highlights on adjacent booster pairs.
 - **Match-3 Pause Quick Settings**: Mute, BGM/SFX volume, and Colorblind Badges toggles directly inside the Match-3 Guide/Pause overlay.
 - **UI Scrolling & Typography Guard**: Full mouse-wheel and Android touch-drag scrolling with HiDPI clamping and scroll-offset memory across all modals and the Building Inspector; automated recursive Typography Guard test (`TEST-09`).
+- **Data-Driven Gameplay Tuning**: Login tribute table, daily streak scaling and tools, win-streak boosters, clan rank perks, building bonuses and upgrade perks, amulet tier steps, mastery ladder, star thresholds, daily blessings, patron fury values, Daily Trial generation, Endless Expedition pacing and boons, and boss damage/phase/curse tuning now live in `balance.ron` and the content RON files; achievements declare their unlock condition in `achievements.ron`. Bundled data is validated at startup (cross-references, ranges, reserved ids), and golden tests pin the previous numbers so the move changed no value.
 - **Externalized RON Data**: Moved Skalds' Feats (`achievements.ron`), Clan Rank thresholds (`balance.ron`), and per-building passive harvest yields (`buildings.ron`) out of Rust code.
 
 ### Fixed
