@@ -220,7 +220,7 @@ pub struct PreparedClear {
 }
 
 /// Match-3 board state and rule resolver.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Board {
     cols: usize,
     rows: usize,
@@ -1184,7 +1184,9 @@ impl Board {
         outcome: &mut MatchStepOutcome,
         is_direct_blast: bool,
     ) {
-        let mut queue: VecDeque<CellPos> = initial.iter().copied().collect();
+        // Seed and extend the queue in (row, col) order: hash-set iteration order is random per
+        // process and would make chained booster results (and cleared positions) nondeterministic.
+        let mut queue: VecDeque<CellPos> = sorted_positions(initial.iter().copied()).into();
         let mut visited: HashSet<CellPos> = HashSet::new();
         let mut adjacent_crates_hit: HashSet<CellPos> = HashSet::new();
         let mut adjacent_fog_hit: HashSet<CellPos> = HashSet::new();
@@ -1257,7 +1259,7 @@ impl Board {
                         }
                     }
                     Booster::Bomb => {
-                        for p in self.area_positions(pos, BOMB_BLAST_RADIUS) {
+                        for p in sorted_positions(self.area_positions(pos, BOMB_BLAST_RADIUS)) {
                             queue.push_back(p);
                         }
                     }
@@ -1267,7 +1269,7 @@ impl Board {
                         if let Some(r) = target_rune {
                             let mut same = HashSet::new();
                             self.collect_all_of_rune(r, &mut same);
-                            for p in same {
+                            for p in sorted_positions(same) {
                                 queue.push_back(p);
                             }
                         }
@@ -1303,7 +1305,7 @@ impl Board {
         }
 
         // Apply 1 damage to each orthogonally adjacent frost crate not already directly hit.
-        for crate_pos in adjacent_crates_hit {
+        for crate_pos in sorted_positions(adjacent_crates_hit) {
             if visited.contains(&crate_pos) {
                 continue;
             }
@@ -1319,7 +1321,7 @@ impl Board {
         }
 
         // Dispel Niflheim Fog on orthogonally adjacent tiles.
-        for fog_pos in adjacent_fog_hit {
+        for fog_pos in sorted_positions(adjacent_fog_hit) {
             let idx = self.idx(fog_pos);
             if self.cells[idx].fog {
                 self.cells[idx].fog = false;
@@ -1864,6 +1866,13 @@ fn merge_outcomes(total: &mut MatchStepOutcome, step: &MatchStepOutcome) {
         *total.cleared_runes.entry(rune).or_insert(0) += count;
     }
     total.cleared_positions.extend(&step.cleared_positions);
+}
+
+/// Collects positions into a vector sorted by `(row, col)` for deterministic processing.
+fn sorted_positions(positions: impl IntoIterator<Item = CellPos>) -> Vec<CellPos> {
+    let mut list: Vec<CellPos> = positions.into_iter().collect();
+    list.sort_by_key(|p| (p.row, p.col));
+    list
 }
 
 type SpecialSwapCombo = (HashSet<CellPos>, Vec<(CellPos, Booster)>);
