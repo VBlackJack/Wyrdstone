@@ -33,7 +33,9 @@ use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
-use wyrdstone_core::{ActiveTool, Booster, CellPos, LevelOutcome, LevelSession, PreparedClear};
+use wyrdstone_core::{
+    ActiveTool, Booster, CellPos, ClearPreview, LevelOutcome, LevelSession, Turn, TurnStep,
+};
 
 pub(super) const PARTICLES_PER_CLEARED_TILE: usize = 9;
 pub(super) const PARTICLE_LIFETIME_SECS: f32 = 0.44;
@@ -240,26 +242,25 @@ pub enum BoardAnimPhase {
         elapsed: f32,
         duration: f32,
     },
+    /// The turn is carried by every resolving phase and is never dropped before it reports its end.
     SuperComboCharge {
-        prepared: PreparedClear,
-        consumes_turn: bool,
+        turn: Turn,
+        preview: ClearPreview,
         elapsed: f32,
         duration: f32,
         beams_spawned: bool,
     },
     Clearing {
-        prepared: PreparedClear,
+        turn: Turn,
+        preview: ClearPreview,
         cleared_set: HashSet<CellPos>,
-        combo: u32,
-        consumes_turn: bool,
         elapsed: f32,
         duration: f32,
         particles_spawned: bool,
     },
     Falling {
+        turn: Turn,
         moves: HashMap<CellPos, i32>,
-        combo: u32,
-        consumes_turn: bool,
         elapsed: f32,
         duration: f32,
     },
@@ -1013,6 +1014,41 @@ fn update_kbd_cursor_marker(
     }
 }
 
+/// Why a targeted tool turn did not start.
+enum ToolStartError {
+    /// The target is not valid for this tool: nothing was consumed.
+    Invalid,
+    /// The target is valid but the inventory holds no charge of the tool.
+    NoStock,
+}
+
+/// Previews the tool on `cell`, consumes one charge from the inventory, then starts the turn.
+fn start_tool_turn(
+    ctx: &mut GameContext,
+    tool: ActiveTool,
+    cell: CellPos,
+) -> Result<(Turn, ClearPreview), ToolStartError> {
+    let valid = ctx
+        .active_session
+        .as_ref()
+        .and_then(|s| s.board.prepare_tool_step(tool, cell))
+        .is_some();
+    if !valid {
+        return Err(ToolStartError::Invalid);
+    }
+    if !ctx.city.tools.consume(tool) {
+        return Err(ToolStartError::NoStock);
+    }
+    match ctx
+        .active_session
+        .as_mut()
+        .map(|session| session.begin_tool(tool, cell))
+    {
+        Some(Ok((turn, TurnStep::ClearPending(preview)))) => Ok((turn, preview)),
+        _ => Err(ToolStartError::Invalid),
+    }
+}
+
 fn execute_undo(
     commands: &mut Commands,
     ctx: &mut GameContext,
@@ -1054,7 +1090,7 @@ fn execute_loki_shuffle(
             .map(|s| (s.board.cols(), s.board.rows()))
             .unwrap_or((8, 8));
         if let Some(session) = ctx.active_session.as_mut() {
-            session.play_tool(ActiveTool::LokiShuffle, None, &balance, &mut ctx.rng);
+            session.loki_shuffle(&balance, &mut ctx.rng);
         }
         ctx.armed_tool = None;
         ctx.persist();
@@ -1075,14 +1111,11 @@ fn execute_patron_fury(
     sound_bank: &SoundBank,
     input_state: &mut Match3InputState,
 ) {
-    let Some((can_fire, patron, cols, rows)) = ctx.active_session.as_ref().map(|s| {
-        (
-            s.can_trigger_fury(),
-            s.patron,
-            s.board.cols(),
-            s.board.rows(),
-        )
-    }) else {
+    let Some((can_fire, cols, rows)) = ctx
+        .active_session
+        .as_ref()
+        .map(|s| (s.can_trigger_fury(), s.board.cols(), s.board.rows()))
+    else {
         return;
     };
     if !can_fire || !input_state.is_idle() {
@@ -1093,30 +1126,35 @@ fn execute_patron_fury(
     }
     let ctx_ref = ctx;
     let session_tuning = ctx_ref.data.balance.session;
-    let (prepared, spawned_positions) = if let Some(session) = ctx_ref.active_session.as_mut() {
-        session.trigger_patron_fury_detailed_with(&session_tuning, &mut ctx_ref.rng)
-    } else {
-        (None, Vec::new())
+    let Some(outcome) = ctx_ref
+        .active_session
+        .as_mut()
+        .and_then(|session| session.trigger_fury(&session_tuning, &mut ctx_ref.rng))
+    else {
+        return;
     };
     input_state.undo_snapshot = None;
     input_state.clear_hint();
     play_sfx(commands, sound_bank, SfxKind::FuryUnleash);
-    let vfx_targets: Vec<CellPos> = prepared
-        .as_ref()
-        .map(|p| p.cells.clone())
-        .unwrap_or(spawned_positions);
-    anim::spawn_patron_fury_vfx(commands, vfx, patron, &vfx_targets, cols, rows, input_state);
+    anim::spawn_patron_fury_vfx(
+        commands,
+        vfx,
+        outcome.patron,
+        &outcome.vfx_targets,
+        cols,
+        rows,
+        input_state,
+    );
     input_state.shake_secs = SHAKE_DURATION_SECS;
     input_state.dirty_hud = true;
-    if let Some(prep) = prepared {
-        let cleared_set: HashSet<CellPos> = prep.cells.iter().copied().collect();
+    if let Some((turn, TurnStep::ClearPending(preview))) = outcome.turn {
+        let cleared_set: HashSet<CellPos> = preview.prepared.cells.iter().copied().collect();
         let clear_dur = ctx_ref.anim_duration(ctx_ref.data.balance.clear_anim_seconds);
         input_state.selected = None;
         input_state.phase = BoardAnimPhase::Clearing {
-            prepared: prep,
+            turn,
+            preview,
             cleared_set,
-            combo: 1,
-            consumes_turn: false,
             elapsed: 0.0,
             duration: clear_dur,
             particles_spawned: false,
@@ -1237,17 +1275,13 @@ pub fn handle_match3_hud_buttons(
         if keys.just_pressed(KeyCode::Enter) {
             if let Some(cell) = input_state.kbd_cursor {
                 if let Some(tool) = ctx.armed_tool {
-                    let prepared = ctx
-                        .active_session
-                        .as_ref()
-                        .and_then(|s| s.board.prepare_tool_step(tool, cell));
-                    if let Some(prep) = prepared {
-                        let (cols, rows) = ctx
-                            .active_session
-                            .as_ref()
-                            .map(|s| (s.board.cols(), s.board.rows()))
-                            .unwrap_or((8, 8));
-                        if ctx.city.tools.consume(tool) {
+                    match start_tool_turn(&mut ctx, tool, cell) {
+                        Ok((turn, preview)) => {
+                            let (cols, rows) = ctx
+                                .active_session
+                                .as_ref()
+                                .map(|s| (s.board.cols(), s.board.rows()))
+                                .unwrap_or((8, 8));
                             ctx.armed_tool = None;
                             ctx.persist();
                             input_state.undo_snapshot = None;
@@ -1258,30 +1292,31 @@ pub fn handle_match3_hud_buttons(
                                 &vfx,
                                 tool,
                                 cell,
-                                &prep.cells,
+                                &preview.prepared.cells,
                                 cols,
                                 rows,
                                 &input_state,
                             );
                             let clear_dur = ctx.anim_duration(ctx.data.balance.clear_anim_seconds);
                             let cleared_set: HashSet<CellPos> =
-                                prep.cells.iter().copied().collect();
+                                preview.prepared.cells.iter().copied().collect();
                             input_state.selected = None;
                             input_state.shake_secs = SHAKE_DURATION_SECS;
                             input_state.dirty_hud = true;
                             input_state.phase = BoardAnimPhase::Clearing {
-                                prepared: prep,
+                                turn,
+                                preview,
                                 cleared_set,
-                                combo: 1,
-                                consumes_turn: false,
                                 elapsed: 0.0,
                                 duration: clear_dur,
                                 particles_spawned: false,
                             };
                         }
-                    } else {
-                        spawn_invalid_cell_flash(&mut commands, cell, &input_state);
-                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        Err(ToolStartError::NoStock) => {}
+                        Err(ToolStartError::Invalid) => {
+                            spawn_invalid_cell_flash(&mut commands, cell, &input_state);
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        }
                     }
                     return;
                 }
@@ -1768,12 +1803,8 @@ pub fn handle_board_pointer_input(
                     input_state.dirty_hud = true;
                 }
                 if let Some(tool) = ctx.armed_tool {
-                    let prepared = ctx
-                        .active_session
-                        .as_ref()
-                        .and_then(|s| s.board.prepare_tool_step(tool, cell));
-                    if let Some(prep) = prepared {
-                        if ctx.city.tools.consume(tool) {
+                    match start_tool_turn(&mut ctx, tool, cell) {
+                        Ok((turn, preview)) => {
                             ctx.armed_tool = None;
                             ctx.persist();
                             input_state.undo_snapshot = None;
@@ -1783,30 +1814,31 @@ pub fn handle_board_pointer_input(
                                 &vfx,
                                 tool,
                                 cell,
-                                &prep.cells,
+                                &preview.prepared.cells,
                                 cols,
                                 rows,
                                 &input_state,
                             );
                             let clear_dur = ctx.anim_duration(ctx.data.balance.clear_anim_seconds);
                             let cleared_set: HashSet<CellPos> =
-                                prep.cells.iter().copied().collect();
+                                preview.prepared.cells.iter().copied().collect();
                             input_state.selected = None;
                             input_state.shake_secs = SHAKE_DURATION_SECS;
                             input_state.dirty_hud = true;
                             input_state.phase = BoardAnimPhase::Clearing {
-                                prepared: prep,
+                                turn,
+                                preview,
                                 cleared_set,
-                                combo: 1,
-                                consumes_turn: false,
                                 elapsed: 0.0,
                                 duration: clear_dur,
                                 particles_spawned: false,
                             };
                         }
-                    } else {
-                        spawn_invalid_cell_flash(&mut commands, cell, &input_state);
-                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        Err(ToolStartError::NoStock) => {}
+                        Err(ToolStartError::Invalid) => {
+                            spawn_invalid_cell_flash(&mut commands, cell, &input_state);
+                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        }
                     }
                     return;
                 }

@@ -33,7 +33,9 @@ use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
 use std::collections::{HashMap, HashSet};
-use wyrdstone_core::{ActiveTool, Booster, CellPos, FallMove, LevelOutcome, PatronGod};
+use wyrdstone_core::{
+    ActiveTool, Booster, CellPos, LevelOutcome, PatronGod, TurnStep, VICTORY_SKIP_MAX_DETONATIONS,
+};
 
 type BackdropQuery<'w, 's> = Query<
     'w,
@@ -852,8 +854,8 @@ pub fn tick_board_animation(
     if input_state.boss_hit_flash_secs > 0.0 {
         input_state.boss_hit_flash_secs = (input_state.boss_hit_flash_secs - dt).max(0.0);
         if input_state.boss_hit_flash_secs == 0.0 {
-            if let Some(boss) = ctx.active_session.as_mut().and_then(|s| s.boss.as_mut()) {
-                boss.last_damage_dealt = 0;
+            if let Some(session) = ctx.active_session.as_mut() {
+                session.clear_boss_hit_marker();
             }
             input_state.dirty_hud = true;
         }
@@ -946,18 +948,10 @@ pub fn tick_board_animation(
                     total_runes_cleared: ctx.city.stats.total_runes_cleared,
                     best_combo: ctx.city.stats.best_combo,
                 });
-                let prepared = ctx
-                    .active_session
-                    .as_mut()
-                    .and_then(|s| s.board.begin_swap_step(a, b));
-                if let Some(prep) = prepared {
+                let started = ctx.active_session.as_mut().map(|s| s.begin_swap(a, b));
+                if let Some(Ok((turn, TurnStep::ClearPending(preview)))) = started {
                     if !input_state.undo_used {
                         input_state.undo_snapshot = pre_swap;
-                    }
-                    if let Some(session) = ctx.active_session.as_mut() {
-                        session.consume_move();
-                        session.last_combo = 1;
-                        session.last_shuffled = false;
                     }
                     if let Some(session) = ctx.active_session.as_ref() {
                         rebuild_board_now(
@@ -973,38 +967,26 @@ pub fn tick_board_animation(
                         );
                     }
                     input_state.dirty_hud_soft = true;
-                    if !prep.converted_boosters.is_empty() {
+                    if !preview.prepared.converted_boosters.is_empty() {
                         input_state.phase = BoardAnimPhase::SuperComboCharge {
-                            prepared: prep,
-                            consumes_turn: true,
+                            turn,
+                            preview,
                             elapsed: 0.0,
                             duration: ctx.anim_duration(0.64),
                             beams_spawned: false,
                         };
                     } else {
-                        let has_booster = ctx
-                            .active_session
-                            .as_ref()
-                            .map(|s| {
-                                prep.cells.iter().any(|&p| {
-                                    s.board
-                                        .get(p)
-                                        .map(|c| c.booster != Booster::None)
-                                        .unwrap_or(false)
-                                })
-                            })
-                            .unwrap_or(false);
-                        let base_clear = if has_booster {
-                            ctx.data.balance.clear_anim_seconds * 1.85
-                        } else {
+                        let base_clear = if preview.fired_boosters.is_empty() {
                             ctx.data.balance.clear_anim_seconds
+                        } else {
+                            ctx.data.balance.clear_anim_seconds * 1.85
                         };
-                        let cleared_set: HashSet<CellPos> = prep.cells.iter().copied().collect();
+                        let cleared_set: HashSet<CellPos> =
+                            preview.prepared.cells.iter().copied().collect();
                         input_state.phase = BoardAnimPhase::Clearing {
-                            prepared: prep,
+                            turn,
+                            preview,
                             cleared_set,
-                            combo: 1,
-                            consumes_turn: true,
                             elapsed: 0.0,
                             duration: ctx.anim_duration(base_clear),
                             particles_spawned: false,
@@ -1063,8 +1045,8 @@ pub fn tick_board_animation(
             }
         }
         BoardAnimPhase::SuperComboCharge {
-            prepared,
-            consumes_turn,
+            turn,
+            preview,
             mut elapsed,
             duration,
             mut beams_spawned,
@@ -1076,7 +1058,7 @@ pub fn tick_board_animation(
                     Color::srgba(0.42, 0.92, 1.0, 0.88),
                     Color::srgba(0.98, 0.45, 0.68, 0.88),
                 ];
-                for (idx, &(pos, _)) in prepared.converted_boosters.iter().enumerate() {
+                for (idx, &(pos, _)) in preview.prepared.converted_boosters.iter().enumerate() {
                     let w = cell_to_world(pos, &input_state);
                     spawn_shockwave_ring(
                         &mut commands,
@@ -1094,7 +1076,8 @@ pub fn tick_board_animation(
             let pulse =
                 1.0 + 0.18 * ((elapsed / duration).clamp(0.0, 1.0) * std::f32::consts::PI).sin();
             for (tile, mut tf, mut sprite) in &mut tile_q {
-                if prepared
+                if preview
+                    .prepared
                     .converted_boosters
                     .iter()
                     .any(|&(p, _)| p == tile.pos)
@@ -1104,20 +1087,20 @@ pub fn tick_board_animation(
                 }
             }
             if elapsed >= duration {
-                let cleared_set: HashSet<CellPos> = prepared.cells.iter().copied().collect();
+                let cleared_set: HashSet<CellPos> =
+                    preview.prepared.cells.iter().copied().collect();
                 input_state.phase = BoardAnimPhase::Clearing {
-                    prepared,
+                    turn,
+                    preview,
                     cleared_set,
-                    combo: 1,
-                    consumes_turn,
                     elapsed: 0.0,
                     duration: ctx.anim_duration(ctx.data.balance.clear_anim_seconds),
                     particles_spawned: false,
                 };
             } else {
                 input_state.phase = BoardAnimPhase::SuperComboCharge {
-                    prepared,
-                    consumes_turn,
+                    turn,
+                    preview,
                     elapsed,
                     duration,
                     beams_spawned,
@@ -1125,51 +1108,48 @@ pub fn tick_board_animation(
             }
         }
         BoardAnimPhase::Clearing {
-            prepared,
+            mut turn,
+            preview,
             cleared_set,
-            combo,
-            consumes_turn,
             mut elapsed,
             duration,
             mut particles_spawned,
         } => {
             if !particles_spawned {
-                play_sfx(&mut commands, &sound_bank, SfxKind::MatchCombo(combo));
+                play_sfx(
+                    &mut commands,
+                    &sound_bank,
+                    SfxKind::MatchCombo(preview.combo),
+                );
                 if let Some(session) = ctx.active_session.as_ref() {
                     let cols = session.board.cols();
                     let rows = session.board.rows();
-                    let mut fired_booster = false;
-                    for &pos in &prepared.cells {
-                        if let Some(cell) = session.board.get(pos) {
-                            if cell.booster != Booster::None {
-                                fired_booster = true;
-                                spawn_booster_vfx_for(
-                                    &mut commands,
-                                    &vfx,
-                                    pos,
-                                    cell.booster,
-                                    cols,
-                                    rows,
-                                    &input_state,
-                                );
-                            }
-                        }
+                    for &(pos, booster) in &preview.fired_boosters {
+                        spawn_booster_vfx_for(
+                            &mut commands,
+                            &vfx,
+                            pos,
+                            booster,
+                            cols,
+                            rows,
+                            &input_state,
+                        );
                     }
-                    if fired_booster {
+                    if !preview.fired_boosters.is_empty() {
                         play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
                         input_state.shake_secs = SHAKE_DURATION_SECS * 1.25;
                     }
                     spawn_clear_particles(
                         &mut commands,
                         &vfx,
-                        &prepared.cells,
+                        &preview.prepared.cells,
                         session,
                         &input_state,
                     );
                     spawn_flying_orbs(
                         &mut commands,
                         &vfx,
-                        &prepared.cells,
+                        &preview.prepared.cells,
                         session,
                         &input_state,
                         window.width(),
@@ -1198,35 +1178,30 @@ pub fn tick_board_animation(
 
             if elapsed >= duration {
                 let balance = ctx.data.balance.clone();
-                let mut gained_score = 0u32;
-                let mut cleared_total = 0u64;
-                let mut boss_damaged = false;
-                let mut boss_phase2_name: Option<String> = None;
-                let mut fall_map = HashMap::new();
-                {
+                let step = {
                     let ctx_ref = ctx.as_mut();
-                    if let Some(session) = ctx_ref.active_session.as_mut() {
-                        let step = session.board.commit_clear_step(&prepared, combo, &balance);
-                        gained_score = step.score_gained;
-                        cleared_total = step.cleared_runes.values().map(|&v| v as u64).sum();
-                        session.apply_step_progress(&step);
-                        if let Some(boss) = session.boss.as_mut() {
-                            boss_damaged = boss.last_damage_dealt > 0;
-                            if boss.just_entered_phase2 {
-                                boss.just_entered_phase2 = false;
-                                boss_phase2_name =
-                                    Some(ctx_ref.data.i18n.t(&boss.def.name_key).to_string());
-                            }
-                        }
-                        let fall_moves: Vec<FallMove> = session
-                            .board
-                            .apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
-                        for fm in fall_moves {
-                            fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
-                        }
-                    }
-                    ctx_ref.city.stats.total_runes_cleared += cleared_total;
-                    ctx_ref.city.stats.best_combo = ctx_ref.city.stats.best_combo.max(combo);
+                    ctx_ref
+                        .active_session
+                        .as_mut()
+                        .and_then(|session| turn.advance(session, &balance, &mut ctx_ref.rng))
+                };
+                let Some(TurnStep::Cleared(report)) = step else {
+                    debug_assert!(false, "a pending clear must report its committed step");
+                    input_state.phase = BoardAnimPhase::Idle;
+                    return;
+                };
+                ctx.city.stats.record_clear(report.stats);
+                let combo = report.combo;
+                let gained_score = report.score_raw;
+                let boss_damaged = report.boss.as_ref().is_some_and(|hit| hit.damage > 0);
+                let boss_phase2_name = report
+                    .boss
+                    .as_ref()
+                    .filter(|hit| hit.entered_phase2)
+                    .map(|hit| ctx.data.i18n.t(&hit.name_key).to_string());
+                let mut fall_map = HashMap::new();
+                for fm in &report.fall {
+                    fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
                 }
                 if boss_damaged {
                     input_state.boss_hit_flash_secs = 0.38;
@@ -1286,14 +1261,14 @@ pub fn tick_board_animation(
                     };
                     spawn_floating_score(
                         &mut commands,
-                        &prepared.cells,
+                        &report.cells,
                         popup_label,
                         popup_color,
                         popup_size,
                         &input_state,
                     );
                 }
-                if combo >= 3 || prepared.cells.len() >= 6 {
+                if combo >= 3 || report.cells.len() >= 6 {
                     input_state.shake_secs = SHAKE_DURATION_SECS;
                 }
                 if let Some(session) = ctx.active_session.as_ref() {
@@ -1313,18 +1288,16 @@ pub fn tick_board_animation(
                 input_state.hint_pair = None;
                 input_state.dirty_hud_soft = true;
                 input_state.phase = BoardAnimPhase::Falling {
+                    turn,
                     moves: fall_map,
-                    combo,
-                    consumes_turn,
                     elapsed: 0.0,
                     duration: ctx.anim_duration(ctx.data.balance.fall_anim_seconds),
                 };
             } else {
                 input_state.phase = BoardAnimPhase::Clearing {
-                    prepared,
+                    turn,
+                    preview,
                     cleared_set,
-                    combo,
-                    consumes_turn,
                     elapsed,
                     duration,
                     particles_spawned,
@@ -1332,9 +1305,8 @@ pub fn tick_board_animation(
             }
         }
         BoardAnimPhase::Falling {
+            mut turn,
             moves,
-            combo,
-            consumes_turn,
             mut elapsed,
             duration,
         } => {
@@ -1361,240 +1333,201 @@ pub fn tick_board_animation(
 
             if elapsed >= duration {
                 let balance = ctx.data.balance.clone();
-                let mut relic_fall_map = HashMap::new();
-                let mut dropped_positions = Vec::new();
-                {
+                let consumes_turn = turn.consumes_turn();
+                let step = {
                     let ctx_ref = ctx.as_mut();
-                    if let Some(session) = ctx_ref.active_session.as_mut() {
-                        let relic_step = session.board.collect_bottom_relics(&balance);
-                        if relic_step.relics_dropped > 0 {
-                            dropped_positions = relic_step.cleared_positions.clone();
-                            session.apply_step_progress(&relic_step);
-                            let fms = session
-                                .board
-                                .apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
-                            for fm in fms {
-                                relic_fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
-                            }
+                    ctx_ref
+                        .active_session
+                        .as_mut()
+                        .and_then(|session| turn.advance(session, &balance, &mut ctx_ref.rng))
+                };
+                match step {
+                    Some(TurnStep::RelicsDropped(relics)) => {
+                        let mut relic_fall_map = HashMap::new();
+                        for fm in &relics.fall {
+                            relic_fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
                         }
-                    }
-                }
-                if !dropped_positions.is_empty() {
-                    play_sfx(&mut commands, &sound_bank, SfxKind::RelicDrop);
-                    if let Some(session) = ctx.active_session.as_ref() {
-                        spawn_clear_particles(
-                            &mut commands,
-                            &vfx,
-                            &dropped_positions,
-                            session,
-                            &input_state,
-                        );
-                        rebuild_board_now(
-                            &mut commands,
-                            session,
-                            &textures,
-                            &vfx,
-                            window,
-                            &mut input_state,
-                            &all_sprites,
-                            Some(&relic_fall_map),
-                            ctx.colorblind_mode,
-                        );
-                    }
-                    input_state.dirty_hud_soft = true;
-                    input_state.phase = BoardAnimPhase::Falling {
-                        moves: relic_fall_map,
-                        combo,
-                        consumes_turn,
-                        elapsed: 0.0,
-                        duration: ctx.anim_duration(ctx.data.balance.fall_anim_seconds),
-                    };
-                    return;
-                }
-
-                let next_cascade = ctx
-                    .active_session
-                    .as_ref()
-                    .and_then(|s| s.board.prepare_cascade_step());
-                if let Some(next_prep) = next_cascade {
-                    if let Some(session) = ctx.active_session.as_mut() {
-                        session.last_combo = combo + 1;
-                    }
-                    let cleared_set: HashSet<CellPos> = next_prep.cells.iter().copied().collect();
-                    input_state.dirty_hud_soft = true;
-                    input_state.phase = BoardAnimPhase::Clearing {
-                        prepared: next_prep,
-                        cleared_set,
-                        combo: combo + 1,
-                        consumes_turn,
-                        elapsed: 0.0,
-                        duration: ctx.anim_duration(ctx.data.balance.clear_anim_seconds),
-                        particles_spawned: false,
-                    };
-                } else {
-                    let balance = ctx.data.balance.clone();
-                    let ctx_ref = ctx.as_mut();
-                    let mut did_shuffle = false;
-                    let mut frost_pos = None;
-                    let mut curse_hits = Vec::new();
-                    let mut boss_riposte_hits = Vec::new();
-                    let mut boss_riposte_name: Option<String> = None;
-                    if let Some(session) = ctx_ref.active_session.as_mut() {
-                        if consumes_turn {
-                            frost_pos = session.apply_frost_spread_if_needed(&mut ctx_ref.rng);
-                            curse_hits = session.tick_cursed_runes_if_needed();
-                            boss_riposte_hits =
-                                session.tick_boss_riposte_if_needed(&mut ctx_ref.rng);
-                            if !boss_riposte_hits.is_empty() {
-                                boss_riposte_name = session
-                                    .boss
-                                    .as_ref()
-                                    .map(|b| ctx_ref.data.i18n.t(&b.def.name_key).to_string());
-                            }
-                        }
-                        if !session.board.has_valid_moves()
-                            && session.board.ensure_playable(&mut ctx_ref.rng)
-                        {
-                            session.last_shuffled = true;
-                            did_shuffle = true;
-                        }
-                        session.finalize_turn(&balance);
-                    }
-                    if !curse_hits.is_empty() {
-                        play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
-                        for &cp in &curse_hits {
-                            let w = cell_to_world(cp, &input_state);
-                            spawn_shockwave_ring(
+                        play_sfx(&mut commands, &sound_bank, SfxKind::RelicDrop);
+                        if let Some(session) = ctx.active_session.as_ref() {
+                            spawn_clear_particles(
                                 &mut commands,
                                 &vfx,
-                                w,
-                                Vec2::splat(input_state.cell_step * 1.55),
-                                Color::srgba(0.96, 0.18, 0.44, 0.94),
-                                0.40,
+                                &relics.positions,
+                                session,
+                                &input_state,
                             );
-                        }
-                        let msg = ctx.data.i18n.t("match3.curse.detonate").to_string();
-                        spawn_floating_score(
-                            &mut commands,
-                            &curse_hits,
-                            msg,
-                            COLOR_ACCENT_CRIMSON,
-                            28.0,
-                            &input_state,
-                        );
-                        input_state.shake_secs = SHAKE_DURATION_SECS;
-                        input_state.dirty_board = true;
-                    } else if consumes_turn {
-                        // Refresh cursed rune countdown badges on board after a player turn.
-                        let has_cursed = ctx
-                            .active_session
-                            .as_ref()
-                            .map(|s| s.board.has_cursed_runes())
-                            .unwrap_or(false);
-                        if has_cursed {
-                            input_state.dirty_board = true;
-                        }
-                    }
-                    if !boss_riposte_hits.is_empty() {
-                        play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
-                        for &rp in &boss_riposte_hits {
-                            let w = cell_to_world(rp, &input_state);
-                            spawn_shockwave_ring(
+                            rebuild_board_now(
                                 &mut commands,
+                                session,
+                                &textures,
                                 &vfx,
-                                w,
-                                Vec2::splat(input_state.cell_step * 1.6),
-                                Color::srgba(0.98, 0.24, 0.30, 0.94),
-                                0.40,
+                                window,
+                                &mut input_state,
+                                &all_sprites,
+                                Some(&relic_fall_map),
+                                ctx.colorblind_mode,
                             );
                         }
-                        if let Some(bname) = boss_riposte_name {
-                            let msg = ctx
-                                .data
-                                .i18n
-                                .t_fmt("match3.boss.riposte", &[("boss", bname)]);
+                        input_state.dirty_hud_soft = true;
+                        input_state.phase = BoardAnimPhase::Falling {
+                            turn,
+                            moves: relic_fall_map,
+                            elapsed: 0.0,
+                            duration: ctx.anim_duration(ctx.data.balance.fall_anim_seconds),
+                        };
+                    }
+                    Some(TurnStep::ClearPending(preview)) => {
+                        let cleared_set: HashSet<CellPos> =
+                            preview.prepared.cells.iter().copied().collect();
+                        input_state.dirty_hud_soft = true;
+                        input_state.phase = BoardAnimPhase::Clearing {
+                            turn,
+                            preview,
+                            cleared_set,
+                            elapsed: 0.0,
+                            duration: ctx.anim_duration(ctx.data.balance.clear_anim_seconds),
+                            particles_spawned: false,
+                        };
+                    }
+                    Some(TurnStep::Ended(end)) => {
+                        debug_assert!(turn.is_finished(), "an ended turn must be finished");
+                        let did_shuffle = end.shuffled;
+                        let frost_pos = end.frost;
+                        let curse_hits = end.curse_hits;
+                        let (boss_riposte_hits, boss_riposte_name) = match end.riposte {
+                            Some((hits, name_key)) => {
+                                (hits, Some(ctx.data.i18n.t(&name_key).to_string()))
+                            }
+                            None => (Vec::new(), None),
+                        };
+                        if !curse_hits.is_empty() {
+                            play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
+                            for &cp in &curse_hits {
+                                let w = cell_to_world(cp, &input_state);
+                                spawn_shockwave_ring(
+                                    &mut commands,
+                                    &vfx,
+                                    w,
+                                    Vec2::splat(input_state.cell_step * 1.55),
+                                    Color::srgba(0.96, 0.18, 0.44, 0.94),
+                                    0.40,
+                                );
+                            }
+                            let msg = ctx.data.i18n.t("match3.curse.detonate").to_string();
                             spawn_floating_score(
                                 &mut commands,
-                                &boss_riposte_hits,
+                                &curse_hits,
                                 msg,
                                 COLOR_ACCENT_CRIMSON,
                                 28.0,
                                 &input_state,
                             );
+                            input_state.shake_secs = SHAKE_DURATION_SECS;
+                            input_state.dirty_board = true;
+                        } else if consumes_turn {
+                            // Refresh cursed rune countdown badges on board after a player turn.
+                            if end.cursed_runes_remain {
+                                input_state.dirty_board = true;
+                            }
                         }
-                        input_state.shake_secs = SHAKE_DURATION_SECS;
-                        input_state.dirty_board = true;
-                        input_state.dirty_hud = true;
-                    }
-                    if let Some(fp) = frost_pos {
-                        let w = cell_to_world(fp, &input_state);
-                        spawn_shockwave_ring(
-                            &mut commands,
-                            &vfx,
-                            w,
-                            Vec2::splat(input_state.cell_step * 1.45),
-                            Color::srgba(0.45, 0.90, 1.0, 0.92),
-                            0.38,
-                        );
-                        input_state.dirty_board = true;
-                        input_state.dirty_hud = true;
-                    }
-                    if did_shuffle {
-                        input_state.dirty_board = true;
-                        input_state.dirty_hud = true;
-                    }
-                    let outcome = ctx
-                        .active_session
-                        .as_ref()
-                        .map(|s| s.outcome)
-                        .unwrap_or(LevelOutcome::InProgress);
-                    match outcome {
-                        LevelOutcome::Victory => {
-                            play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
-                            let banner = ctx.data.i18n.t("result.victory.title").to_string();
-                            commands.spawn((
-                                Match3Cleanup,
-                                FloatingScore {
-                                    elapsed: 0.0,
-                                    lifetime: 2.2,
-                                },
-                                Text2d::new(banner),
-                                TextFont {
-                                    font_size: 48.0,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_GOLD),
-                                Transform::from_xyz(0.0, 10.0, Z_SELECTION_RING + 3.0),
-                            ));
-                            let remaining_boosters = ctx
-                                .active_session
-                                .as_ref()
-                                .map(|s| s.board.find_remaining_boosters().len())
-                                .unwrap_or(0);
-                            let victory_secs = ctx
-                                .anim_duration((2.5 + remaining_boosters as f32 * 0.62).min(7.5));
+                        if !boss_riposte_hits.is_empty() {
+                            play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
+                            for &rp in &boss_riposte_hits {
+                                let w = cell_to_world(rp, &input_state);
+                                spawn_shockwave_ring(
+                                    &mut commands,
+                                    &vfx,
+                                    w,
+                                    Vec2::splat(input_state.cell_step * 1.6),
+                                    Color::srgba(0.98, 0.24, 0.30, 0.94),
+                                    0.40,
+                                );
+                            }
+                            if let Some(bname) = boss_riposte_name {
+                                let msg = ctx
+                                    .data
+                                    .i18n
+                                    .t_fmt("match3.boss.riposte", &[("boss", bname)]);
+                                spawn_floating_score(
+                                    &mut commands,
+                                    &boss_riposte_hits,
+                                    msg,
+                                    COLOR_ACCENT_CRIMSON,
+                                    28.0,
+                                    &input_state,
+                                );
+                            }
+                            input_state.shake_secs = SHAKE_DURATION_SECS;
+                            input_state.dirty_board = true;
                             input_state.dirty_hud = true;
-                            input_state.phase = BoardAnimPhase::VictoryCelebration {
-                                elapsed: 0.0,
-                                duration: victory_secs,
-                                next_burst_at: ctx.anim_duration(0.32),
-                                burst_index: 0,
-                            };
                         }
-                        LevelOutcome::Defeat => {
-                            finalize_level_transition(&mut ctx, &mut next_state);
-                            input_state.phase = BoardAnimPhase::Idle;
+                        if let Some(fp) = frost_pos {
+                            let w = cell_to_world(fp, &input_state);
+                            spawn_shockwave_ring(
+                                &mut commands,
+                                &vfx,
+                                w,
+                                Vec2::splat(input_state.cell_step * 1.45),
+                                Color::srgba(0.45, 0.90, 1.0, 0.92),
+                                0.38,
+                            );
+                            input_state.dirty_board = true;
+                            input_state.dirty_hud = true;
                         }
-                        LevelOutcome::InProgress => {
-                            input_state.phase = BoardAnimPhase::Idle;
+                        if did_shuffle {
+                            input_state.dirty_board = true;
+                            input_state.dirty_hud = true;
                         }
+                        match end.outcome {
+                            LevelOutcome::Victory => {
+                                play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                                let banner = ctx.data.i18n.t("result.victory.title").to_string();
+                                commands.spawn((
+                                    Match3Cleanup,
+                                    FloatingScore {
+                                        elapsed: 0.0,
+                                        lifetime: 2.2,
+                                    },
+                                    Text2d::new(banner),
+                                    TextFont {
+                                        font_size: 48.0,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                    Transform::from_xyz(0.0, 10.0, Z_SELECTION_RING + 3.0),
+                                ));
+                                let victory_secs = ctx.anim_duration(
+                                    (2.5 + end.remaining_boosters as f32 * 0.62).min(7.5),
+                                );
+                                input_state.dirty_hud = true;
+                                input_state.phase = BoardAnimPhase::VictoryCelebration {
+                                    elapsed: 0.0,
+                                    duration: victory_secs,
+                                    next_burst_at: ctx.anim_duration(0.32),
+                                    burst_index: 0,
+                                };
+                            }
+                            LevelOutcome::Defeat => {
+                                finalize_level_transition(&mut ctx, &mut next_state);
+                                input_state.phase = BoardAnimPhase::Idle;
+                            }
+                            LevelOutcome::InProgress => {
+                                input_state.phase = BoardAnimPhase::Idle;
+                            }
+                        }
+                    }
+                    Some(TurnStep::Cleared(_)) | None => {
+                        debug_assert!(
+                            false,
+                            "a fallen board must report relics, a cascade or the end"
+                        );
+                        input_state.phase = BoardAnimPhase::Idle;
                     }
                 }
             } else {
                 input_state.phase = BoardAnimPhase::Falling {
+                    turn,
                     moves,
-                    combo,
-                    consumes_turn,
                     elapsed,
                     duration,
                 };
@@ -1610,24 +1543,14 @@ pub fn tick_board_animation(
                 input_state.skip_valhalla = false;
                 let balance = ctx.data.balance.clone();
                 // Detonate any remaining boosters synchronously so skipping never forfeits points.
-                for _ in 0..16 {
-                    let next_pos = ctx
-                        .active_session
-                        .as_ref()
-                        .and_then(|s| s.board.find_remaining_boosters().into_iter().next())
-                        .map(|(p, _)| p);
-                    let Some(b_pos) = next_pos else {
-                        break;
-                    };
+                {
                     let ctx_ref = ctx.as_mut();
                     if let Some(session) = ctx_ref.active_session.as_mut() {
-                        if let Some(prep) = session.board.prepare_booster_detonation(b_pos) {
-                            let step = session.board.commit_clear_step(&prep, 2, &balance);
-                            session.apply_step_progress(&step);
-                            session
-                                .board
-                                .apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
-                        }
+                        session.detonate_bonus_boosters(
+                            &balance,
+                            &mut ctx_ref.rng,
+                            VICTORY_SKIP_MAX_DETONATIONS,
+                        );
                     }
                 }
                 finalize_level_transition(&mut ctx, &mut next_state);
@@ -1645,34 +1568,25 @@ pub fn tick_board_animation(
             if elapsed >= next_burst_at && elapsed < duration - 0.20 {
                 burst_index += 1;
                 // Priority 1: Sequentially detonate every remaining charged rune (booster) on the board for real bonus points!
-                let next_booster = ctx
-                    .active_session
-                    .as_ref()
-                    .and_then(|s| s.board.find_remaining_boosters().into_iter().next());
+                let balance = ctx.data.balance.clone();
+                let blast = {
+                    let ctx_ref = ctx.as_mut();
+                    ctx_ref.active_session.as_mut().and_then(|session| {
+                        session.detonate_next_bonus_booster(&balance, &mut ctx_ref.rng)
+                    })
+                };
 
-                if let Some((b_pos, b_kind)) = next_booster {
+                if let Some(blast) = blast {
                     next_burst_at += ctx.anim_duration(0.58);
-                    let balance = ctx.data.balance.clone();
-                    let mut gained_pts = 0u32;
-                    let mut cleared_cells = Vec::new();
-                    let mut cols = 8usize;
-                    let mut rows = 8usize;
-                    {
-                        let ctx_ref = ctx.as_mut();
-                        if let Some(session) = ctx_ref.active_session.as_mut() {
-                            cols = session.board.cols();
-                            rows = session.board.rows();
-                            if let Some(prep) = session.board.prepare_booster_detonation(b_pos) {
-                                let step = session.board.commit_clear_step(&prep, 2, &balance);
-                                gained_pts = step.score_gained;
-                                cleared_cells = step.cleared_positions.clone();
-                                session.apply_step_progress(&step);
-                                session
-                                    .board
-                                    .apply_gravity_and_refill_tracked(&mut ctx_ref.rng);
-                            }
-                        }
-                    }
+                    let b_pos = blast.pos;
+                    let b_kind = blast.booster;
+                    let gained_pts = blast.score_raw;
+                    let cleared_cells = blast.cleared;
+                    let (cols, rows) = ctx
+                        .active_session
+                        .as_ref()
+                        .map(|s| (s.board.cols(), s.board.rows()))
+                        .unwrap_or((8, 8));
                     spawn_booster_vfx_for(
                         &mut commands,
                         &vfx,
