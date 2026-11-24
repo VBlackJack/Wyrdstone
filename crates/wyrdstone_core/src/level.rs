@@ -17,7 +17,8 @@
 //! Level definitions, objective tracking, timed mode, frost spread, amulet modifiers, and Match-3 session state.
 
 use crate::balance::{
-    add_pct_u32, BalanceConfig, BossTuning, DailyTuning, ExpeditionTuning, SessionTuning,
+    add_pct_u32, BalanceConfig, BlitzTuning, BossTuning, DailyTuning, ExpeditionTuning,
+    SessionTuning,
 };
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, PreparedClear, RuneType};
 use crate::boss::{BossDef, BossState};
@@ -33,7 +34,78 @@ use serde::{Deserialize, Serialize};
 
 /// Building identifier carried by procedurally generated Daily Trial levels.
 pub const DAILY_TRIAL_BUILDING_ID: &str = "daily_trial";
+/// Building / mode identifier carried by Valhalla Blitz arcade score-attack runs.
+pub const BLITZ_BUILDING_ID: &str = "valhalla_blitz";
 const DAILY_SEED_SALT: u64 = 0x5759_5244_5354_4F4E;
+
+/// Score threshold medal tier earned in Valhalla Blitz.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
+pub enum BlitzMedal {
+    #[default]
+    None,
+    Bronze,
+    Silver,
+    Gold,
+    Valkyrie,
+}
+
+impl BlitzMedal {
+    pub fn from_score(score: u32, tuning: &BlitzTuning) -> Self {
+        if score >= tuning.valkyrie_score {
+            Self::Valkyrie
+        } else if score >= tuning.gold_score {
+            Self::Gold
+        } else if score >= tuning.silver_score {
+            Self::Silver
+        } else if score >= tuning.bronze_score {
+            Self::Bronze
+        } else {
+            Self::None
+        }
+    }
+
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            Self::None => "blitz.medal.none",
+            Self::Bronze => "blitz.medal.bronze",
+            Self::Silver => "blitz.medal.silver",
+            Self::Gold => "blitz.medal.gold",
+            Self::Valkyrie => "blitz.medal.valkyrie",
+        }
+    }
+
+    pub fn next_target(self, tuning: &BlitzTuning) -> Option<(Self, u32)> {
+        match self {
+            Self::None => Some((Self::Bronze, tuning.bronze_score)),
+            Self::Bronze => Some((Self::Silver, tuning.silver_score)),
+            Self::Silver => Some((Self::Gold, tuning.gold_score)),
+            Self::Gold => Some((Self::Valkyrie, tuning.valkyrie_score)),
+            Self::Valkyrie => None,
+        }
+    }
+
+    pub const fn reward_bonus_pct(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Bronze => 50,
+            Self::Silver => 100,
+            Self::Gold => 175,
+            Self::Valkyrie => 250,
+        }
+    }
+
+    pub const fn glory_reward(self, tuning: &BlitzTuning) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Bronze => tuning.glory_bronze,
+            Self::Silver => tuning.glory_silver,
+            Self::Gold => tuning.glory_gold,
+            Self::Valkyrie => tuning.glory_valkyrie,
+        }
+    }
+}
 /// Preferred top-row relic columns for the relic excavation daily (2 and 3 relic variants).
 const DAILY_RELIC_COLUMNS_TWO: [usize; 2] = [2, 5];
 const DAILY_RELIC_COLUMNS_THREE: [usize; 3] = [1, 4, 6];
@@ -311,6 +383,32 @@ impl LevelDef {
             base_reward: tuning.base_reward,
         }
     }
+
+    /// Generates the 75-second Valhalla Blitz arcade score-attack board.
+    pub fn valhalla_blitz_with(tuning: &BlitzTuning) -> Self {
+        Self {
+            id: BLITZ_BUILDING_ID.to_string(),
+            building_id: BLITZ_BUILDING_ID.to_string(),
+            cols: 8,
+            rows: 8,
+            max_moves: 999,
+            time_limit_seconds: Some(tuning.duration_secs),
+            rune_types_count: RuneType::ALL.len(),
+            objectives: vec![Objective::ReachScore {
+                target: tuning.valkyrie_score,
+            }],
+            ice_cells: vec![],
+            chained_cells: vec![],
+            crate_cells: vec![],
+            relic_cells: vec![],
+            portals: vec![],
+            frost_spread: false,
+            fog_cells: vec![],
+            cursed_cells: vec![],
+            blocked_cells: vec![(0, 0), (7, 0), (0, 7), (7, 7)],
+            base_reward: tuning.base_reward,
+        }
+    }
 }
 
 /// Terminal state of a Match-3 level.
@@ -350,6 +448,12 @@ pub struct LevelSession {
     pub just_triggered_overdrive: bool,
     pub overdrive_ignited_this_turn: bool,
     pub session_tuning: SessionTuning,
+    pub is_blitz: bool,
+    pub blitz_multiplier: u32,
+    pub blitz_chain_timer_secs: f32,
+    pub blitz_freeze_secs: f32,
+    pub blitz_bonus_time_earned: f32,
+    pub blitz_tuning: BlitzTuning,
     pub daily_blessing: Option<DailyBlessing>,
     pub boss: Option<BossState>,
 }
@@ -565,9 +669,31 @@ impl LevelSession {
                 overdrive_turns: 0,
                 ..SessionTuning::default()
             },
+            is_blitz: false,
+            blitz_multiplier: 1,
+            blitz_chain_timer_secs: 0.0,
+            blitz_freeze_secs: 0.0,
+            blitz_bonus_time_earned: 0.0,
+            blitz_tuning: BlitzTuning::default(),
             daily_blessing: None,
             boss,
         }
+    }
+
+    /// Starts a 75-second Valhalla Blitz arcade score-attack session.
+    pub fn start_valhalla_blitz_with<R: Rng>(
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        balance: &BalanceConfig,
+        rng: &mut R,
+    ) -> Self {
+        let level = LevelDef::valhalla_blitz_with(&balance.blitz);
+        let mut session = Self::start_full(level, amulet, city_bonuses, patron, None, rng);
+        session.is_blitz = true;
+        session.blitz_tuning = balance.blitz;
+        session.apply_session_tuning(&balance.session);
+        session
     }
 
     /// Captures runtime session tuning (from BalanceConfig) and aligns Overdrive / Stagger limits.
@@ -694,26 +820,52 @@ impl LevelSession {
             }
             PatronGod::Thor | PatronGod::Loki => {}
         }
+        if self.is_blitz {
+            self.blitz_freeze_secs = self
+                .blitz_freeze_secs
+                .max(self.blitz_tuning.fury_freeze_secs);
+        }
         self.add_overdrive_charge(self.session_tuning.overdrive_charge_on_fury);
         (prepared, spawned)
     }
 
-    /// Advances the optional countdown timer and triggers Defeat when time expires.
+    /// Advances the optional countdown timer and handles Valhalla Blitz clock freezes & momentum decay.
     pub fn tick_timer(&mut self, dt_secs: f32) -> bool {
         if self.outcome != LevelOutcome::InProgress {
             return false;
+        }
+        let mut visual_changed = false;
+        if self.is_blitz {
+            if self.blitz_chain_timer_secs > 0.0 {
+                self.blitz_chain_timer_secs = (self.blitz_chain_timer_secs - dt_secs).max(0.0);
+                if self.blitz_chain_timer_secs == 0.0 && self.blitz_multiplier > 1 {
+                    self.blitz_multiplier = 1;
+                    visual_changed = true;
+                }
+            }
+            if self.blitz_freeze_secs > 0.0 {
+                self.blitz_freeze_secs = (self.blitz_freeze_secs - dt_secs).max(0.0);
+                if self.blitz_freeze_secs == 0.0 {
+                    visual_changed = true;
+                }
+                return visual_changed;
+            }
         }
         if let Some(ref mut remaining) = self.time_left_secs {
             let prev_whole = remaining.ceil() as u32;
             *remaining = (*remaining - dt_secs).max(0.0);
             let new_whole = remaining.ceil() as u32;
             if *remaining <= 0.0 {
-                self.outcome = LevelOutcome::Defeat;
+                self.outcome = if self.is_blitz {
+                    LevelOutcome::Victory
+                } else {
+                    LevelOutcome::Defeat
+                };
                 return true;
             }
-            return new_whole != prev_whole;
+            return visual_changed || new_whole != prev_whole;
         }
-        false
+        visual_changed
     }
 
     /// Attempts a player swap and resolves the whole turn through the step machine (clears,
@@ -771,9 +923,19 @@ impl LevelSession {
         total
     }
 
-    /// Decrements remaining moves by one and resets per-turn trackers.
+    /// Decrements remaining moves by one (or bumps Blitz momentum) and resets per-turn trackers.
     pub fn consume_move(&mut self) {
-        self.moves_left = self.moves_left.saturating_sub(1);
+        if self.is_blitz {
+            if self.blitz_chain_timer_secs > 0.0 {
+                self.blitz_multiplier = self
+                    .blitz_multiplier
+                    .saturating_add(1)
+                    .min(self.blitz_tuning.max_multiplier);
+            }
+            self.blitz_chain_timer_secs = self.blitz_tuning.chain_window_secs;
+        } else {
+            self.moves_left = self.moves_left.saturating_sub(1);
+        }
         self.turn_ice_broken = 0;
         self.last_frost_spread = None;
         self.just_triggered_overdrive = false;
@@ -792,7 +954,33 @@ impl LevelSession {
             self.score_bonus_pct
         };
         let boosted_score = add_pct_u32(step.score_gained, effective_score_pct);
-        self.score = self.score.saturating_add(boosted_score);
+        let scored = if self.is_blitz {
+            if step.max_combo >= 2 {
+                self.blitz_multiplier = self
+                    .blitz_multiplier
+                    .saturating_add(1)
+                    .min(self.blitz_tuning.max_multiplier);
+            }
+            if step.valid {
+                self.blitz_chain_timer_secs = self.blitz_tuning.chain_window_secs;
+            }
+            if (step.max_combo >= 3 || step.boosters_used > 0)
+                && self.blitz_bonus_time_earned < self.blitz_tuning.max_bonus_time_secs
+            {
+                let bonus = self
+                    .blitz_tuning
+                    .time_bonus_secs
+                    .min(self.blitz_tuning.max_bonus_time_secs - self.blitz_bonus_time_earned);
+                self.blitz_bonus_time_earned += bonus;
+                if let Some(ref mut remaining) = self.time_left_secs {
+                    *remaining += bonus;
+                }
+            }
+            boosted_score.saturating_mul(self.blitz_multiplier.max(1))
+        } else {
+            boosted_score
+        };
+        self.score = self.score.saturating_add(scored);
         let is_relic_only_step = step.relics_dropped > 0
             && step.max_combo == 0
             && step.cleared_runes.is_empty()
@@ -939,7 +1127,7 @@ impl LevelSession {
         if let Some(boss) = self.boss.as_mut() {
             boss.just_staggered = false;
         }
-        if self.outcome != LevelOutcome::InProgress {
+        if self.outcome != LevelOutcome::InProgress || self.is_blitz {
             return;
         }
         let won = if let Some(boss) = &self.boss {
@@ -962,10 +1150,17 @@ impl LevelSession {
         self.earned_stars_with(&SessionTuning::default())
     }
 
-    /// Computes the star rating using the given session tuning thresholds.
+    /// Computes the star rating using the given session tuning thresholds (or Blitz medal tier).
     pub fn earned_stars_with(&self, tuning: &SessionTuning) -> u8 {
         if self.outcome != LevelOutcome::Victory {
             return 0;
+        }
+        if self.is_blitz {
+            return match BlitzMedal::from_score(self.score, &self.blitz_tuning) {
+                BlitzMedal::Gold | BlitzMedal::Valkyrie => 3,
+                BlitzMedal::Silver => 2,
+                BlitzMedal::Bronze | BlitzMedal::None => 1,
+            };
         }
         let ratio = if self.initial_moves > 0 {
             self.moves_left as f32 / self.initial_moves as f32
@@ -981,14 +1176,17 @@ impl LevelSession {
         }
     }
 
-    /// Returns `(move_bonus_pct, passive_bonus_pct, fury_bonus_pct)` applied to victory rewards.
+    /// Returns `(move_or_medal_bonus_pct, passive_bonus_pct, fury_bonus_pct)` applied to victory rewards.
     pub fn reward_bonus_breakdown(&self, balance: &BalanceConfig) -> (u32, u32, u32) {
-        let move_bonus = self
-            .moves_left
-            .saturating_mul(balance.move_reward_bonus_pct_per_move)
-            .min(balance.move_reward_bonus_cap_pct);
+        let primary_bonus = if self.is_blitz {
+            BlitzMedal::from_score(self.score, &self.blitz_tuning).reward_bonus_pct()
+        } else {
+            self.moves_left
+                .saturating_mul(balance.move_reward_bonus_pct_per_move)
+                .min(balance.move_reward_bonus_cap_pct)
+        };
         (
-            move_bonus,
+            primary_bonus,
             self.resource_bonus_pct,
             self.fury_resource_bonus_pct,
         )

@@ -2604,3 +2604,82 @@ fn boss_stagger_cancels_imminent_riposte_and_applies_exposed_damage_bonus() {
         "Exposed boss damage {exposed_dmg} must exceed base {base_expected}"
     );
 }
+
+#[test]
+fn valhalla_blitz_infinite_moves_momentum_freeze_time_bonus_and_medal_victory() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut rng = StdRng::seed_from_u64(501);
+    let mut session = LevelSession::start_valhalla_blitz_with(
+        None,
+        CityBonuses::default(),
+        PatronGod::Thor,
+        &data.balance,
+        &mut rng,
+    );
+    assert!(session.is_blitz);
+    assert_eq!(session.blitz_multiplier, 1);
+    let start_moves = session.moves_left;
+
+    // Swapping within chain window raises multiplier and never consumes moves.
+    session.consume_move();
+    assert_eq!(session.moves_left, start_moves);
+    assert_eq!(session.blitz_multiplier, 1);
+    session.consume_move();
+    assert_eq!(session.moves_left, start_moves);
+    assert_eq!(session.blitz_multiplier, 2);
+
+    // High combo step multiplies score and adds +2s bonus time.
+    let before_time = session.time_left_secs.expect("timed blitz");
+    let mut big_step = wyrdstone_core::MatchStepOutcome {
+        valid: true,
+        score_gained: 1000,
+        max_combo: 3,
+        ..Default::default()
+    };
+    big_step.cleared_runes.insert(RuneType::Fire, 5);
+    session.apply_step_progress(&big_step);
+    assert_eq!(session.blitz_multiplier, 3);
+    assert_eq!(session.score, 3000);
+    assert!(session.time_left_secs.expect("timed") > before_time);
+
+    // Finalizing a turn early in Blitz never ends the game.
+    session.finalize_turn(&data.balance);
+    assert_eq!(session.outcome, LevelOutcome::InProgress);
+
+    // Divine Fury freezes the Blitz countdown timer for fury_freeze_secs.
+    session.fury = session.fury_max;
+    let _ = session.trigger_patron_fury_detailed(&mut rng);
+    assert!(session.blitz_freeze_secs > 0.0);
+    let frozen_at = session.time_left_secs.expect("timed");
+    session.tick_timer(1.0);
+    assert_eq!(session.time_left_secs.expect("timed"), frozen_at);
+
+    // Reaching zero clock triggers Victory (Arcade completion), never Defeat, and awards Bronze+ medal.
+    session.blitz_freeze_secs = 0.0;
+    session.score = data.balance.blitz.gold_score;
+    session.tick_timer(200.0);
+    assert_eq!(session.outcome, LevelOutcome::Victory);
+    assert_eq!(session.earned_stars_with(&data.balance.session), 3);
+
+    let rewards = session.earned_rewards(&data.balance);
+    let mut city = CityState::new(&data.balance);
+    let (medal, glory, new_best) = city.record_blitz_run(session.score, &rewards, &data.balance);
+    assert_eq!(medal, wyrdstone_core::BlitzMedal::Gold);
+    assert_eq!(glory, data.balance.blitz.glory_gold);
+    assert!(new_best);
+    assert_eq!(city.stats.best_blitz_score, data.balance.blitz.gold_score);
+}
+
+#[test]
+fn save_data_deserializes_without_blitz_stats_fields() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let base = SaveData::new_game(&data.balance, Language::En);
+    let mut val = serde_json::to_value(&base).expect("serialize");
+    let stats_obj = val["city"]["stats"].as_object_mut().expect("stats map");
+    stats_obj.remove("best_blitz_score");
+    stats_obj.remove("blitz_runs_completed");
+    let json = serde_json::to_string(&val).expect("to string");
+    let loaded: SaveData = serde_json::from_str(&json).expect("backward-compat load");
+    assert_eq!(loaded.city.stats.best_blitz_score, 0);
+    assert_eq!(loaded.city.stats.blitz_runs_completed, 0);
+}

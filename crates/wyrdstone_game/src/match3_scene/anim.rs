@@ -914,25 +914,52 @@ pub fn tick_board_animation(
             .map(|s| s.tick_timer(dt))
             .unwrap_or(false);
         if timer_changed {
-            if ctx.active_session.as_ref().map(|s| s.outcome) == Some(LevelOutcome::Defeat) {
-                enter_defeat_beat(&mut commands, &ctx, &sound_bank, &mut input_state, true);
-                return;
+            match ctx.active_session.as_ref().map(|s| s.outcome) {
+                Some(LevelOutcome::Victory) => {
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    input_state.dirty_hud = true;
+                    input_state.phase = BoardAnimPhase::VictoryCelebration {
+                        elapsed: 0.0,
+                        duration: ctx.anim_duration(1.6),
+                        next_burst_at: ctx.anim_duration(VICTORY_FIRST_BURST_DELAY_SECS),
+                        burst_index: 0,
+                    };
+                    return;
+                }
+                Some(LevelOutcome::Defeat) => {
+                    enter_defeat_beat(&mut commands, &ctx, &sound_bank, &mut input_state, true);
+                    return;
+                }
+                _ => {}
             }
-            // Update timer text in-place instead of rebuilding the entire HUD every second.
-            if let Some(secs) = ctx.active_session.as_ref().and_then(|s| s.time_left_secs) {
-                let whole = secs.ceil() as u32;
-                let formatted = ctx
-                    .data
-                    .i18n
-                    .t_fmt("match3.hud.timer", &[("secs", whole.to_string())]);
-                let color = if whole <= 15 {
-                    COLOR_ACCENT_CRIMSON_TEXT
-                } else {
-                    COLOR_ACCENT_TEAL_TEXT
-                };
-                for (mut text, mut text_col) in &mut timer_text_q {
-                    text.0 = formatted.clone();
-                    text_col.0 = color;
+            if let Some(session) = ctx.active_session.as_ref() {
+                if session.is_blitz {
+                    input_state.dirty_hud_soft = true;
+                }
+                // Update timer text in-place instead of rebuilding the entire HUD every second.
+                if let Some(secs) = session.time_left_secs {
+                    let whole = secs.ceil() as u32;
+                    let frozen = session.is_blitz && session.blitz_freeze_secs > 0.0;
+                    let formatted = if frozen {
+                        ctx.data
+                            .i18n
+                            .t_fmt("match3.hud.timer_frozen", &[("secs", whole.to_string())])
+                    } else {
+                        ctx.data
+                            .i18n
+                            .t_fmt("match3.hud.timer", &[("secs", whole.to_string())])
+                    };
+                    let color = if frozen {
+                        Color::srgb(0.45, 0.88, 1.0)
+                    } else if whole <= 15 {
+                        COLOR_ACCENT_CRIMSON_TEXT
+                    } else {
+                        COLOR_ACCENT_TEAL_TEXT
+                    };
+                    for (mut text, mut text_col) in &mut timer_text_q {
+                        text.0 = formatted.clone();
+                        text_col.0 = color;
+                    }
                 }
             }
         }
@@ -2037,6 +2064,8 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
         ctx.last_stars = stars;
         ctx.last_daily_streak = None;
         ctx.last_glory_reward = 0;
+        ctx.last_blitz_medal = None;
+        ctx.last_blitz_new_best = false;
         ctx.last_defeat_out_of_time = outcome == LevelOutcome::Defeat && timed_out;
         ctx.city.stats.best_score = ctx.city.stats.best_score.max(score);
         if outcome == LevelOutcome::Victory {
@@ -2047,6 +2076,13 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                 ctx.last_glory_reward = boss.glory_reward;
                 ctx.city.record_boss_victory_with_rewards(&boss, &rewards);
                 ctx.last_rewards = rewards;
+            } else if building_id == wyrdstone_core::BLITZ_BUILDING_ID {
+                let (medal, glory, is_new_best) =
+                    ctx.city
+                        .record_blitz_run(score, &rewards, &ctx.data.balance);
+                ctx.last_blitz_medal = Some(medal);
+                ctx.last_blitz_new_best = is_new_best;
+                ctx.last_glory_reward = glory;
             } else if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
                 ctx.city

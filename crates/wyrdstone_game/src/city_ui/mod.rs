@@ -178,6 +178,7 @@ pub enum CityAction {
     PlayBuildingLevel(String),
     PlayDailyTrial,
     StartExpedition,
+    StartValhallaBlitz,
     PickExpeditionBoon(usize),
     EndExpedition,
     FightBoss(String),
@@ -392,6 +393,21 @@ fn spawn_play_mode_buttons(parent: &mut ChildBuilder, ctx: &GameContext) {
         } else {
             COLOR_ACCENT_TEAL
         },
+        true,
+    );
+    let blitz_lbl = i18n.t_fmt(
+        "city.button.play_cost",
+        &[
+            ("label", i18n.t("city.panel.blitz.button").to_string()),
+            ("cost", ctx.data.balance.energy_cost_per_level.to_string()),
+        ],
+    );
+    spawn_small_button_colored(
+        parent,
+        &blitz_lbl,
+        CityAction::StartValhallaBlitz,
+        COLOR_ACCENT_GOLD,
+        COLOR_TEXT_DARK,
         true,
     );
 }
@@ -2465,6 +2481,17 @@ pub fn handle_city_buttons(
                 Ok(false) => {
                     scroll_mem.modal_offset_y = 0.0;
                     rebuild = true;
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                }
+            },
+            CityAction::StartValhallaBlitz => match ctx.start_valhalla_blitz() {
+                Ok(()) => {
+                    next_state.set(AppState::Match3);
+                    return;
                 }
                 Err(err_key) => {
                     ctx.status_notice_key = Some(err_key.to_string());

@@ -132,6 +132,26 @@ const DEFAULT_BOSS_STAGGER_MIN_COMBO: u32 = 3;
 const DEFAULT_BOSS_EXPOSED_TURNS: u32 = 2;
 const DEFAULT_BOSS_EXPOSED_DAMAGE_BONUS_PCT: u32 = 50;
 
+// Valhalla Blitz defaults.
+const DEFAULT_BLITZ_DURATION_SECS: u32 = 75;
+const DEFAULT_BLITZ_CHAIN_WINDOW_SECS: f32 = 4.5;
+const DEFAULT_BLITZ_MAX_MULTIPLIER: u32 = 8;
+const DEFAULT_BLITZ_TIME_BONUS_SECS: f32 = 2.0;
+const DEFAULT_BLITZ_MAX_BONUS_TIME_SECS: f32 = 30.0;
+const DEFAULT_BLITZ_FURY_FREEZE_SECS: f32 = 4.0;
+const DEFAULT_BLITZ_BRONZE_SCORE: u32 = 15_000;
+const DEFAULT_BLITZ_SILVER_SCORE: u32 = 35_000;
+const DEFAULT_BLITZ_GOLD_SCORE: u32 = 65_000;
+const DEFAULT_BLITZ_VALKYRIE_SCORE: u32 = 100_000;
+const DEFAULT_BLITZ_REWARD_WOOD: u32 = 45;
+const DEFAULT_BLITZ_REWARD_STONE: u32 = 45;
+const DEFAULT_BLITZ_REWARD_GOLD: u32 = 65;
+const DEFAULT_BLITZ_REWARD_MEAD: u32 = 15;
+const DEFAULT_BLITZ_GLORY_BRONZE: u32 = 10;
+const DEFAULT_BLITZ_GLORY_SILVER: u32 = 20;
+const DEFAULT_BLITZ_GLORY_GOLD: u32 = 35;
+const DEFAULT_BLITZ_GLORY_VALKYRIE: u32 = 60;
+
 /// One day of the Fjord Login Tribute cycle: resources plus an optional Runic Tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoginTributeDay {
@@ -348,6 +368,54 @@ impl Default for BossTuning {
             stagger_min_combo: DEFAULT_BOSS_STAGGER_MIN_COMBO,
             exposed_turns: DEFAULT_BOSS_EXPOSED_TURNS,
             exposed_damage_bonus_pct: DEFAULT_BOSS_EXPOSED_DAMAGE_BONUS_PCT,
+        }
+    }
+}
+
+/// Tunables of the 75-second Valhalla Blitz arcade score-attack mode.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BlitzTuning {
+    pub duration_secs: u32,
+    pub chain_window_secs: f32,
+    pub max_multiplier: u32,
+    pub time_bonus_secs: f32,
+    pub max_bonus_time_secs: f32,
+    pub fury_freeze_secs: f32,
+    pub bronze_score: u32,
+    pub silver_score: u32,
+    pub gold_score: u32,
+    pub valkyrie_score: u32,
+    pub base_reward: ResourceBundle,
+    pub glory_bronze: u32,
+    pub glory_silver: u32,
+    pub glory_gold: u32,
+    pub glory_valkyrie: u32,
+}
+
+impl Default for BlitzTuning {
+    fn default() -> Self {
+        Self {
+            duration_secs: DEFAULT_BLITZ_DURATION_SECS,
+            chain_window_secs: DEFAULT_BLITZ_CHAIN_WINDOW_SECS,
+            max_multiplier: DEFAULT_BLITZ_MAX_MULTIPLIER,
+            time_bonus_secs: DEFAULT_BLITZ_TIME_BONUS_SECS,
+            max_bonus_time_secs: DEFAULT_BLITZ_MAX_BONUS_TIME_SECS,
+            fury_freeze_secs: DEFAULT_BLITZ_FURY_FREEZE_SECS,
+            bronze_score: DEFAULT_BLITZ_BRONZE_SCORE,
+            silver_score: DEFAULT_BLITZ_SILVER_SCORE,
+            gold_score: DEFAULT_BLITZ_GOLD_SCORE,
+            valkyrie_score: DEFAULT_BLITZ_VALKYRIE_SCORE,
+            base_reward: ResourceBundle {
+                wood: DEFAULT_BLITZ_REWARD_WOOD,
+                stone: DEFAULT_BLITZ_REWARD_STONE,
+                gold: DEFAULT_BLITZ_REWARD_GOLD,
+                mead: DEFAULT_BLITZ_REWARD_MEAD,
+            },
+            glory_bronze: DEFAULT_BLITZ_GLORY_BRONZE,
+            glory_silver: DEFAULT_BLITZ_GLORY_SILVER,
+            glory_gold: DEFAULT_BLITZ_GLORY_GOLD,
+            glory_valkyrie: DEFAULT_BLITZ_GLORY_VALKYRIE,
         }
     }
 }
@@ -614,6 +682,8 @@ pub struct BalanceConfig {
     pub expedition: ExpeditionTuning,
     #[serde(default)]
     pub boss: BossTuning,
+    #[serde(default)]
+    pub blitz: BlitzTuning,
 }
 
 impl BalanceConfig {

@@ -489,5 +489,18 @@
   "match3.callout.overdrive": "SURCHARGE RAGNAROK ! SCORE x2",
   "match3.boss.exposed_tag": "[EXPOSÉ {turns}t]",
   "match3.boss.stagger_hint": "Étourdir : {tiles}+ {rune} ou Combo x{combo} !",
-  "match3.boss.staggered": "{boss} ÉTOURDI ! EXPOSÉ !"
+  "match3.boss.staggered": "{boss} ÉTOURDI ! EXPOSÉ !",
+  "blitz.medal.none": "Aucune médaille",
+  "blitz.medal.bronze": "Médaille de Bronze",
+  "blitz.medal.silver": "Médaille d'Argent",
+  "blitz.medal.gold": "Médaille d'Or",
+  "blitz.medal.valkyrie": "Médaille de Valkyrie",
+  "city.panel.blitz.button": "Blitz de Valhalla",
+  "city.panel.stats.best_blitz": "Record Blitz de Valhalla : {val} ({runs} parties)",
+  "match3.blitz.multiplier": "BLITZ x{mult}",
+  "match3.hud.timer_frozen": "GELÉ {secs}s",
+  "match3.blitz.next_medal": "{medal} : {target}",
+  "match3.blitz.valkyrie_reached": "Rang Valkyrie atteint !",
+  "result.blitz.medal": "Rang Blitz : {medal}",
+  "result.blitz.new_best": "NOUVEAU RECORD !"
 }

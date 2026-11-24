@@ -36,14 +36,22 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use wyrdstone_core::{
-    ActiveTool, BossState, I18nCatalog, LevelSession, Objective, ObjectiveProgress, RuneType,
+    ActiveTool, BlitzMedal, BossState, I18nCatalog, LevelSession, Objective, ObjectiveProgress,
+    RuneType,
 };
 
 fn moves_label(i18n: &I18nCatalog, session: &LevelSession) -> String {
-    i18n.t_fmt(
-        "match3.hud.moves",
-        &[("moves", session.moves_left.to_string())],
-    )
+    if session.is_blitz {
+        i18n.t_fmt(
+            "match3.blitz.multiplier",
+            &[("mult", session.blitz_multiplier.to_string())],
+        )
+    } else {
+        i18n.t_fmt(
+            "match3.hud.moves",
+            &[("moves", session.moves_left.to_string())],
+        )
+    }
 }
 
 fn score_label(i18n: &I18nCatalog, session: &LevelSession) -> String {
@@ -58,7 +66,25 @@ fn combo_label(i18n: &I18nCatalog, session: &LevelSession) -> String {
 }
 
 /// Objective pill text; the compact layout uses the short shared "progress" template.
-fn objective_label(i18n: &I18nCatalog, prog: &ObjectiveProgress, is_compact: bool) -> String {
+fn objective_label_for_session(
+    i18n: &I18nCatalog,
+    session: &LevelSession,
+    prog: &ObjectiveProgress,
+    is_compact: bool,
+) -> String {
+    if session.is_blitz {
+        let medal = BlitzMedal::from_score(session.score, &session.blitz_tuning);
+        return match medal.next_target(&session.blitz_tuning) {
+            Some((next_medal, target)) => i18n.t_fmt(
+                "match3.blitz.next_medal",
+                &[
+                    ("medal", i18n.t(next_medal.name_key()).to_string()),
+                    ("target", target.to_string()),
+                ],
+            ),
+            None => i18n.t("match3.blitz.valkyrie_reached").to_string(),
+        };
+    }
     let counts = [
         ("done", prog.done.to_string()),
         ("target", prog.target.to_string()),
@@ -170,6 +196,10 @@ pub struct HudShape {
     fury_ready: bool,
     overdrive_active: bool,
     overdrive_turns_left: u32,
+    is_blitz: bool,
+    blitz_multiplier: u32,
+    blitz_frozen: bool,
+    blitz_medal: BlitzMedal,
     objectives_complete: Vec<bool>,
 }
 
@@ -206,7 +236,7 @@ pub(super) fn hud_shape(
     };
     let boss = session.boss.as_ref();
     HudShape {
-        low_moves: session.moves_left <= LOW_MOVES_THRESHOLD,
+        low_moves: !session.is_blitz && session.moves_left <= LOW_MOVES_THRESHOLD,
         projected_stars: projected_stars(session, tuning),
         has_boss: boss.is_some(),
         boss_phase2: boss.is_some_and(|b| b.is_phase2()),
@@ -218,6 +248,14 @@ pub(super) fn hud_shape(
         fury_ready: session.can_trigger_fury(),
         overdrive_active: session.overdrive_turns_left > 0,
         overdrive_turns_left: session.overdrive_turns_left,
+        is_blitz: session.is_blitz,
+        blitz_multiplier: session.blitz_multiplier,
+        blitz_frozen: session.blitz_freeze_secs > 0.0,
+        blitz_medal: if session.is_blitz {
+            BlitzMedal::from_score(session.score, &session.blitz_tuning)
+        } else {
+            BlitzMedal::None
+        },
         objectives_complete: session.objectives.iter().map(|o| o.is_complete()).collect(),
     }
 }
@@ -271,7 +309,7 @@ impl HudTextQueries<'_, '_> {
                 score_label(i18n, session)
             } else if let Some(Match3ObjectiveText(idx)) = objective {
                 match session.objectives.get(*idx) {
-                    Some(prog) => objective_label(i18n, prog, is_compact),
+                    Some(prog) => objective_label_for_session(i18n, session, prog, is_compact),
                     None => continue,
                 }
             } else if combo.is_some() {
@@ -371,20 +409,29 @@ pub(super) fn spawn_match3_hud(
                     ..default()
                 })
                 .with_children(|stats| {
-                    let low_moves = session.moves_left <= LOW_MOVES_THRESHOLD;
+                    let low_moves = !session.is_blitz && session.moves_left <= LOW_MOVES_THRESHOLD;
+                    let hot_blitz = session.is_blitz && session.blitz_multiplier >= 4;
                     let mut moves_box = stats.spawn((
                         Node {
                             padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
-                            border: UiRect::all(Val::Px(if low_moves { 2.0 } else { 1.0 })),
+                            border: UiRect::all(Val::Px(if low_moves || hot_blitz {
+                                2.0
+                            } else {
+                                1.0
+                            })),
                             ..default()
                         },
                         BackgroundColor(if low_moves {
                             Color::srgba(0.36, 0.08, 0.10, 0.92)
+                        } else if hot_blitz {
+                            Color::srgba(0.42, 0.22, 0.04, 0.95)
                         } else {
                             Color::NONE
                         }),
                         BorderColor(if low_moves {
                             COLOR_ACCENT_CRIMSON
+                        } else if hot_blitz {
+                            COLOR_ACCENT_GOLD
                         } else {
                             Color::NONE
                         }),
@@ -404,7 +451,8 @@ pub(super) fn spawn_match3_hud(
                                 COLOR_ACCENT_GOLD
                             }),
                         ));
-                        if session.boss.is_none()
+                        if !session.is_blitz
+                            && session.boss.is_none()
                             && session.level.building_id
                                 != wyrdstone_core::expedition::EXPEDITION_BUILDING_ID
                         {
@@ -438,13 +486,19 @@ pub(super) fn spawn_match3_hud(
                     });
                     if let Some(secs) = session.time_left_secs {
                         let whole = secs.ceil() as u32;
+                        let frozen = session.is_blitz && session.blitz_freeze_secs > 0.0;
+                        let timer_text = if frozen {
+                            i18n.t_fmt("match3.hud.timer_frozen", &[("secs", whole.to_string())])
+                        } else {
+                            i18n.t_fmt("match3.hud.timer", &[("secs", whole.to_string())])
+                        };
                         stats.spawn((
                             Match3TimerText,
-                            Text::new(
-                                i18n.t_fmt("match3.hud.timer", &[("secs", whole.to_string())]),
-                            ),
+                            Text::new(timer_text),
                             display_font(fjord_art, FONT_HEADING),
-                            TextColor(if whole <= 15 {
+                            TextColor(if frozen {
+                                Color::srgb(0.45, 0.88, 1.0)
+                            } else if whole <= 15 {
                                 COLOR_ACCENT_CRIMSON_TEXT
                             } else {
                                 COLOR_ACCENT_TEAL_TEXT
@@ -681,7 +735,8 @@ pub(super) fn spawn_match3_hud(
                                 Objective::ReachScore { .. } => Some(vfx.icon_star.clone()),
                                 Objective::DropRelics { .. } => Some(textures.relic_icon.clone()),
                             };
-                            let label = objective_label(i18n, prog, is_compact);
+                            let label =
+                                objective_label_for_session(i18n, session, prog, is_compact);
                             let complete = prog.is_complete();
                             objs.spawn((
                                 Node {
@@ -1573,6 +1628,10 @@ mod tests {
             fury_ready: false,
             overdrive_active: false,
             overdrive_turns_left: 0,
+            is_blitz: false,
+            blitz_multiplier: 1,
+            blitz_frozen: false,
+            blitz_medal: BlitzMedal::None,
             objectives_complete: vec![false, false],
         }
     }

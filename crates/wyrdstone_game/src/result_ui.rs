@@ -105,6 +105,7 @@ fn find_next_level_id(ctx: &GameContext) -> Option<String> {
     if cur_id.starts_with("daily_")
         || cur_id.starts_with("boss_")
         || cur_id.starts_with("expedition_")
+        || cur_id == wyrdstone_core::BLITZ_BUILDING_ID
     {
         return None;
     }
@@ -358,7 +359,32 @@ fn spawn_result_ui(
                                                 }
                                             },
                                         );
-                                        if let Some(session) = &ctx.active_session {
+                                        if let Some(medal) = ctx.last_blitz_medal {
+                                            card.spawn((
+                                                Text::new(i18n.t_fmt(
+                                                    "result.blitz.medal",
+                                                    &[(
+                                                        "medal",
+                                                        i18n.t(medal.name_key()).to_string(),
+                                                    )],
+                                                )),
+                                                TextFont {
+                                                    font_size: FONT_BODY,
+                                                    ..default()
+                                                },
+                                                TextColor(COLOR_ACCENT_GOLD),
+                                            ));
+                                            if ctx.last_blitz_new_best {
+                                                card.spawn((
+                                                    Text::new(i18n.t("result.blitz.new_best")),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_ACCENT_GREEN_TEXT),
+                                                ));
+                                            }
+                                        } else if let Some(session) = &ctx.active_session {
                                             if ctx.last_stars >= 3 {
                                                 card.spawn((
                                                     Text::new(i18n.t("result.stars.perfect")),
@@ -1192,6 +1218,8 @@ fn try_replay_active_level(ctx: &mut GameContext) -> Result<(), &'static str> {
         ctx.start_boss_raid(&level_id)
     } else if level_id.starts_with("expedition_") {
         ctx.start_expedition()
+    } else if level_id == wyrdstone_core::BLITZ_BUILDING_ID {
+        ctx.start_valhalla_blitz()
     } else {
         ctx.start_level(&level_id)
     }

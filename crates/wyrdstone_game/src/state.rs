@@ -121,6 +121,8 @@ pub struct GameContext {
     pub last_stars: u8,
     pub last_daily_streak: Option<u32>,
     pub last_glory_reward: u32,
+    pub last_blitz_medal: Option<wyrdstone_core::BlitzMedal>,
+    pub last_blitz_new_best: bool,
     pub last_defeat_out_of_time: bool,
     pub open_inspector_on_city_enter: bool,
     pub last_discovered_relic_key: Option<String>,
@@ -310,6 +312,8 @@ impl GameContext {
             last_stars: 0,
             last_daily_streak: None,
             last_glory_reward: 0,
+            last_blitz_medal: None,
+            last_blitz_new_best: false,
             last_defeat_out_of_time: false,
             open_inspector_on_city_enter: false,
             last_discovered_relic_key: None,
@@ -566,6 +570,8 @@ impl GameContext {
         self.armed_tool = None;
         self.last_outcome = None;
         self.last_glory_reward = 0;
+        self.last_blitz_medal = None;
+        self.last_blitz_new_best = false;
         self.last_defeat_out_of_time = false;
         self.open_inspector_on_city_enter = false;
         self.pending_dialogue = None;
@@ -618,6 +624,8 @@ impl GameContext {
         self.last_stars = 0;
         self.last_daily_streak = None;
         self.last_glory_reward = 0;
+        self.last_blitz_medal = None;
+        self.last_blitz_new_best = false;
         self.last_defeat_out_of_time = false;
         self.open_inspector_on_city_enter = false;
         self.last_discovered_relic_key = None;
@@ -654,6 +662,30 @@ impl GameContext {
         self.active_modal = ActiveModal::None;
         self.armed_tool = None;
         self.status_notice_key = None;
+        Ok(())
+    }
+
+    /// Launches the 75-second Valhalla Blitz arcade score-attack mode.
+    pub fn start_valhalla_blitz(&mut self) -> Result<(), &'static str> {
+        if !self.city.try_spend_energy(&self.data.balance) {
+            return Err("city.error.not_enough_energy");
+        }
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
+        let mut session = LevelSession::start_valhalla_blitz_with(
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            &self.data.balance,
+            &mut self.rng,
+        );
+        session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        self.active_level_id = Some(wyrdstone_core::BLITZ_BUILDING_ID.to_string());
+        self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
+        self.armed_tool = None;
+        self.status_notice_key = None;
+        self.persist();
         Ok(())
     }
 
@@ -1084,6 +1116,8 @@ mod read_only_notice_tests {
             last_stars: 0,
             last_daily_streak: None,
             last_glory_reward: 0,
+            last_blitz_medal: None,
+            last_blitz_new_best: false,
             last_defeat_out_of_time: false,
             open_inspector_on_city_enter: false,
             last_discovered_relic_key: None,

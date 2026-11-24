@@ -1083,6 +1083,13 @@ pub(super) fn spawn_stats_modal(
                     &[("val", st.best_expedition_wave.to_string())],
                 ),
                 i18n.t_fmt(
+                    "city.panel.stats.best_blitz",
+                    &[
+                        ("val", st.best_blitz_score.to_string()),
+                        ("runs", st.blitz_runs_completed.to_string()),
+                    ],
+                ),
+                i18n.t_fmt(
                     "city.panel.stats.win_streak",
                     &[
                         ("val", st.win_streak.to_string()),

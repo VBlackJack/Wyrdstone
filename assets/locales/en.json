@@ -489,5 +489,18 @@
   "match3.callout.overdrive": "RAGNAROK OVERDRIVE! 2x SCORE",
   "match3.boss.exposed_tag": "[EXPOSED {turns}t]",
   "match3.boss.stagger_hint": "Stagger: {tiles}+ {rune} or {combo}x Combo!",
-  "match3.boss.staggered": "{boss} STAGGERED! EXPOSED!"
+  "match3.boss.staggered": "{boss} STAGGERED! EXPOSED!",
+  "blitz.medal.none": "No Medal",
+  "blitz.medal.bronze": "Bronze Medal",
+  "blitz.medal.silver": "Silver Medal",
+  "blitz.medal.gold": "Gold Medal",
+  "blitz.medal.valkyrie": "Valkyrie Medal",
+  "city.panel.blitz.button": "Valhalla Blitz",
+  "city.panel.stats.best_blitz": "Best Valhalla Blitz: {val} ({runs} runs)",
+  "match3.blitz.multiplier": "BLITZ x{mult}",
+  "match3.hud.timer_frozen": "FROZEN {secs}s",
+  "match3.blitz.next_medal": "{medal}: {target}",
+  "match3.blitz.valkyrie_reached": "Valkyrie Rank Reached!",
+  "result.blitz.medal": "Blitz Rank: {medal}",
+  "result.blitz.new_best": "NEW RECORD!"
 }

@@ -304,6 +304,10 @@ pub struct ClanStats {
     pub win_streak: u32,
     #[serde(default)]
     pub best_win_streak: u32,
+    #[serde(default)]
+    pub best_blitz_score: u32,
+    #[serde(default)]
+    pub blitz_runs_completed: u32,
 }
 
 impl ClanStats {
@@ -1148,6 +1152,27 @@ impl CityState {
                 .victory_glory
                 .saturating_add(wave.saturating_mul(balance.expedition_glory_per_wave)),
         );
+    }
+
+    /// Records a completed Valhalla Blitz run, returning `(medal, glory_reward, is_new_best)`.
+    pub fn record_blitz_run(
+        &mut self,
+        score: u32,
+        rewards: &ResourceBundle,
+        balance: &BalanceConfig,
+    ) -> (crate::level::BlitzMedal, u32, bool) {
+        let medal = crate::level::BlitzMedal::from_score(score, &balance.blitz);
+        let glory = medal.glory_reward(&balance.blitz);
+        self.resources.add(rewards);
+        self.glory = self.glory.saturating_add(glory);
+        let is_new_best = score > self.stats.best_blitz_score;
+        if is_new_best {
+            self.stats.best_blitz_score = score;
+        }
+        self.stats.blitz_runs_completed = self.stats.blitz_runs_completed.saturating_add(1);
+        self.stats.total_victories = self.stats.total_victories.saturating_add(1);
+        self.bump_win_streak();
+        (medal, glory, is_new_best)
     }
 
     /// Returns the number of unlocked Skalds' Feats ready to claim.
