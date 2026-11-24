@@ -17,8 +17,8 @@
 //! Building inspector drawer with difficulty selector tabs, live board preview, and upgrade actions.
 
 use super::{
-    format_countdown, spawn_full_button, spawn_resource_pill, spawn_small_button,
-    spawn_small_button_colored, CityAction, InspectorHarvestTimerText,
+    format_countdown, spawn_full_button, spawn_resource_pill, spawn_small_button, CityAction,
+    InspectorHarvestTimerText,
 };
 use crate::fjord_art::FjordTextures;
 use crate::scroll::{spawn_scrollbar_track, ScrollMoreHint, ScrollPanelKind, ScrollablePanel};
@@ -68,6 +68,7 @@ pub(super) fn spawn_building_inspector(
             Node {
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,
+                column_gap: Val::Px(8.0),
                 flex_shrink: 0.0,
                 padding: UiRect::bottom(Val::Px(6.0)),
                 border: UiRect::bottom(Val::Px(1.0)),
@@ -264,6 +265,7 @@ pub(super) fn spawn_building_inspector(
                     if has_mastery || has_legendary {
                         top.spawn(Node {
                             column_gap: Val::Px(6.0),
+                            row_gap: Val::Px(4.0),
                             flex_wrap: FlexWrap::Wrap,
                             ..default()
                         })
@@ -274,21 +276,13 @@ pub(super) fn spawn_building_inspector(
                             } else {
                                 i18n.t("city.difficulty.standard").to_string()
                             };
-                            spawn_small_button_colored(
+                            spawn_difficulty_tab(
                                 tabs,
                                 &std_lbl,
-                                CityAction::SelectDifficulty(0),
-                                if active_diff == 0 {
-                                    COLOR_ACCENT_TEAL
-                                } else {
-                                    COLOR_PANEL_CARD
-                                },
-                                if active_diff == 0 {
-                                    COLOR_TEXT_ON_ACCENT
-                                } else {
-                                    COLOR_TEXT_PRIMARY
-                                },
-                                true,
+                                0,
+                                active_diff == 0,
+                                COLOR_ACCENT_TEAL,
+                                COLOR_TEXT_ON_ACCENT,
                             );
                             if has_mastery {
                                 let m_id = b.mastery_level_id.as_deref().unwrap_or("");
@@ -298,21 +292,13 @@ pub(super) fn spawn_building_inspector(
                                 } else {
                                     i18n.t("city.difficulty.mastery").to_string()
                                 };
-                                spawn_small_button_colored(
+                                spawn_difficulty_tab(
                                     tabs,
                                     &m_lbl,
-                                    CityAction::SelectDifficulty(1),
-                                    if active_diff == 1 {
-                                        COLOR_ACCENT_GOLD
-                                    } else {
-                                        COLOR_PANEL_CARD
-                                    },
-                                    if active_diff == 1 {
-                                        COLOR_TEXT_DARK
-                                    } else {
-                                        COLOR_TEXT_PRIMARY
-                                    },
-                                    true,
+                                    1,
+                                    active_diff == 1,
+                                    COLOR_ACCENT_GOLD,
+                                    COLOR_TEXT_DARK,
                                 );
                             }
                             if has_legendary {
@@ -323,17 +309,13 @@ pub(super) fn spawn_building_inspector(
                                 } else {
                                     i18n.t("city.difficulty.legendary").to_string()
                                 };
-                                spawn_small_button_colored(
+                                spawn_difficulty_tab(
                                     tabs,
                                     &l_lbl,
-                                    CityAction::SelectDifficulty(2),
-                                    if active_diff == 2 {
-                                        Color::srgb(0.66, 0.30, 0.82)
-                                    } else {
-                                        COLOR_PANEL_CARD
-                                    },
+                                    2,
+                                    active_diff == 2,
+                                    COLOR_ACCENT_LEGENDARY,
                                     COLOR_TEXT_PRIMARY,
-                                    true,
                                 );
                             }
                         });
@@ -424,7 +406,8 @@ pub(super) fn spawn_building_inspector(
                                 .iter()
                                 .any(|o| matches!(o, Objective::DropRelics { .. }))
                             {
-                                mode_badges.push((i18n.t("city.mode.relics"), COLOR_ACCENT_TEAL));
+                                mode_badges
+                                    .push((i18n.t("city.mode.relics"), COLOR_ACCENT_TEAL_TEXT));
                             }
                             if level
                                 .objectives
@@ -536,7 +519,7 @@ pub(super) fn spawn_building_inspector(
                                     font_size: FONT_SMALL,
                                     ..default()
                                 },
-                                TextColor(COLOR_ACCENT_GREEN),
+                                TextColor(COLOR_ACCENT_GREEN_TEXT),
                             ));
                         });
                     }
@@ -600,7 +583,7 @@ pub(super) fn spawn_building_inspector(
                                         ],
                                     ),
                                     if ok {
-                                        COLOR_ACCENT_GREEN
+                                        COLOR_ACCENT_GREEN_TEXT
                                     } else {
                                         COLOR_ACCENT_CRIMSON_TEXT
                                     },
@@ -789,7 +772,7 @@ pub(super) fn spawn_building_inspector(
             let (base_play_label, raw_play_bg, raw_play_fg) = match active_diff {
                 2 => (
                     i18n.t("city.button.play_legendary"),
-                    Color::srgb(0.66, 0.30, 0.82),
+                    COLOR_ACCENT_LEGENDARY,
                     COLOR_TEXT_PRIMARY,
                 ),
                 1 => (
@@ -846,6 +829,54 @@ pub(super) fn spawn_building_inspector(
                 },
                 can_upgrade_now,
             );
+        });
+}
+
+/// Spawns a difficulty selector tab with both color and a thick gold border on the active tab.
+fn spawn_difficulty_tab(
+    parent: &mut ChildBuilder,
+    label: &str,
+    diff: u8,
+    selected: bool,
+    active_bg: Color,
+    active_fg: Color,
+) {
+    let (bg, fg, border_w, border_col) = if selected {
+        (active_bg, active_fg, 2.5, COLOR_ACCENT_GOLD_HOVER)
+    } else {
+        (
+            COLOR_PANEL_CARD,
+            COLOR_TEXT_PRIMARY,
+            1.0,
+            COLOR_PANEL_BORDER,
+        )
+    };
+    parent
+        .spawn((
+            Button,
+            CityAction::SelectDifficulty(diff),
+            Node {
+                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(border_w)),
+                ..default()
+            },
+            BackgroundColor(bg),
+            BorderColor(border_col),
+            BorderRadius::all(Val::Px(6.0)),
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(fg),
+            ));
         });
 }
 

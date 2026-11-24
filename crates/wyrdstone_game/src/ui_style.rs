@@ -211,23 +211,62 @@ pub fn tick_screen_fades(
     }
 }
 
-/// Smooth tactile hover/press scale feedback applied globally across eligible UI buttons.
+/// Stores a button's original border color while highlighted under reduced motion.
+#[derive(Component)]
+pub struct SavedBorderColor(pub Color);
+
+/// Smooth tactile hover/press feedback applied globally across eligible UI buttons.
+///
+/// Uses gentle scale interpolation normally, and switches to high-visibility border highlighting
+/// when `ctx.reduced_motion` is enabled.
 #[allow(clippy::type_complexity)]
 pub fn animate_button_feedback(
+    mut commands: Commands,
     time: Res<Time>,
     ctx: Res<GameContext>,
-    mut buttons: Query<(&Interaction, &mut Transform), (With<Button>, Without<NoButtonScale>)>,
+    mut buttons: Query<
+        (
+            Entity,
+            &Interaction,
+            &mut Transform,
+            Option<&mut BorderColor>,
+            Option<&SavedBorderColor>,
+        ),
+        (With<Button>, Without<NoButtonScale>),
+    >,
 ) {
     if ctx.reduced_motion {
-        for (_, mut tf) in &mut buttons {
+        for (entity, interaction, mut tf, border_opt, saved_opt) in &mut buttons {
             if (tf.scale.x - 1.0).abs() > 0.001 {
                 tf.scale = Vec3::ONE;
+            }
+            if let Some(mut border) = border_opt {
+                match *interaction {
+                    Interaction::Hovered | Interaction::Pressed => {
+                        if saved_opt.is_none() {
+                            commands.entity(entity).insert(SavedBorderColor(border.0));
+                        }
+                        if border.0 != COLOR_ACCENT_GOLD_HOVER {
+                            border.0 = COLOR_ACCENT_GOLD_HOVER;
+                        }
+                    }
+                    Interaction::None => {
+                        if let Some(saved) = saved_opt {
+                            border.0 = saved.0;
+                            commands.entity(entity).remove::<SavedBorderColor>();
+                        }
+                    }
+                }
             }
         }
         return;
     }
     let blend = (time.delta_secs() * 18.0).clamp(0.0, 1.0);
-    for (interaction, mut tf) in &mut buttons {
+    for (entity, interaction, mut tf, border_opt, saved_opt) in &mut buttons {
+        if let (Some(mut border), Some(saved)) = (border_opt, saved_opt) {
+            border.0 = saved.0;
+            commands.entity(entity).remove::<SavedBorderColor>();
+        }
         let target = match *interaction {
             Interaction::Pressed => 0.96,
             Interaction::Hovered => 1.035,

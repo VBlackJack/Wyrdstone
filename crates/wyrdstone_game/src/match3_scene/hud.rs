@@ -17,9 +17,9 @@
 //! Match-3 HUD overlay: moves, live countdown timer, objectives, active tools bar, and Guide modal.
 
 use super::{
-    FuryReadyPulse, LowMovesPulse, Match3Cleanup, Match3ComboText, Match3FuryText, Match3HudRoot,
-    Match3MovesText, Match3ObjectiveText, Match3ScoreText, Match3TimerText, Match3TooltipText,
-    Match3UiAction, LOW_MOVES_THRESHOLD,
+    FuryReadyPulse, LowMovesPulse, Match3Cleanup, Match3ComboText, Match3FuryText, Match3HudBar,
+    Match3HudRoot, Match3MovesText, Match3ObjectiveText, Match3ScoreText, Match3TimerText,
+    Match3TooltipText, Match3UiAction, LOW_MOVES_THRESHOLD,
 };
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
@@ -232,24 +232,33 @@ pub(super) fn spawn_match3_hud(
             },
         ))
         .with_children(|root| {
-            // Top HUD bar (9-slice sculpted stone & bronze frame)
+            // Top HUD bar (9-slice sculpted stone & bronze frame, blocks clicks to board)
             root.spawn((
+                Match3HudBar,
+                Interaction::None,
+                FocusPolicy::Block,
                 sliced_panel_image(vfx),
                 Node {
                     width: Val::Percent(100.0),
                     flex_wrap: FlexWrap::Wrap,
                     justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
-                    column_gap: Val::Px(14.0),
-                    row_gap: Val::Px(6.0),
+                    padding: if is_compact {
+                        UiRect::axes(Val::Px(8.0), Val::Px(6.0))
+                    } else {
+                        UiRect::axes(Val::Px(16.0), Val::Px(12.0))
+                    },
+                    column_gap: Val::Px(if is_compact { 8.0 } else { 14.0 }),
+                    row_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),
                     ..default()
                 },
                 panel_shadow(),
             ))
             .with_children(|top| {
                 top.spawn(Node {
-                    column_gap: Val::Px(18.0),
+                    column_gap: Val::Px(if is_compact { 10.0 } else { 18.0 }),
+                    row_gap: Val::Px(4.0),
+                    flex_wrap: FlexWrap::Wrap,
                     align_items: AlignItems::Center,
                     ..default()
                 })
@@ -299,7 +308,7 @@ pub(super) fn spawn_match3_hud(
                             TextColor(if whole <= 15 {
                                 COLOR_ACCENT_CRIMSON_TEXT
                             } else {
-                                COLOR_ACCENT_TEAL
+                                COLOR_ACCENT_TEAL_TEXT
                             }),
                         ));
                     }
@@ -325,8 +334,10 @@ pub(super) fn spawn_match3_hud(
                         let hp_pct = (boss.hp as f32 / boss.def.max_hp.max(1) as f32 * 100.0)
                             .clamp(0.0, 100.0);
                         objs.spawn(Node {
+                            flex_wrap: FlexWrap::Wrap,
                             align_items: AlignItems::Center,
-                            column_gap: Val::Px(10.0),
+                            column_gap: Val::Px(8.0),
+                            row_gap: Val::Px(4.0),
                             ..default()
                         })
                         .with_children(|brow| {
@@ -429,7 +440,7 @@ pub(super) fn spawn_match3_hud(
                                 ));
                                 bcol.spawn((
                                     Node {
-                                        width: Val::Px(if is_compact { 190.0 } else { 280.0 }),
+                                        width: Val::Px(if is_compact { 150.0 } else { 280.0 }),
                                         height: Val::Px(10.0),
                                         border: UiRect::all(Val::Px(1.0)),
                                         ..default()
@@ -485,14 +496,46 @@ pub(super) fn spawn_match3_hud(
                             ))
                             .with_children(|pill| {
                                 if let Some(icon) = icon_opt {
-                                    pill.spawn((
-                                        ImageNode::new(icon),
-                                        Node {
-                                            width: Val::Px(22.0),
-                                            height: Val::Px(22.0),
-                                            ..default()
+                                    let badge_opt = if ctx.colorblind_mode {
+                                        match &prog.objective {
+                                            Objective::CollectRune { rune, .. } => {
+                                                textures.colorblind_badges.get(rune).cloned()
+                                            }
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    pill.spawn(Node {
+                                        width: Val::Px(22.0),
+                                        height: Val::Px(22.0),
+                                        ..default()
+                                    })
+                                    .with_children(
+                                        |icon_box| {
+                                            icon_box.spawn((
+                                                ImageNode::new(icon),
+                                                Node {
+                                                    width: Val::Px(22.0),
+                                                    height: Val::Px(22.0),
+                                                    ..default()
+                                                },
+                                            ));
+                                            if let Some(badge) = badge_opt {
+                                                icon_box.spawn((
+                                                    ImageNode::new(badge),
+                                                    Node {
+                                                        position_type: PositionType::Absolute,
+                                                        left: Val::Px(0.0),
+                                                        top: Val::Px(0.0),
+                                                        width: Val::Px(22.0),
+                                                        height: Val::Px(22.0),
+                                                        ..default()
+                                                    },
+                                                ));
+                                            }
                                         },
-                                    ));
+                                    );
                                 }
                                 pill.spawn((
                                     Match3ObjectiveText(obj_idx),
@@ -502,7 +545,7 @@ pub(super) fn spawn_match3_hud(
                                         ..default()
                                     },
                                     TextColor(if complete {
-                                        COLOR_ACCENT_GREEN
+                                        COLOR_ACCENT_GREEN_TEXT
                                     } else {
                                         COLOR_TEXT_PRIMARY
                                     }),
@@ -513,7 +556,9 @@ pub(super) fn spawn_match3_hud(
                 });
 
                 top.spawn(Node {
-                    column_gap: Val::Px(10.0),
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(4.0),
+                    flex_wrap: FlexWrap::Wrap,
                     align_items: AlignItems::Center,
                     ..default()
                 })
@@ -652,15 +697,22 @@ pub(super) fn spawn_match3_hud(
                 });
             });
 
-            // Bottom active tools bar (9-slice sculpted stone & bronze frame)
+            // Bottom active tools bar (9-slice sculpted stone & bronze frame, blocks clicks to board)
             root.spawn((
+                Match3HudBar,
+                Interaction::None,
+                FocusPolicy::Block,
                 sliced_panel_image(vfx),
                 Node {
                     width: Val::Percent(100.0),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(6.0),
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                    row_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),
+                    padding: if is_compact {
+                        UiRect::axes(Val::Px(8.0), Val::Px(6.0))
+                    } else {
+                        UiRect::axes(Val::Px(16.0), Val::Px(10.0))
+                    },
                     ..default()
                 },
                 panel_shadow(),
@@ -943,6 +995,7 @@ pub(super) fn spawn_match3_hud(
                             Node {
                                 justify_content: JustifyContent::SpaceBetween,
                                 align_items: AlignItems::Center,
+                                column_gap: Val::Px(8.0),
                                 flex_shrink: 0.0,
                                 padding: UiRect::bottom(Val::Px(8.0)),
                                 border: UiRect::bottom(Val::Px(1.0)),
@@ -960,6 +1013,10 @@ pub(super) fn spawn_match3_hud(
                                 Button,
                                 Match3UiAction::ToggleHelp,
                                 Node {
+                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                    min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
                                     padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                                     ..default()
                                 },

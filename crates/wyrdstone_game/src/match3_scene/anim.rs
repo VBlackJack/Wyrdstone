@@ -913,9 +913,9 @@ pub fn tick_board_animation(
                     .i18n
                     .t_fmt("match3.hud.timer", &[("secs", whole.to_string())]);
                 let color = if whole <= 15 {
-                    COLOR_ACCENT_CRIMSON
+                    COLOR_ACCENT_CRIMSON_TEXT
                 } else {
-                    COLOR_ACCENT_TEAL
+                    COLOR_ACCENT_TEAL_TEXT
                 };
                 for (mut text, mut text_col) in &mut timer_text_q {
                     text.0 = formatted.clone();
@@ -923,6 +923,10 @@ pub fn tick_board_animation(
                 }
             }
         }
+    }
+
+    if ctx.active_modal == ActiveModal::Help {
+        return;
     }
 
     let phase = std::mem::take(&mut input_state.phase);
@@ -937,8 +941,12 @@ pub fn tick_board_animation(
                         .and_then(|s| s.board.find_hint_move());
                 }
                 if let Some((ha, hb)) = input_state.hint_pair {
-                    let pulse = 1.0 + 0.11 * ((input_state.idle_secs * 5.0).sin() * 0.5 + 0.5);
-                    let glow = Color::srgb(1.22, 1.18, 0.92);
+                    let pulse = if input_state.reduced_motion {
+                        1.0
+                    } else {
+                        1.0 + 0.11 * ((input_state.idle_secs * 5.0).sin() * 0.5 + 0.5)
+                    };
+                    let glow = Color::srgb(1.0, 0.96, 0.72);
                     for (tile, mut tf, mut sprite) in &mut tile_q {
                         if tile.pos == ha || tile.pos == hb {
                             tf.scale = Vec3::splat(pulse);
@@ -1252,7 +1260,7 @@ pub fn tick_board_animation(
                             font_size: 32.0,
                             ..default()
                         },
-                        TextColor(COLOR_ACCENT_CRIMSON),
+                        TextColor(COLOR_ACCENT_CRIMSON_TEXT),
                         Transform::from_xyz(
                             0.0,
                             input_state.board_center_y + 20.0,
@@ -1447,7 +1455,7 @@ pub fn tick_board_animation(
                                 &mut commands,
                                 &curse_hits,
                                 msg,
-                                COLOR_ACCENT_CRIMSON,
+                                COLOR_ACCENT_CRIMSON_TEXT,
                                 28.0,
                                 &input_state,
                             );
@@ -1481,7 +1489,7 @@ pub fn tick_board_animation(
                                     &mut commands,
                                     &boss_riposte_hits,
                                     msg,
-                                    COLOR_ACCENT_CRIMSON,
+                                    COLOR_ACCENT_CRIMSON_TEXT,
                                     28.0,
                                     &input_state,
                                 );
@@ -1579,11 +1587,23 @@ pub fn tick_board_animation(
                 return;
             }
             elapsed += dt;
-            for (tile, mut tf, mut sprite) in &mut tile_q {
-                let wave = ((elapsed * 7.5) - (tile.pos.col + tile.pos.row) as f32 * 0.45).sin();
-                tf.scale = Vec3::splat(1.0 + 0.10 * wave.max(0.0));
-                sprite.color =
-                    Color::srgb(1.0 + 0.20 * wave.max(0.0), 1.0 + 0.16 * wave.max(0.0), 1.0);
+            if input_state.reduced_motion {
+                for (_, mut tf, mut sprite) in &mut tile_q {
+                    if tf.scale != Vec3::ONE {
+                        tf.scale = Vec3::ONE;
+                    }
+                    if sprite.color != Color::WHITE {
+                        sprite.color = Color::WHITE;
+                    }
+                }
+            } else {
+                for (tile, mut tf, mut sprite) in &mut tile_q {
+                    let wave =
+                        ((elapsed * 7.5) - (tile.pos.col + tile.pos.row) as f32 * 0.45).sin();
+                    tf.scale = Vec3::splat(1.0 + 0.10 * wave.max(0.0));
+                    sprite.color =
+                        Color::srgb(1.0 + 0.20 * wave.max(0.0), 1.0 + 0.16 * wave.max(0.0), 1.0);
+                }
             }
 
             if elapsed >= next_burst_at && elapsed < duration - 0.20 {
@@ -1891,11 +1911,13 @@ pub fn animate_particles(
         }
         let ember_half_w = ev.width * SANCTUARY_EMBER_HALF_W_RATIO;
         let ember_half_h = ev.height * SANCTUARY_EMBER_HALF_H_RATIO;
-        for (mut ember, _, _) in &mut embers {
+        for (mut ember, mut tf, _) in &mut embers {
             ember.half_w = ember_half_w;
             ember.half_h = ember_half_h;
             ember.base_x = ember.lane * ember_half_w;
             ember.y = ember.y.clamp(-ember_half_h, ember_half_h);
+            tf.translation.x = ember.base_x;
+            tf.translation.y = ember.y;
         }
         let now_compact = ev.width < 760.0;
         if now_compact != input_state.is_compact_hud {
@@ -1995,6 +2017,10 @@ pub fn animate_particles(
     }
 
     for (shimmer, mut tf, mut sprite) in &mut shimmers {
+        if input_state.reduced_motion {
+            sprite.color = Color::srgba(1.0, 0.96, 0.80, 0.0);
+            continue;
+        }
         // Periodic diagonal gleam sweeping over boosters every ~2.6 seconds.
         let cycle = (elapsed * 0.42 + shimmer.phase).fract();
         if cycle < 0.28 {
@@ -2033,7 +2059,11 @@ pub fn animate_particles(
         col.0 = col.0.with_alpha(alpha);
     }
 
-    let fury_glow = 0.5 + 0.5 * (elapsed * 5.2).sin();
+    let fury_glow = if input_state.reduced_motion {
+        0.65
+    } else {
+        0.5 + 0.5 * (elapsed * 5.2).sin()
+    };
     let fury_border_col = Color::srgb(
         0.96 + 0.04 * fury_glow,
         0.74 + 0.24 * fury_glow,
@@ -2058,7 +2088,11 @@ pub fn animate_particles(
     }
 
     if input_state.is_idle() {
-        let pulse = 1.0 + 0.08 * (elapsed * 4.2).sin();
+        let pulse = if input_state.reduced_motion {
+            1.0
+        } else {
+            1.0 + 0.08 * (elapsed * 4.2).sin()
+        };
         for mut tf in &mut boosters {
             tf.scale = Vec3::splat(pulse);
         }

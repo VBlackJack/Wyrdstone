@@ -484,19 +484,16 @@ impl GameContext {
         }
     }
 
-    /// Exports an atomic JSON backup to `wyrdstone_backup.json` next to the primary save file
-    /// and returns the destination path string on success.
+    /// Exports an atomic JSON backup to `wyrdstone_backup.json` (external app storage on
+    /// Android, sibling of the save file on desktop) and returns the destination path string.
     pub fn export_backup(&self) -> Result<String, &'static str> {
         if self.save_read_only && !self.save_read_only_has_progress {
             // Read-only without a readable `.bak`: no saved progress was loaded, so there is
             // nothing trustworthy to export. A session started from a `.bak` may export it.
             return Err(NOTICE_BACKUP_READ_ONLY);
         }
-        let Some(backup_path) = self
-            .save_path
-            .as_ref()
-            .map(|p| p.with_file_name("wyrdstone_backup.json"))
-        else {
+        let Some(backup_path) = resolve_backup_path(self.save_path.as_deref()) else {
+            warn!("Wyrdstone backup export unavailable: no accessible backup directory");
             return Err("city.panel.backup.error");
         };
         let snapshot = self.build_save_snapshot();
@@ -509,11 +506,8 @@ impl GameContext {
 
     /// Imports `wyrdstone_backup.json`, restoring full player state and persisting to primary save.
     pub fn import_backup(&mut self) -> Result<(), &'static str> {
-        let Some(backup_path) = self
-            .save_path
-            .as_ref()
-            .map(|p| p.with_file_name("wyrdstone_backup.json"))
-        else {
+        let Some(backup_path) = resolve_backup_path(self.save_path.as_deref()) else {
+            warn!("Wyrdstone backup import unavailable: no accessible backup directory");
             return Err("city.panel.backup.error");
         };
         if !backup_path.exists() {
@@ -786,6 +780,21 @@ impl GameContext {
         self.status_notice_key = None;
         self.persist();
         Ok(())
+    }
+}
+
+fn resolve_backup_path(save_path: Option<&std::path::Path>) -> Option<PathBuf> {
+    #[cfg(not(target_os = "android"))]
+    {
+        save_path.map(|p| p.with_file_name("wyrdstone_backup.json"))
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = save_path;
+        bevy::window::ANDROID_APP
+            .get()
+            .and_then(|app| app.external_data_path())
+            .map(|dir| dir.join("wyrdstone_backup.json"))
     }
 }
 

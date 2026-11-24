@@ -250,10 +250,27 @@ pub fn handle_ui_scroll(
     }
 
     // Touch vertical drag scrolling for Android and touchscreens.
+    // Only lock a touch gesture when the finger actually starts inside an active scrollable panel
+    // that overflows vertically, so normal taps on other UI screens are never swallowed.
     if let Some(touch) = touches.iter_just_pressed().next() {
-        memory.touch_id = Some(touch.id());
-        memory.touch_last_y = touch.position().y;
-        memory.touch_scrolling = false;
+        let pos = touch.position();
+        let over_scrollable = panels
+            .iter()
+            .any(|(panel, computed, gtf, _, scroll, children)| {
+                if has_modal_panel && panel.kind == ScrollPanelKind::Inspector {
+                    return false;
+                }
+                point_inside_node(pos, computed, gtf)
+                    && max_scroll_y(computed, gtf, scroll.offset_y, children, &child_nodes) > 0.0
+            });
+        if over_scrollable {
+            memory.touch_id = Some(touch.id());
+            memory.touch_last_y = pos.y;
+            memory.touch_scrolling = false;
+        } else {
+            memory.touch_id = None;
+            memory.touch_scrolling = false;
+        }
     } else if let Some(tid) = memory.touch_id {
         if let Some(touch) = touches.get_pressed(tid) {
             let pos = touch.position();
@@ -284,12 +301,17 @@ pub fn handle_ui_scroll(
         }
     }
 
-    // Update optional scroll-more hints and visual scrollbar tracks/thumbs.
-    if !hints.is_empty() || !tracks.is_empty() {
+    // Clamp stale offsets when content shrinks or viewport grows, and update indicators.
+    if !panels.is_empty() {
         let mut modal_metrics: Option<(bool, f32, f32, f32)> = None;
         let mut inspector_metrics: Option<(bool, f32, f32, f32)> = None;
-        for (panel, computed, gtf, _, scroll, children) in &panels {
+        for (panel, computed, gtf, _, mut scroll, children) in &mut panels {
             let max_scroll = max_scroll_y(computed, gtf, scroll.offset_y, children, &child_nodes);
+            let clamped = scroll.offset_y.clamp(0.0, max_scroll);
+            if (clamped - scroll.offset_y).abs() > f32::EPSILON {
+                scroll.offset_y = clamped;
+                memory.set_offset(panel.kind, clamped);
+            }
             let viewport_h = (computed.size().y * computed.inverse_scale_factor()).max(1.0);
             let scrollable = max_scroll > 8.0;
             let has_more = scrollable && scroll.offset_y + 8.0 < max_scroll;
@@ -523,5 +545,27 @@ mod tests {
         );
         let fired = arm.completed_taps([(entity(), Interaction::Hovered)], &touches, &mem);
         assert!(fired.is_empty());
+    }
+
+    #[test]
+    fn non_scroll_touch_drag_does_not_arm_scroll_memory() {
+        let mut app = test_app();
+        app.init_resource::<UiScrollMemory>();
+        app.add_event::<MouseWheel>();
+        app.add_systems(Update, handle_ui_scroll);
+
+        touch(&mut app, TouchPhase::Started, 50.0, 50.0);
+        touch(&mut app, TouchPhase::Moved, 50.0, 62.0);
+        let mem = app.world().resource::<UiScrollMemory>();
+        assert!(!mem.is_touch_scrolling());
+        assert!(mem.touch_id.is_none());
+    }
+
+    #[test]
+    fn clamped_offset_drops_excess_scroll_when_content_shrinks() {
+        let current = 180.0f32;
+        let max_after_shrink = scroll_extent(40.0);
+        assert_eq!(current.clamp(0.0, max_after_shrink), 60.0);
+        assert_eq!(current.clamp(0.0, scroll_extent(0.0)), 0.0);
     }
 }

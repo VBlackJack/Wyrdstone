@@ -571,7 +571,7 @@ pub fn handle_app_lifecycle(
 ) {
     for event in events.read() {
         match event {
-            AppLifecycle::Suspended => {
+            AppLifecycle::WillSuspend | AppLifecycle::Suspended => {
                 for sink in &bgm_sinks {
                     sink.pause();
                 }
@@ -582,7 +582,7 @@ pub fn handle_app_lifecycle(
                     sink.play();
                 }
             }
-            AppLifecycle::Idle | AppLifecycle::WillSuspend => {}
+            AppLifecycle::Idle => {}
         }
     }
 }

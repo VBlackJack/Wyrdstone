@@ -170,6 +170,7 @@ fn spawn_modal_shell<F>(
                         Node {
                             justify_content: JustifyContent::SpaceBetween,
                             align_items: AlignItems::Center,
+                            column_gap: Val::Px(8.0),
                             flex_shrink: 0.0,
                             padding: UiRect::bottom(Val::Px(8.0)),
                             border: UiRect::bottom(Val::Px(1.0)),
@@ -192,7 +193,8 @@ fn spawn_modal_shell<F>(
                         );
                     });
 
-                // Inline status/error banner so feedback triggered inside modals is immediately visible
+                // Inline status/error banner and celebration banner render independently so
+                // persistent notices (such as read-only save mode) never hide celebrations.
                 if let Some(notice_key) = &ctx.status_notice_key {
                     modal
                         .spawn((
@@ -216,7 +218,8 @@ fn spawn_modal_shell<F>(
                                 TextColor(COLOR_TEXT_PRIMARY),
                             ));
                         });
-                } else if let Some(msg) = &ctx.celebration_message {
+                }
+                if let Some(msg) = &ctx.celebration_message {
                     modal
                         .spawn((
                             Node {
@@ -351,10 +354,12 @@ pub(super) fn spawn_amulets_modal(
                 modal
                     .spawn((
                         Node {
+                            flex_wrap: FlexWrap::Wrap,
                             justify_content: JustifyContent::SpaceBetween,
                             align_items: AlignItems::Center,
                             padding: UiRect::all(Val::Px(10.0)),
                             column_gap: Val::Px(10.0),
+                            row_gap: Val::Px(8.0),
                             border: UiRect::all(Val::Px(1.5)),
                             ..default()
                         },
@@ -444,7 +449,7 @@ pub(super) fn spawn_amulets_modal(
                                             font_size: FONT_SMALL,
                                             ..default()
                                         },
-                                        TextColor(COLOR_ACCENT_TEAL),
+                                        TextColor(COLOR_ACCENT_TEAL_TEXT),
                                     ));
                                 }
                                 if let Some(c) = next_cost {
@@ -640,7 +645,7 @@ pub(super) fn spawn_collections_modal(
                                         font_size: FONT_SMALL,
                                         ..default()
                                     },
-                                    TextColor(COLOR_ACCENT_GREEN),
+                                    TextColor(COLOR_ACCENT_GREEN_TEXT),
                                 ));
                             }
                         });
@@ -655,15 +660,51 @@ pub(super) fn spawn_collections_modal(
                             for (rid, rkey) in col.relic_ids.iter().zip(col.relic_name_keys.iter())
                             {
                                 let owned = ctx.city.found_relics.contains(rid);
-                                spawn_resource_pill(
-                                    pills,
-                                    i18n.t(rkey),
-                                    if owned {
-                                        COLOR_ACCENT_GOLD
-                                    } else {
-                                        COLOR_TEXT_MUTED
-                                    },
-                                );
+                                pills
+                                    .spawn((
+                                        Node {
+                                            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                            column_gap: Val::Px(5.0),
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(Val::Px(if owned {
+                                                1.5
+                                            } else {
+                                                1.0
+                                            })),
+                                            ..default()
+                                        },
+                                        BackgroundColor(COLOR_PANEL_CARD),
+                                        BorderColor(if owned {
+                                            COLOR_ACCENT_GOLD
+                                        } else {
+                                            COLOR_PANEL_BORDER
+                                        }),
+                                        BorderRadius::all(Val::Px(6.0)),
+                                    ))
+                                    .with_children(|pill| {
+                                        if owned {
+                                            pill.spawn((
+                                                ImageNode::new(vfx.icon_star.clone()),
+                                                Node {
+                                                    width: Val::Px(14.0),
+                                                    height: Val::Px(14.0),
+                                                    ..default()
+                                                },
+                                            ));
+                                        }
+                                        pill.spawn((
+                                            Text::new(i18n.t(rkey)),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(if owned {
+                                                COLOR_ACCENT_GOLD
+                                            } else {
+                                                COLOR_TEXT_MUTED
+                                            }),
+                                        ));
+                                    });
                             }
                         });
 
@@ -673,7 +714,7 @@ pub(super) fn spawn_collections_modal(
                                 font_size: FONT_SMALL,
                                 ..default()
                             },
-                            TextColor(COLOR_ACCENT_GREEN),
+                            TextColor(COLOR_ACCENT_GREEN_TEXT),
                         ));
                     });
             }
@@ -709,10 +750,12 @@ pub(super) fn spawn_tool_shop_modal(
                 modal
                     .spawn((
                         Node {
+                            flex_wrap: FlexWrap::Wrap,
                             justify_content: JustifyContent::SpaceBetween,
                             align_items: AlignItems::Center,
                             padding: UiRect::all(Val::Px(8.0)),
                             column_gap: Val::Px(10.0),
+                            row_gap: Val::Px(8.0),
                             border: UiRect::all(Val::Px(1.0)),
                             ..default()
                         },
@@ -1124,10 +1167,12 @@ pub(super) fn spawn_patrons_modal(
                 modal
                     .spawn((
                         Node {
+                            flex_wrap: FlexWrap::Wrap,
                             justify_content: JustifyContent::SpaceBetween,
                             align_items: AlignItems::Center,
                             padding: UiRect::all(Val::Px(10.0)),
                             column_gap: Val::Px(10.0),
+                            row_gap: Val::Px(8.0),
                             border: UiRect::all(Val::Px(1.5)),
                             ..default()
                         },
@@ -1247,10 +1292,12 @@ pub(super) fn spawn_raids_modal(
                 modal
                     .spawn((
                         Node {
+                            flex_wrap: FlexWrap::Wrap,
                             justify_content: JustifyContent::SpaceBetween,
                             align_items: AlignItems::Center,
                             padding: UiRect::all(Val::Px(12.0)),
                             column_gap: Val::Px(12.0),
+                            row_gap: Val::Px(8.0),
                             border: UiRect::all(Val::Px(1.5)),
                             ..default()
                         },
@@ -1359,7 +1406,7 @@ pub(super) fn spawn_raids_modal(
                                         font_size: FONT_SMALL,
                                         ..default()
                                     },
-                                    TextColor(COLOR_ACCENT_TEAL),
+                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
                                 ));
                                 info.spawn((
                                     Text::new(format_reward_summary(
@@ -1371,7 +1418,7 @@ pub(super) fn spawn_raids_modal(
                                         font_size: FONT_SMALL,
                                         ..default()
                                     },
-                                    TextColor(COLOR_ACCENT_GREEN),
+                                    TextColor(COLOR_ACCENT_GREEN_TEXT),
                                 ));
                             });
                         });
@@ -1488,10 +1535,12 @@ pub(super) fn spawn_achievements_modal(
                 modal
                     .spawn((
                         Node {
+                            flex_wrap: FlexWrap::Wrap,
                             justify_content: JustifyContent::SpaceBetween,
                             align_items: AlignItems::Center,
                             padding: UiRect::all(Val::Px(9.0)),
                             column_gap: Val::Px(10.0),
+                            row_gap: Val::Px(8.0),
                             border: UiRect::all(Val::Px(1.5)),
                             ..default()
                         },
@@ -1539,7 +1588,7 @@ pub(super) fn spawn_achievements_modal(
                                     font_size: FONT_SMALL,
                                     ..default()
                                 },
-                                TextColor(COLOR_ACCENT_GREEN),
+                                TextColor(COLOR_ACCENT_GREEN_TEXT),
                             ));
                             if !unlocked && target > 0 {
                                 info.spawn((
@@ -1817,7 +1866,7 @@ pub(super) fn spawn_login_calendar_modal(
                                         font_size: FONT_SMALL,
                                         ..default()
                                     },
-                                    TextColor(COLOR_ACCENT_GREEN),
+                                    TextColor(COLOR_ACCENT_GREEN_TEXT),
                                 ));
                             } else if is_today {
                                 card.spawn((

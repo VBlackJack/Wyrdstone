@@ -73,6 +73,10 @@ pub struct Match3Backdrop;
 #[derive(Component)]
 pub struct Match3HudRoot;
 
+/// Marker on the top and bottom HUD bars used to block pointer/touch clicks from reaching the board.
+#[derive(Component)]
+pub(super) struct Match3HudBar;
+
 /// Marker on the HUD countdown text so timer ticks update in-place without rebuilding the HUD.
 #[derive(Component)]
 pub struct Match3TimerText;
@@ -278,6 +282,8 @@ pub enum BoardAnimPhase {
 pub struct Match3InputState {
     pub selected: Option<CellPos>,
     pub kbd_cursor: Option<CellPos>,
+    pub last_input_was_kbd: bool,
+    pub last_cursor_pos: Option<Vec2>,
     pub drag_origin_cell: Option<CellPos>,
     pub drag_origin_screen: Option<Vec2>,
     pub drag_highlight_cell: Option<CellPos>,
@@ -502,21 +508,22 @@ pub(super) fn compute_board_layout(
     layout.is_compact_hud = compact;
     let side_margin = if compact { 12.0 } else { BOARD_SIDE_MARGIN_PX };
     let top_reserved = if narrow {
-        148.0
+        178.0
     } else if compact {
-        126.0
+        152.0
     } else {
         BOARD_TOP_RESERVED_PX
     };
     let bottom_reserved = if narrow {
-        148.0
+        174.0
     } else if compact {
-        126.0
+        148.0
     } else {
         BOARD_BOTTOM_RESERVED_PX
     };
-    let avail_w = (win_w - side_margin * 2.0).max(200.0);
-    let avail_h = (win_h - top_reserved - bottom_reserved).max(200.0);
+    const BOARD_FRAME_PAD_PX: f32 = 28.0;
+    let avail_w = (win_w - side_margin * 2.0 - BOARD_FRAME_PAD_PX).max(180.0);
+    let avail_h = (win_h - top_reserved - bottom_reserved - BOARD_FRAME_PAD_PX).max(180.0);
     let step = (avail_w / cols as f32)
         .min(avail_h / rows as f32)
         .clamp(MIN_TILE_SIZE_PX, MAX_TILE_SIZE_PX);
@@ -783,6 +790,14 @@ pub(super) fn spawn_board_sprites(
                                     ..default()
                                 },
                                 Transform::from_xyz(0.0, 0.0, 1.4),
+                            ));
+                            parent.spawn((
+                                Sprite {
+                                    color: Color::srgba(0.06, 0.08, 0.12, 0.90),
+                                    custom_size: Some(Vec2::splat(layout.tile_size * 0.56)),
+                                    ..default()
+                                },
+                                Transform::from_xyz(0.0, 0.0, 1.5),
                             ));
                             parent.spawn((
                                 Text2d::new(cell.curse_turns.to_string()),
@@ -1183,7 +1198,8 @@ pub fn handle_match3_hud_buttons(
     selection_markers: Query<Entity, With<SelectionMarker>>,
     kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
     mut tooltip_q: Query<(&mut Text, &mut Node), With<Match3TooltipText>>,
-    buttons: Query<(&Interaction, &Match3UiAction), Changed<Interaction>>,
+    (touches, mut press_arm): (Res<Touches>, Local<crate::scroll::PressArm>),
+    buttons: Query<(Entity, &Interaction, &Match3UiAction), Changed<Interaction>>,
 ) {
     // Allow players to fast-forward the Valhalla Bonus victory cascade with Space or Enter.
     if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
@@ -1209,11 +1225,13 @@ pub fn handle_match3_hud_buttons(
             ctx.armed_tool = None;
             input_state.confirm_retreat = false;
             input_state.confirm_loki_shuffle = false;
+            input_state.overlays_stale = true;
             input_state.dirty_hud = true;
             return;
         }
         ctx.active_modal = ActiveModal::Help;
         ctx.armed_tool = None;
+        input_state.overlays_stale = true;
         scroll_mem.modal_offset_y = 0.0;
         input_state.dirty_hud = true;
         return;
@@ -1271,6 +1289,7 @@ pub fn handle_match3_hud_buttons(
             } else {
                 input_state.kbd_cursor = Some(start);
             }
+            input_state.last_input_was_kbd = true;
             update_kbd_cursor_marker(&mut commands, &input_state, &kbd_markers);
             return;
         }
@@ -1420,6 +1439,7 @@ pub fn handle_match3_hud_buttons(
                     } else {
                         ctx.armed_tool = None;
                         input_state.confirm_loki_shuffle = true;
+                        input_state.overlays_stale = true;
                         play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                         input_state.dirty_hud = true;
                     }
@@ -1431,6 +1451,7 @@ pub fn handle_match3_hud_buttons(
                         Some(tool)
                     };
                     input_state.selected = None;
+                    input_state.overlays_stale = true;
                     input_state.dirty_board = true;
                     input_state.dirty_hud = true;
                 }
@@ -1442,9 +1463,8 @@ pub fn handle_match3_hud_buttons(
     }
 
     let help_open = ctx.active_modal == ActiveModal::Help;
-    let suppress_clicks = scroll_mem.is_touch_scrolling();
 
-    for (interaction, action) in &buttons {
+    for (_, interaction, action) in &buttons {
         // Live in-place tooltip on hover for tools and Patron Divine Fury (no HUD rebuild).
         if !help_open && ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
             match *interaction {
@@ -1479,8 +1499,16 @@ pub fn handle_match3_hud_buttons(
                 Interaction::Pressed => {}
             }
         }
+    }
 
-        if suppress_clicks || *interaction != Interaction::Pressed {
+    // Actions fire on release so a touch that starts a scroll in Help never triggers a HUD button.
+    let tapped = press_arm.completed_taps(
+        buttons.iter().map(|(entity, i, _)| (entity, *i)),
+        &touches,
+        &scroll_mem,
+    );
+    for (entity, _, action) in &buttons {
+        if !tapped.contains(&entity) {
             continue;
         }
         if help_open
@@ -1622,12 +1650,14 @@ pub fn handle_match3_hud_buttons(
                     } else {
                         ctx.armed_tool = None;
                         input_state.confirm_loki_shuffle = true;
+                        input_state.overlays_stale = true;
                         play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                         input_state.dirty_hud = true;
                     }
                 } else if ctx.armed_tool == Some(tool) {
                     input_state.confirm_loki_shuffle = false;
                     ctx.armed_tool = None;
+                    input_state.overlays_stale = true;
                     input_state.dirty_hud = true;
                 } else {
                     input_state.confirm_loki_shuffle = false;
@@ -1640,6 +1670,7 @@ pub fn handle_match3_hud_buttons(
             Match3UiAction::CancelTool => {
                 ctx.armed_tool = None;
                 input_state.confirm_loki_shuffle = false;
+                input_state.overlays_stale = true;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 input_state.dirty_board = true;
                 input_state.dirty_hud = true;
@@ -1648,8 +1679,13 @@ pub fn handle_match3_hud_buttons(
     }
 }
 
+type HudBlockerQueries<'w, 's> = (
+    Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<Button>)>,
+    Query<'w, 's, &'static Interaction, (With<Match3HudBar>, Without<Button>)>,
+);
+
 /// Handles both desktop mouse (click + drag) and Android touch (tap + swipe) when the board is idle.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn handle_board_pointer_input(
     mut commands: Commands,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -1665,10 +1701,13 @@ pub fn handle_board_pointer_input(
     drag_highlights: Query<Entity, With<DragTargetHighlight>>,
     selection_markers: Query<Entity, With<SelectionMarker>>,
     kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
-    ui_buttons: Query<&Interaction, (Changed<Interaction>, With<Button>)>,
+    (ui_buttons, hud_bars): HudBlockerQueries,
 ) {
     if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
-        if mouse.just_pressed(MouseButton::Left) || touches.iter_just_pressed().next().is_some() {
+        if (mouse.just_pressed(MouseButton::Left) || touches.iter_just_pressed().next().is_some())
+            && !ui_buttons.iter().any(|i| *i == Interaction::Pressed)
+            && !hud_bars.iter().any(|i| *i == Interaction::Pressed)
+        {
             input_state.skip_valhalla = true;
         }
         return;
@@ -1685,8 +1724,10 @@ pub fn handle_board_pointer_input(
         input_state.overlays_stale = false;
         return;
     }
-    // A HUD button pressed this frame owns the click: never let it fall through to the board.
-    if ui_buttons.iter().any(|i| *i == Interaction::Pressed) {
+    // A HUD button or HUD bar pressed this frame owns the click: never let it fall through to the board.
+    if ui_buttons.iter().any(|i| *i == Interaction::Pressed)
+        || hud_bars.iter().any(|i| *i == Interaction::Pressed)
+    {
         return;
     }
     let Ok(window) = windows.get_single() else {
@@ -1700,14 +1741,24 @@ pub fn handle_board_pointer_input(
         None => return,
     };
 
-    // Live hover highlight: AoE preview when a tool is armed (tracks mouse or keyboard cursor),
-    // or soft luminous rune halo when idle.
-    let pointer_hovered = window
-        .cursor_position()
+    // Live hover highlight: AoE preview when a tool is armed (tracks mouse or keyboard cursor
+    // depending on which input was used most recently), or soft luminous rune halo when idle.
+    let cursor_pos = window.cursor_position();
+    if cursor_pos != input_state.last_cursor_pos {
+        input_state.last_cursor_pos = cursor_pos;
+        if cursor_pos.is_some() {
+            input_state.last_input_was_kbd = false;
+        }
+    }
+    let pointer_hovered = cursor_pos
         .and_then(|sp| camera.viewport_to_world_2d(cam_transform, sp).ok())
         .and_then(|wp| world_to_cell(wp, cols, rows, &input_state));
     let hovered = if ctx.armed_tool.is_some() {
-        pointer_hovered.or(input_state.kbd_cursor)
+        if input_state.last_input_was_kbd {
+            input_state.kbd_cursor.or(pointer_hovered)
+        } else {
+            pointer_hovered.or(input_state.kbd_cursor)
+        }
     } else {
         pointer_hovered
     };
@@ -1881,10 +1932,22 @@ pub fn handle_board_pointer_input(
                     }
                 }
 
-                input_state.selected = Some(cell);
-                input_state.drag_origin_cell = Some(cell);
-                input_state.drag_origin_screen = Some(screen_pos);
-                update_selection_marker(&mut commands, &textures, &input_state, &selection_markers);
+                let playable = ctx
+                    .active_session
+                    .as_ref()
+                    .and_then(|s| s.board.get(cell))
+                    .is_some_and(|c| !c.blocked && c.has_movable_piece());
+                if playable {
+                    input_state.selected = Some(cell);
+                    input_state.drag_origin_cell = Some(cell);
+                    input_state.drag_origin_screen = Some(screen_pos);
+                    update_selection_marker(
+                        &mut commands,
+                        &textures,
+                        &input_state,
+                        &selection_markers,
+                    );
+                }
             }
         }
     }

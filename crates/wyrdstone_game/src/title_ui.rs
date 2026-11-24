@@ -200,8 +200,9 @@ fn spawn_title_tree(
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(20.0),
-                    padding: UiRect::all(Val::Px(24.0)),
+                    row_gap: Val::Px(14.0),
+                    padding: UiRect::all(Val::Px(16.0)),
+                    overflow: Overflow::scroll_y(),
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.03, 0.06, 0.11, 0.46)),
@@ -213,8 +214,10 @@ fn spawn_title_tree(
                         TitleLogoFloat,
                         Node {
                             max_width: Val::Percent(92.0),
+                            max_height: Val::Vh(28.0),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
+                            flex_shrink: 1.0,
                             margin: UiRect::bottom(Val::Px(2.0)),
                             ..default()
                         },
@@ -223,8 +226,10 @@ fn spawn_title_tree(
                         hero.spawn((
                             ImageNode::new(fjord_art.logo.clone()),
                             Node {
-                                width: Val::Px(560.0),
+                                width: Val::Px(520.0),
                                 max_width: Val::Percent(100.0),
+                                max_height: Val::Vh(28.0),
+                                flex_shrink: 1.0,
                                 aspect_ratio: Some(16.0 / 9.0),
                                 ..default()
                             },
@@ -269,12 +274,16 @@ fn spawn_title_tree(
                         sliced_gold_button_image(vfx),
                         Node {
                             width: Val::Px(320.0),
+                            max_width: Val::Percent(92.0),
                             height: Val::Px(64.0),
+                            border: UiRect::all(Val::Px(2.5)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             ..default()
                         },
                         BackgroundColor(Color::NONE),
+                        BorderColor(Color::NONE),
+                        BorderRadius::all(Val::Px(12.0)),
                         gold_glow_shadow(),
                     ))
                     .with_children(|btn| {
@@ -421,12 +430,16 @@ type TitleButtonQuery<'w, 's> = Query<
         &'static TitleAction,
         &'static mut BackgroundColor,
         Option<&'static mut ImageNode>,
+        Option<&'static Children>,
     ),
     Changed<Interaction>,
 >;
 
-/// Handles clicks and keyboard shortcuts (`Enter`/`Space`) on the Title screen.
-#[allow(clippy::too_many_arguments)]
+type TitleFocusQuery<'w, 's> =
+    Query<'w, 's, (Entity, &'static TitleAction, &'static mut BorderColor), Without<ToastLife>>;
+
+/// Handles clicks and keyboard shortcuts (`Tab`/`Arrows`, `Enter`/`Space`, `Escape`) on Title.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn handle_title_buttons(
     mut commands: Commands,
     time: Res<Time>,
@@ -439,10 +452,15 @@ pub fn handle_title_buttons(
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<TitleRoot>>,
-    touches: Res<Touches>,
-    scroll_mem: Res<UiScrollMemory>,
-    mut press_arm: Local<PressArm>,
+    (touches, scroll_mem, mut press_arm, mut focus_idx): (
+        Res<Touches>,
+        Res<UiScrollMemory>,
+        Local<PressArm>,
+        Local<Option<usize>>,
+    ),
     mut buttons: TitleButtonQuery,
+    mut focus_buttons: TitleFocusQuery,
+    mut text_colors: Query<&mut TextColor>,
 ) {
     for (entity, mut life) in &mut toasts {
         life.0 -= time.delta_secs();
@@ -456,6 +474,7 @@ pub fn handle_title_buttons(
 
     if keys.just_pressed(KeyCode::Escape) && ctx.confirm_reset {
         ctx.confirm_reset = false;
+        *focus_idx = None;
         for entity in &roots {
             commands.entity(entity).despawn_recursive();
         }
@@ -463,11 +482,54 @@ pub fn handle_title_buttons(
         return;
     }
 
-    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-        ctx.confirm_reset = false;
-        ctx.has_existing_save = true;
-        next_state.set(AppState::FjordCity);
+    let focus_step: Option<isize> = if keys.just_pressed(KeyCode::Tab) {
+        if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+            Some(-1)
+        } else {
+            Some(1)
+        }
+    } else if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::ArrowRight) {
+        Some(1)
+    } else if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::ArrowLeft) {
+        Some(-1)
+    } else {
+        None
+    };
+
+    if let Some(step) = focus_step {
+        let count = focus_buttons.iter().count();
+        if count > 0 {
+            let next = match *focus_idx {
+                Some(cur) => ((cur as isize + step).rem_euclid(count as isize)) as usize,
+                None => {
+                    if step >= 0 {
+                        0
+                    } else {
+                        count - 1
+                    }
+                }
+            };
+            *focus_idx = Some(next);
+            for (idx, (_, action, mut border)) in focus_buttons.iter_mut().enumerate() {
+                if idx == next {
+                    border.0 = COLOR_ACCENT_GOLD_HOVER;
+                } else {
+                    border.0 = match action {
+                        TitleAction::EnterFjord => Color::NONE,
+                        _ => COLOR_PANEL_BORDER,
+                    };
+                }
+            }
+        }
         return;
+    }
+
+    let mut triggered_actions: Vec<TitleAction> = Vec::new();
+    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+        let chosen = focus_idx
+            .and_then(|idx| focus_buttons.iter().nth(idx).map(|(_, act, _)| *act))
+            .unwrap_or(TitleAction::EnterFjord);
+        triggered_actions.push(chosen);
     }
 
     if sound_bank.is_changed() && !sound_bank.is_added() {
@@ -484,25 +546,29 @@ pub fn handle_title_buttons(
         &touches,
         &scroll_mem,
     );
-    let tapped_actions: Vec<TitleAction> = buttons
-        .iter()
-        .filter(|(entity, ..)| tapped.contains(entity))
-        .map(|(_, _, action, ..)| *action)
-        .collect();
-    for action in tapped_actions {
+    for (entity, _, action, ..) in &buttons {
+        if tapped.contains(&entity) {
+            triggered_actions.push(*action);
+        }
+    }
+    if let Some(action) = triggered_actions.into_iter().next() {
         match action {
             TitleAction::EnterFjord => {
                 ctx.confirm_reset = false;
                 ctx.has_existing_save = true;
+                *focus_idx = None;
                 next_state.set(AppState::FjordCity);
+                return;
             }
             TitleAction::NewSaga => {
                 if ctx.confirm_reset {
                     if ctx.reset_saga() {
+                        *focus_idx = None;
                         next_state.set(AppState::FjordCity);
                     } else {
                         // The newer save could not be preserved: stay here, notice is set.
                         ctx.confirm_reset = false;
+                        *focus_idx = None;
                         for entity in &roots {
                             commands.entity(entity).despawn_recursive();
                         }
@@ -510,6 +576,7 @@ pub fn handle_title_buttons(
                     }
                 } else {
                     ctx.confirm_reset = true;
+                    *focus_idx = None;
                     for entity in &roots {
                         commands.entity(entity).despawn_recursive();
                     }
@@ -536,24 +603,31 @@ pub fn handle_title_buttons(
         }
     }
 
-    for (_, interaction, action, mut bg, img_opt) in &mut buttons {
+    for (_, interaction, action, mut bg, img_opt, children_opt) in &mut buttons {
         match *interaction {
             Interaction::Pressed => {}
             Interaction::Hovered => match action {
                 TitleAction::EnterFjord => {
                     if let Some(mut img) = img_opt {
-                        img.color = Color::srgb(1.08, 1.04, 0.94);
+                        img.color = Color::srgb(1.0, 0.96, 0.86);
                     }
                 }
                 TitleAction::NewSaga => {
                     *bg = BackgroundColor(if ctx.confirm_reset {
-                        Color::srgb(0.88, 0.28, 0.30)
+                        COLOR_ACCENT_CRIMSON_HOVER
                     } else {
                         Color::srgba(0.42, 0.16, 0.20, 0.96)
-                    })
+                    });
                 }
                 TitleAction::ToggleLanguage | TitleAction::ToggleAudio => {
-                    *bg = BackgroundColor(COLOR_ACCENT_TEAL)
+                    *bg = BackgroundColor(COLOR_ACCENT_TEAL);
+                    if let Some(children) = children_opt {
+                        for &child in children {
+                            if let Ok(mut tc) = text_colors.get_mut(child) {
+                                tc.0 = COLOR_TEXT_ON_ACCENT;
+                            }
+                        }
+                    }
                 }
             },
             Interaction::None => match action {
@@ -568,10 +642,17 @@ pub fn handle_title_buttons(
                         COLOR_ACCENT_CRIMSON
                     } else {
                         Color::srgba(0.24, 0.12, 0.14, 0.92)
-                    })
+                    });
                 }
                 TitleAction::ToggleLanguage | TitleAction::ToggleAudio => {
-                    *bg = BackgroundColor(Color::srgba(0.10, 0.14, 0.22, 0.90))
+                    *bg = BackgroundColor(Color::srgba(0.10, 0.14, 0.22, 0.90));
+                    if let Some(children) = children_opt {
+                        for &child in children {
+                            if let Ok(mut tc) = text_colors.get_mut(child) {
+                                tc.0 = COLOR_TEXT_PRIMARY;
+                            }
+                        }
+                    }
                 }
             },
         }

@@ -69,9 +69,17 @@ pub const COLOR_TEXT_PRIMARY: Color = Color::srgb(0.94, 0.95, 0.97);
 pub const COLOR_TEXT_MUTED: Color = Color::srgb(0.68, 0.75, 0.84);
 pub const COLOR_TEXT_DARK: Color = Color::srgb(0.08, 0.10, 0.14);
 pub const COLOR_BUTTON_DISABLED: Color = Color::srgb(0.24, 0.27, 0.32);
+/// Darker crimson hover background maintaining >= 4.5:1 contrast with `COLOR_TEXT_PRIMARY`.
+pub const COLOR_ACCENT_CRIMSON_HOVER: Color = Color::srgb(0.64, 0.16, 0.18);
+/// Deep purple accent for Legendary tier buttons maintaining >= 4.5:1 contrast with `COLOR_TEXT_PRIMARY`.
+pub const COLOR_ACCENT_LEGENDARY: Color = Color::srgb(0.50, 0.22, 0.68);
 /// Text drawn on green or teal accent backgrounds (same value as `COLOR_TEXT_DARK`).
 /// WCAG contrast: 5.56:1 on `COLOR_ACCENT_GREEN`, 5.57:1 on `COLOR_ACCENT_TEAL`.
 pub const COLOR_TEXT_ON_ACCENT: Color = COLOR_TEXT_DARK;
+/// Lighter teal for text on `COLOR_PANEL_CARD` and `COLOR_PANEL_DARK` (>= 7.1:1 contrast).
+pub const COLOR_ACCENT_TEAL_TEXT: Color = Color::srgb(0.42, 0.82, 0.88);
+/// Lighter green for text on `COLOR_PANEL_CARD` and `COLOR_PANEL_DARK` (>= 7.0:1 contrast).
+pub const COLOR_ACCENT_GREEN_TEXT: Color = Color::srgb(0.42, 0.84, 0.58);
 /// Lighter crimson for text on `COLOR_PANEL_CARD` and `COLOR_PANEL_DARK`.
 /// WCAG contrast: 5.00:1 on `COLOR_PANEL_CARD`, 5.94:1 on `COLOR_PANEL_DARK`
 /// (the plain `COLOR_ACCENT_CRIMSON` only reaches 2.45:1 and 2.91:1).
