@@ -225,7 +225,9 @@ pub fn setup_city_ui(
         .map(|w| w.width() < w.height())
         .unwrap_or(false);
     if ctx.active_modal == ActiveModal::None {
-        if ctx.city.is_login_tribute_available(today_day_index()) {
+        if ctx.city.stats.total_victories >= 1
+            && ctx.city.is_login_tribute_available(today_day_index())
+        {
             ctx.active_modal = ActiveModal::LoginCalendar;
         } else if ctx.pending_dialogue.is_some() {
             ctx.active_modal = ActiveModal::ChapterDialogue;
@@ -372,7 +374,13 @@ fn spawn_play_mode_buttons(parent: &mut ChildBuilder, ctx: &GameContext) {
             &[("wave", run.wave.to_string())],
         )
     } else {
-        i18n.t("city.panel.expedition.button").to_string()
+        i18n.t_fmt(
+            "city.button.play_cost",
+            &[
+                ("label", i18n.t("city.panel.expedition.button").to_string()),
+                ("cost", ctx.data.balance.energy_cost_per_level.to_string()),
+            ],
+        )
     };
     spawn_small_button(
         parent,
@@ -576,6 +584,11 @@ fn spawn_city_tree(
                     pills
                         .spawn((
                             Node {
+                                min_width: if is_portrait {
+                                    Val::Auto
+                                } else {
+                                    Val::Px(176.0)
+                                },
                                 padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                                 column_gap: Val::Px(5.0),
                                 align_items: AlignItems::Center,
@@ -989,8 +1002,13 @@ fn spawn_city_tree(
                 }
             });
 
-            // Guided 3-step Tutorial Banner for first-time players
-            if ctx.tutorial_step < 3 {
+            // Guided 3-step Tutorial Banner for first-time players (suppress Step 0 when Quest 1 is already shown)
+            let q1_active = ctx.tutorial_step == 0
+                && ctx
+                    .city
+                    .active_quest(&ctx.data.quests)
+                    .is_some_and(|q| q.id == "q1");
+            if ctx.tutorial_step < 3 && !q1_active {
                 let step_key = match ctx.tutorial_step {
                     0 => "tutorial.step0",
                     1 => "tutorial.step1",
@@ -1673,18 +1691,38 @@ fn spawn_map_building_pin(
             plate_cmd.insert(QuestBeaconPin);
         }
         plate_cmd.with_children(|plate| {
-            plate.spawn((
-                Text::new(i18n.t(&b.name_key)),
-                TextFont {
-                    font_size: FONT_SMALL,
+            plate
+                .spawn(Node {
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    column_gap: Val::Px(4.0),
+                    flex_wrap: FlexWrap::Wrap,
                     ..default()
-                },
-                TextColor(if selected {
-                    COLOR_ACCENT_GOLD
-                } else {
-                    COLOR_TEXT_PRIMARY
-                }),
-            ));
+                })
+                .with_children(|title_row| {
+                    if is_quest_target {
+                        title_row.spawn((
+                            Text::new(i18n.t("city.panel.quests.tag")),
+                            TextFont {
+                                font_size: FONT_SMALL - 2.0,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_TEAL_TEXT),
+                        ));
+                    }
+                    title_row.spawn((
+                        Text::new(i18n.t(&b.name_key)),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(if selected {
+                            COLOR_ACCENT_GOLD
+                        } else {
+                            COLOR_TEXT_PRIMARY
+                        }),
+                    ));
+                });
             if tier > 0 {
                 plate
                     .spawn(Node {
@@ -1738,6 +1776,16 @@ fn spawn_map_building_pin(
                             TextColor(COLOR_TEXT_DARK),
                         ));
                     });
+                if can_upgrade {
+                    plate.spawn((
+                        Text::new(i18n.t("city.panel.building.status.ready")),
+                        TextFont {
+                            font_size: FONT_SMALL - 1.5,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GREEN_TEXT),
+                    ));
+                }
             } else {
                 let badge = if !unlocked {
                     i18n.t("city.panel.building.badge.locked").to_string()
@@ -1780,7 +1828,7 @@ fn spawn_map_building_pin(
     });
 }
 
-fn spawn_resource_pill_with_icon(
+pub(super) fn spawn_resource_pill_with_icon(
     parent: &mut ChildBuilder,
     icon: Handle<Image>,
     text: &str,
@@ -1876,7 +1924,16 @@ pub(crate) fn spawn_small_button_colored(
     text_color: Color,
     enabled: bool,
 ) {
-    let text_color = readable_text_color(bg_color, text_color);
+    let text_color = if !enabled {
+        COLOR_TEXT_MUTED
+    } else {
+        readable_text_color(bg_color, text_color)
+    };
+    let border_col = if enabled {
+        COLOR_PANEL_BORDER
+    } else {
+        Color::srgba(0.28, 0.34, 0.42, 0.65)
+    };
     let mut cmd = parent.spawn((
         Button,
         action,
@@ -1890,8 +1947,8 @@ pub(crate) fn spawn_small_button_colored(
             ..default()
         },
         BackgroundColor(bg_color),
-        BorderColor(COLOR_PANEL_BORDER),
-        BorderRadius::all(Val::Px(6.0)),
+        BorderColor(border_col),
+        BorderRadius::all(Val::Px(RADIUS_SM)),
     ));
     if !enabled {
         cmd.insert(NoButtonScale);
@@ -1916,7 +1973,16 @@ pub(crate) fn spawn_full_button(
     text_color: Color,
     enabled: bool,
 ) {
-    let text_color = readable_text_color(bg_color, text_color);
+    let text_color = if !enabled {
+        COLOR_TEXT_MUTED
+    } else {
+        readable_text_color(bg_color, text_color)
+    };
+    let border_col = if enabled {
+        COLOR_PANEL_BORDER
+    } else {
+        Color::srgba(0.28, 0.34, 0.42, 0.65)
+    };
     let mut cmd = parent.spawn((
         Button,
         action,
@@ -1930,8 +1996,8 @@ pub(crate) fn spawn_full_button(
             ..default()
         },
         BackgroundColor(bg_color),
-        BorderColor(COLOR_PANEL_BORDER),
-        BorderRadius::all(Val::Px(8.0)),
+        BorderColor(border_col),
+        BorderRadius::all(Val::Px(RADIUS_MD)),
     ));
     if !enabled {
         cmd.insert(NoButtonScale);
@@ -2002,6 +2068,28 @@ pub fn handle_city_buttons(
             // Nothing is open: Escape (and the Android Back button) leaves the hub.
             next_state.set(AppState::Title);
             return;
+        }
+    }
+
+    // Keyboard confirm inside ChapterDialogue and LoginCalendar (Enter / Space).
+    if matches!(
+        ctx.active_modal,
+        ActiveModal::ChapterDialogue | ActiveModal::LoginCalendar
+    ) && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space))
+    {
+        if ctx.active_modal == ActiveModal::ChapterDialogue {
+            ctx.pending_dialogue = None;
+            ctx.active_modal = ActiveModal::None;
+            scroll_mem.modal_offset_y = 0.0;
+            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+            rebuild = true;
+        } else if !claim_login_tribute(&mut commands, &mut ctx, &sound_bank) {
+            ctx.active_modal = ActiveModal::None;
+            scroll_mem.modal_offset_y = 0.0;
+            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+            rebuild = true;
+        } else {
+            rebuild = true;
         }
     }
 
@@ -2269,9 +2357,21 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::SelectDifficulty(diff) => {
-                ctx.selected_difficulty = *diff;
-                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
-                rebuild = true;
+                let allowed = if *diff == 0 {
+                    true
+                } else if let Some(b) = ctx.data.building_by_id(&ctx.selected_building_id) {
+                    let stars = ctx.city.building_mastery_stars(&b.id);
+                    ctx.city.is_building_unlocked(b)
+                        && ((*diff == 1 && stars >= 1 && b.mastery_level_id.is_some())
+                            || (*diff == 2 && stars >= 3 && b.legendary_level_id.is_some()))
+                } else {
+                    false
+                };
+                if allowed {
+                    ctx.selected_difficulty = *diff;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    rebuild = true;
+                }
             }
             CityAction::CyclePatron => {
                 let idx = PatronGod::ALL
@@ -2309,24 +2409,7 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::ClaimLoginTribute => {
-                let claim = {
-                    let state = &mut *ctx;
-                    state
-                        .city
-                        .try_claim_login_tribute_with(today_day_index(), &state.data.balance)
-                };
-                if let Some((day, res, _tool)) = claim {
-                    let summary = modals::format_reward_summary(&ctx.data.i18n, res, 0);
-                    let title = ctx
-                        .data
-                        .i18n
-                        .t_fmt("city.panel.tribute.day", &[("day", day.to_string())]);
-                    ctx.celebration_message =
-                        Some(celebration_claim_line(&ctx.data.i18n, title, summary));
-                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
-                    ctx.status_notice_key = None;
-                    ctx.persist();
-                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                if claim_login_tribute(&mut commands, &mut ctx, &sound_bank) {
                     rebuild = true;
                 }
             }
@@ -2735,6 +2818,16 @@ pub fn handle_city_buttons(
                 if let Some(recipe) = ctx.data.tool_shop.iter().find(|r| r.tool == *tool).cloned() {
                     match ctx.city.try_craft_tool(&recipe) {
                         Ok(_) => {
+                            let tool_label = ctx.data.i18n.t_fmt(
+                                &recipe.name_key,
+                                &[("count", ctx.city.tools.count(*tool).to_string())],
+                            );
+                            ctx.celebration_message = Some(
+                                ctx.data
+                                    .i18n
+                                    .t_fmt("city.panel.shop.crafted", &[("tool", tool_label)]),
+                            );
+                            ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                             ctx.status_notice_key = None;
                             ctx.persist();
                             play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
@@ -2799,6 +2892,9 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::CraftOrEquipAmulet(amulet_id) => {
+                if ctx.city.equipped_amulet.as_deref() == Some(amulet_id.as_str()) {
+                    continue;
+                }
                 if let Some(amulet) = ctx.data.amulet_by_id(amulet_id).cloned() {
                     let res = {
                         let s = &mut *ctx;
@@ -2973,6 +3069,30 @@ pub fn handle_city_buttons(
             just_built.as_deref(),
         );
     }
+}
+
+fn claim_login_tribute(
+    commands: &mut Commands,
+    ctx: &mut GameContext,
+    sound_bank: &SoundBank,
+) -> bool {
+    let claim = ctx
+        .city
+        .try_claim_login_tribute_with(today_day_index(), &ctx.data.balance);
+    if let Some((day, res, _tool)) = claim {
+        let summary = modals::format_reward_summary(&ctx.data.i18n, res, 0);
+        let title = ctx
+            .data
+            .i18n
+            .t_fmt("city.panel.tribute.day", &[("day", day.to_string())]);
+        ctx.celebration_message = Some(celebration_claim_line(&ctx.data.i18n, title, summary));
+        ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+        ctx.status_notice_key = None;
+        ctx.persist();
+        play_sfx(commands, sound_bank, SfxKind::Victory);
+        return true;
+    }
+    false
 }
 
 fn chapter_dialogue_for_building(building_id: &str) -> Option<ChapterDialogue> {

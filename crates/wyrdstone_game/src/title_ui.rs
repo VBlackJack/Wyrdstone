@@ -337,8 +337,9 @@ fn spawn_title_tree(
                                 Button,
                                 act,
                                 Node {
-                                    width: Val::Px(178.0),
-                                    height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                    min_width: Val::Px(178.0),
+                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                    padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
                                     border: UiRect::all(Val::Px(1.5)),
@@ -574,7 +575,6 @@ pub fn handle_title_buttons(
         match action {
             TitleAction::EnterFjord => {
                 ctx.confirm_reset = false;
-                ctx.has_existing_save = true;
                 *focus_idx = None;
                 next_state.set(AppState::FjordCity);
                 return;

@@ -100,6 +100,7 @@ pub struct UiScrollMemory {
     pub modal_offset_y: f32,
     pub inspector_offset_y: f32,
     touch_id: Option<u64>,
+    touch_panel: Option<ScrollPanelKind>,
     touch_last_y: f32,
     touch_scrolling: bool,
     suppress_clicks_frames: u8,
@@ -254,21 +255,24 @@ pub fn handle_ui_scroll(
     // that overflows vertically, so normal taps on other UI screens are never swallowed.
     if let Some(touch) = touches.iter_just_pressed().next() {
         let pos = touch.position();
-        let over_scrollable = panels
+        let hit_panel = panels
             .iter()
-            .any(|(panel, computed, gtf, _, scroll, children)| {
+            .find_map(|(panel, computed, gtf, _, scroll, children)| {
                 if has_modal_panel && panel.kind == ScrollPanelKind::Inspector {
-                    return false;
+                    return None;
                 }
-                point_inside_node(pos, computed, gtf)
-                    && max_scroll_y(computed, gtf, scroll.offset_y, children, &child_nodes) > 0.0
+                (point_inside_node(pos, computed, gtf)
+                    && max_scroll_y(computed, gtf, scroll.offset_y, children, &child_nodes) > 0.0)
+                    .then_some(panel.kind)
             });
-        if over_scrollable {
+        if let Some(kind) = hit_panel {
             memory.touch_id = Some(touch.id());
+            memory.touch_panel = Some(kind);
             memory.touch_last_y = pos.y;
             memory.touch_scrolling = false;
         } else {
             memory.touch_id = None;
+            memory.touch_panel = None;
             memory.touch_scrolling = false;
         }
     } else if let Some(tid) = memory.touch_id {
@@ -280,11 +284,14 @@ pub fn handle_ui_scroll(
             }
             if memory.touch_scrolling && dy.abs() > f32::EPSILON {
                 memory.touch_last_y = pos.y;
-                for (panel, computed, gtf, _, mut scroll, children) in &mut panels {
-                    if has_modal_panel && panel.kind == ScrollPanelKind::Inspector {
-                        continue;
-                    }
-                    if point_inside_node(pos, computed, gtf) {
+                if let Some(locked_kind) = memory.touch_panel {
+                    for (panel, computed, gtf, _, mut scroll, children) in &mut panels {
+                        if panel.kind != locked_kind {
+                            continue;
+                        }
+                        if has_modal_panel && panel.kind == ScrollPanelKind::Inspector {
+                            continue;
+                        }
                         let max_scroll =
                             max_scroll_y(computed, gtf, scroll.offset_y, children, &child_nodes);
                         scroll.offset_y = (scroll.offset_y - dy).clamp(0.0, max_scroll);
@@ -297,6 +304,7 @@ pub fn handle_ui_scroll(
                 memory.suppress_clicks_frames = 2;
             }
             memory.touch_id = None;
+            memory.touch_panel = None;
             memory.touch_scrolling = false;
         }
     }
@@ -567,5 +575,18 @@ mod tests {
         let max_after_shrink = scroll_extent(40.0);
         assert_eq!(current.clamp(0.0, max_after_shrink), 60.0);
         assert_eq!(current.clamp(0.0, scroll_extent(0.0)), 0.0);
+    }
+
+    #[test]
+    fn locked_touch_panel_survives_horizontal_drift() {
+        let mut mem = UiScrollMemory {
+            touch_id: Some(7),
+            touch_panel: Some(ScrollPanelKind::Modal),
+            touch_last_y: 100.0,
+            ..default()
+        };
+        assert_eq!(mem.touch_panel, Some(ScrollPanelKind::Modal));
+        mem.set_offset(ScrollPanelKind::Modal, 42.0);
+        assert_eq!(mem.modal_offset_y, 42.0);
     }
 }

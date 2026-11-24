@@ -415,6 +415,9 @@ impl GameContext {
         match snapshot.save_with_options(&path, self.save_file_verified) {
             Ok(report) => {
                 self.save_file_verified = true;
+                if has_saved_progress(&self.city, self.tutorial_step) {
+                    self.has_existing_save = true;
+                }
                 if let Some(err) = report.backup_rotation_error {
                     warn!("Wyrdstone save backup rotation error: {err}");
                 }
@@ -675,7 +678,7 @@ impl GameContext {
             return Err("city.error.level_not_found");
         };
         if self.city.glory < boss_def.required_glory {
-            return Err("city.panel.building.locked");
+            return Err("city.panel.raids.locked_notice");
         }
         if !self.city.try_spend_energy(&self.data.balance) {
             return Err("city.error.not_enough_energy");

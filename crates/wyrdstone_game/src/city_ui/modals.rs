@@ -16,7 +16,10 @@
 
 //! Responsive modal overlays for Amulets, Relic Collections, Runic Tool Forge, Chronicles, and Guide.
 
-use super::{spawn_resource_pill, spawn_small_button, spawn_small_button_colored, CityAction};
+use super::{
+    spawn_resource_pill, spawn_resource_pill_with_icon, spawn_small_button,
+    spawn_small_button_colored, CityAction,
+};
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
 use crate::scroll::{spawn_scrollbar_track, ScrollMoreHint, ScrollPanelKind, ScrollablePanel};
@@ -28,7 +31,7 @@ use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use wyrdstone_core::{
     achievement_progress, format_achievement_desc, format_boon_desc, format_boss_desc,
-    format_patron_desc, AmuletEffect, CityState, I18nCatalog, PatronGod, ResourceBundle,
+    format_patron_desc, AmuletEffect, CityState, ClanRank, I18nCatalog, PatronGod, ResourceBundle,
     MAX_DAILY_STREAK_CYCLE,
 };
 
@@ -71,24 +74,105 @@ fn reward_item_lines(i18n: &I18nCatalog, res: ResourceBundle) -> Vec<String> {
         .collect()
 }
 
-/// One "amount resource" text per non-zero resource of a cost bundle.
-fn cost_item_lines(i18n: &I18nCatalog, cost: ResourceBundle) -> Vec<String> {
-    resource_entries(cost)
-        .into_iter()
-        .filter(|(amount, _)| *amount > 0)
-        .map(|(amount, label_key)| {
-            i18n.t_fmt(
-                "city.panel.shop.cost_item",
-                &[
-                    ("amount", amount.to_string()),
-                    ("resource", i18n.t(label_key).to_string()),
-                ],
-            )
+/// Spawns a compact Timber/Stone/Gold/Mead balance strip inside purchase modals.
+fn spawn_modal_resource_strip(parent: &mut ChildBuilder, ctx: &GameContext, vfx: &VfxTextures) {
+    let i18n = &ctx.data.i18n;
+    let res = ctx.city.resources;
+    parent
+        .spawn(Node {
+            flex_wrap: FlexWrap::Wrap,
+            column_gap: Val::Px(8.0),
+            row_gap: Val::Px(4.0),
+            align_items: AlignItems::Center,
+            ..default()
         })
-        .collect()
+        .with_children(|strip| {
+            let items = [
+                (
+                    vfx.icon_wood.clone(),
+                    "resources.label.wood",
+                    res.wood,
+                    COLOR_RES_WOOD,
+                ),
+                (
+                    vfx.icon_stone.clone(),
+                    "resources.label.stone",
+                    res.stone,
+                    COLOR_RES_STONE,
+                ),
+                (
+                    vfx.icon_gold.clone(),
+                    "resources.label.gold",
+                    res.gold,
+                    COLOR_ACCENT_GOLD,
+                ),
+                (
+                    vfx.icon_mead.clone(),
+                    "resources.label.mead",
+                    res.mead,
+                    COLOR_RES_MEAD,
+                ),
+            ];
+            for (icon, key, amount, col) in items {
+                let lbl = i18n.t_fmt(
+                    "city.header.resource_pill",
+                    &[
+                        ("label", i18n.t(key).to_string()),
+                        ("amount", amount.to_string()),
+                    ],
+                );
+                spawn_resource_pill_with_icon(strip, icon, &lbl, col);
+            }
+        });
 }
 
-fn format_amulet_effect(i18n: &I18nCatalog, effect: AmuletEffect) -> String {
+/// Spawns color-coded `label: have/need` pills, omitting zero-cost resources.
+fn spawn_cost_pills(
+    parent: &mut ChildBuilder,
+    i18n: &I18nCatalog,
+    have: ResourceBundle,
+    cost: ResourceBundle,
+) {
+    let entries = [
+        (i18n.t("resources.label.wood"), have.wood, cost.wood),
+        (i18n.t("resources.label.stone"), have.stone, cost.stone),
+        (i18n.t("resources.label.gold"), have.gold, cost.gold),
+        (i18n.t("resources.label.mead"), have.mead, cost.mead),
+    ];
+    parent
+        .spawn(Node {
+            flex_wrap: FlexWrap::Wrap,
+            column_gap: Val::Px(6.0),
+            row_gap: Val::Px(4.0),
+            ..default()
+        })
+        .with_children(|row| {
+            for (label, cur, need) in entries {
+                if need == 0 {
+                    continue;
+                }
+                let ok = cur >= need;
+                spawn_resource_pill(
+                    row,
+                    &i18n.t_fmt(
+                        "city.panel.building.cost_pill",
+                        &[
+                            ("label", label.to_string()),
+                            ("have", cur.to_string()),
+                            ("need", need.to_string()),
+                        ],
+                    ),
+                    if ok {
+                        COLOR_ACCENT_GREEN_TEXT
+                    } else {
+                        COLOR_ACCENT_CRIMSON_TEXT
+                    },
+                );
+            }
+        });
+}
+
+pub(super) fn format_amulet_effect(i18n: &I18nCatalog, effect: AmuletEffect) -> String {
     match effect {
         AmuletEffect::ResourceBonusPct(v) => i18n.t_fmt(
             "city.panel.amulets.effect.resources",
@@ -125,11 +209,41 @@ fn spawn_modal_shell<F>(
 ) where
     F: FnOnce(&mut ChildBuilder),
 {
+    spawn_modal_shell_ex(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        width_px,
+        title,
+        close_label,
+        close_action,
+        scroll_offset_y,
+        true,
+        true,
+        body_fn,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_modal_shell_ex<F>(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    width_px: f32,
+    title: &str,
+    close_label: &str,
+    close_action: CityAction,
+    scroll_offset_y: f32,
+    dismiss_on_backdrop: bool,
+    show_header_close: bool,
+    body_fn: F,
+) where
+    F: FnOnce(&mut ChildBuilder),
+{
     let i18n = &ctx.data.i18n;
-    root.spawn((
-        Button,
-        NoButtonScale,
-        CityAction::CloseModal,
+    let mut backdrop_cmd = root.spawn((
         FocusPolicy::Block,
         Node {
             position_type: PositionType::Absolute,
@@ -144,8 +258,13 @@ fn spawn_modal_shell<F>(
         },
         BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),
         ZIndex(100),
-    ))
-    .with_children(|backdrop| {
+    ));
+    if dismiss_on_backdrop {
+        backdrop_cmd.insert((Button, NoButtonScale, CityAction::CloseModal));
+    } else {
+        backdrop_cmd.insert(Interaction::default());
+    }
+    backdrop_cmd.with_children(|backdrop| {
         backdrop
             .spawn((
                 FocusPolicy::Block,
@@ -184,13 +303,15 @@ fn spawn_modal_shell<F>(
                             display_font(fjord_art, FONT_HEADING),
                             TextColor(COLOR_ACCENT_GOLD),
                         ));
-                        spawn_small_button(
-                            hdr,
-                            close_label,
-                            close_action,
-                            COLOR_ACCENT_CRIMSON,
-                            true,
-                        );
+                        if show_header_close {
+                            spawn_small_button(
+                                hdr,
+                                close_label,
+                                close_action,
+                                COLOR_ACCENT_CRIMSON,
+                                true,
+                            );
+                        }
                     });
 
                 // Inline status/error banner and celebration banner render independently so
@@ -326,6 +447,7 @@ pub(super) fn spawn_amulets_modal(
         CityAction::ToggleModal(ActiveModal::Amulets),
         scroll_offset_y,
         |modal| {
+            spawn_modal_resource_strip(modal, ctx, vfx);
             for amulet in &ctx.data.amulets {
                 let tier = ctx.city.amulet_tier(&amulet.id);
                 let crafted = tier > 0;
@@ -453,21 +575,15 @@ pub(super) fn spawn_amulets_modal(
                                     ));
                                 }
                                 if let Some(c) = next_cost {
+                                    spawn_cost_pills(info, i18n, ctx.city.resources, c);
+                                } else if crafted {
                                     info.spawn((
-                                        Text::new(i18n.t_fmt(
-                                            "city.panel.amulet.cost",
-                                            &[
-                                                ("wood", c.wood.to_string()),
-                                                ("stone", c.stone.to_string()),
-                                                ("gold", c.gold.to_string()),
-                                                ("mead", c.mead.to_string()),
-                                            ],
-                                        )),
+                                        Text::new(i18n.t("city.panel.amulets.max_tier")),
                                         TextFont {
                                             font_size: FONT_SMALL,
                                             ..default()
                                         },
-                                        TextColor(COLOR_TEXT_MUTED),
+                                        TextColor(COLOR_ACCENT_GOLD),
                                     ));
                                 }
                             });
@@ -708,6 +824,38 @@ pub(super) fn spawn_collections_modal(
                             }
                         });
 
+                        if !claimed && !col.source_building_ids.is_empty() {
+                            let src_names: Vec<String> = col
+                                .source_building_ids
+                                .iter()
+                                .filter_map(|bid| {
+                                    if bid == wyrdstone_core::DAILY_TRIAL_BUILDING_ID {
+                                        Some(i18n.t("city.panel.daily.button").to_string())
+                                    } else {
+                                        ctx.data
+                                            .building_by_id(bid)
+                                            .map(|b| i18n.t(&b.name_key).to_string())
+                                    }
+                                })
+                                .collect();
+                            if !src_names.is_empty() {
+                                card.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.panel.collections.source",
+                                        &[(
+                                            "sources",
+                                            src_names.join(i18n.t("ui.separator.comma")),
+                                        )],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_MUTED),
+                                ));
+                            }
+                        }
+
                         card.spawn((
                             Text::new(format_reward_summary(i18n, col.reward_resources, 0)),
                             TextFont {
@@ -741,11 +889,11 @@ pub(super) fn spawn_tool_shop_modal(
         CityAction::ToggleModal(ActiveModal::Shop),
         scroll_offset_y,
         |modal| {
+            spawn_modal_resource_strip(modal, ctx, vfx);
             for recipe in &ctx.data.tool_shop {
                 let count = ctx.city.tools.count(recipe.tool);
                 let can_afford = ctx.city.resources.can_afford(&recipe.cost);
                 let c = recipe.cost;
-                let cost_parts = cost_item_lines(i18n, c);
 
                 modal
                     .spawn((
@@ -810,14 +958,7 @@ pub(super) fn spawn_tool_shop_modal(
                                     },
                                     TextColor(COLOR_TEXT_PRIMARY),
                                 ));
-                                info.spawn((
-                                    Text::new(cost_parts.join(i18n.t("ui.separator.pipe"))),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
-                                    },
-                                    TextColor(COLOR_TEXT_MUTED),
-                                ));
+                                spawn_cost_pills(info, i18n, ctx.city.resources, c);
                             });
                         });
 
@@ -858,6 +999,53 @@ pub(super) fn spawn_stats_modal(
         CityAction::ToggleModal(ActiveModal::Stats),
         scroll_offset_y,
         |card| {
+            let bal = &ctx.data.balance;
+            let rank = ctx.city.clan_rank_with_balance(bal);
+            let next_rank_info = match rank {
+                ClanRank::Scout => Some((ClanRank::Huscarl, bal.clan_rank_huscarl_glory)),
+                ClanRank::Huscarl => Some((ClanRank::Jarl, bal.clan_rank_jarl_glory)),
+                ClanRank::Jarl => Some((ClanRank::HighKing, bal.clan_rank_high_king_glory)),
+                ClanRank::HighKing => None,
+            };
+            let rank_line = match next_rank_info {
+                Some((next_r, next_glory)) => i18n.t_fmt(
+                    "city.panel.stats.rank_progress",
+                    &[
+                        ("rank", i18n.t(rank.i18n_key()).to_string()),
+                        ("glory", ctx.city.glory.to_string()),
+                        ("next", next_glory.to_string()),
+                        ("next_rank", i18n.t(next_r.i18n_key()).to_string()),
+                    ],
+                ),
+                None => i18n.t_fmt(
+                    "city.panel.stats.rank_max",
+                    &[
+                        ("rank", i18n.t(rank.i18n_key()).to_string()),
+                        ("glory", ctx.city.glory.to_string()),
+                    ],
+                ),
+            };
+            card.spawn((
+                Node {
+                    padding: UiRect::all(Val::Px(9.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(COLOR_PANEL_CARD),
+                BorderColor(COLOR_ACCENT_GOLD),
+                BorderRadius::all(Val::Px(RADIUS_MD)),
+            ))
+            .with_children(|rbox| {
+                rbox.spawn((
+                    Text::new(rank_line),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_GOLD),
+                ));
+            });
+
             let rows = [
                 i18n.t_fmt(
                     "city.panel.stats.victories",
@@ -943,8 +1131,21 @@ pub(super) fn spawn_settings_modal(
             };
             let bgm_pct = crate::audio::bgm_volume_percent(sound_bank.bgm_volume);
             let sfx_pct = (sound_bank.sfx_volume * 100.0).round() as u32;
+            let vol_bg = if sound_bank.muted {
+                COLOR_BUTTON_DISABLED
+            } else {
+                COLOR_PANEL_CARD
+            };
 
-            // Audio & Language Controls
+            // Section 1: Audio & Language
+            card.spawn((
+                Text::new(i18n.t("city.panel.settings.section_audio")),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+            ));
             card.spawn(Node {
                 column_gap: Val::Px(10.0),
                 row_gap: Val::Px(8.0),
@@ -956,21 +1157,25 @@ pub(super) fn spawn_settings_modal(
                     row,
                     sound_label,
                     CityAction::ToggleAudio,
-                    COLOR_PANEL_CARD,
+                    if sound_bank.muted {
+                        COLOR_BUTTON_DISABLED
+                    } else {
+                        COLOR_ACCENT_TEAL
+                    },
                     true,
                 );
                 spawn_small_button(
                     row,
                     &i18n.t_fmt("city.panel.audio.bgm", &[("pct", bgm_pct.to_string())]),
                     CityAction::CycleBgmVolume,
-                    COLOR_PANEL_CARD,
+                    vol_bg,
                     true,
                 );
                 spawn_small_button(
                     row,
                     &i18n.t_fmt("city.panel.audio.sfx", &[("pct", sfx_pct.to_string())]),
                     CityAction::CycleSfxVolume,
-                    COLOR_PANEL_CARD,
+                    vol_bg,
                     true,
                 );
                 spawn_small_button(
@@ -982,11 +1187,22 @@ pub(super) fn spawn_settings_modal(
                 );
             });
 
-            // Accessibility & Gameplay Speed Controls
+            // Section 2: Accessibility & Speed
+            card.spawn((
+                Text::new(i18n.t("city.panel.settings.section_access")),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+                Node {
+                    margin: UiRect::top(Val::Px(6.0)),
+                    ..default()
+                },
+            ));
             card.spawn(Node {
                 column_gap: Val::Px(10.0),
                 row_gap: Val::Px(8.0),
-                margin: UiRect::top(Val::Px(6.0)),
                 flex_wrap: FlexWrap::Wrap,
                 ..default()
             })
@@ -1038,11 +1254,22 @@ pub(super) fn spawn_settings_modal(
                 );
             });
 
-            // Save JSON Backup Export / Import Controls (2-click confirmation on Import)
+            // Section 3: Save Backup & Navigation (Return to Title separated onto its own footer row)
+            card.spawn((
+                Text::new(i18n.t("city.panel.settings.section_save")),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+                Node {
+                    margin: UiRect::top(Val::Px(6.0)),
+                    ..default()
+                },
+            ));
             card.spawn(Node {
                 column_gap: Val::Px(10.0),
                 row_gap: Val::Px(8.0),
-                margin: UiRect::top(Val::Px(6.0)),
                 flex_wrap: FlexWrap::Wrap,
                 ..default()
             })
@@ -1069,8 +1296,15 @@ pub(super) fn spawn_settings_modal(
                     },
                     true,
                 );
+            });
+            card.spawn(Node {
+                margin: UiRect::top(Val::Px(6.0)),
+                justify_content: JustifyContent::FlexEnd,
+                ..default()
+            })
+            .with_children(|nav_row| {
                 spawn_small_button(
-                    backup_row,
+                    nav_row,
                     i18n.t("city.button.title"),
                     CityAction::BackToTitle,
                     COLOR_PANEL_CARD,
@@ -1286,6 +1520,70 @@ pub(super) fn spawn_raids_modal(
         CityAction::ToggleModal(ActiveModal::Raids),
         scroll_offset_y,
         |modal| {
+            let glory_lbl = i18n.t_fmt(
+                "city.header.mastery",
+                &[("glory", ctx.city.glory.to_string())],
+            );
+            let energy_lbl = i18n.t_fmt(
+                "city.header.energy_full",
+                &[
+                    ("cur", ctx.city.energy.to_string()),
+                    ("max", ctx.city.max_energy(&ctx.data.balance).to_string()),
+                ],
+            );
+            modal
+                .spawn(Node {
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                })
+                .with_children(|hdr| {
+                    hdr.spawn(Node {
+                        column_gap: Val::Px(8.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        ..default()
+                    })
+                    .with_children(|pills| {
+                        spawn_resource_pill(pills, &glory_lbl, COLOR_ACCENT_GOLD);
+                        spawn_resource_pill(pills, &energy_lbl, COLOR_RES_ENERGY);
+                    });
+                    hdr.spawn(Node {
+                        column_gap: Val::Px(6.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        ..default()
+                    })
+                    .with_children(|loadout| {
+                        spawn_small_button(
+                            loadout,
+                            i18n.t(ctx.city.selected_patron.name_key()),
+                            CityAction::CyclePatron,
+                            COLOR_PANEL_CARD,
+                            true,
+                        );
+                        let amulet_lbl = ctx
+                            .city
+                            .equipped_amulet
+                            .as_deref()
+                            .and_then(|id| ctx.data.amulet_by_id(id))
+                            .map(|a| i18n.t(&a.name_key))
+                            .unwrap_or_else(|| i18n.t("city.loadout.amulet_none"));
+                        spawn_small_button(
+                            loadout,
+                            amulet_lbl,
+                            CityAction::CycleAmulet,
+                            if ctx.city.equipped_amulet.is_some() {
+                                COLOR_ACCENT_TEAL
+                            } else {
+                                COLOR_PANEL_CARD
+                            },
+                            true,
+                        );
+                    });
+                });
+
             for boss in &ctx.data.bosses {
                 let unlocked = ctx.city.glory >= boss.required_glory;
                 let slain = ctx.city.defeated_bosses.contains(&boss.id);
@@ -1669,6 +1967,53 @@ pub(super) fn spawn_expedition_boons_modal(
         CityAction::CloseModal,
         scroll_offset_y,
         |modal| {
+            let mut active_parts = Vec::new();
+            if run.extra_moves > 0 {
+                active_parts.push(i18n.t_fmt(
+                    "expedition.boon.moves.desc",
+                    &[("val", run.extra_moves.to_string())],
+                ));
+            }
+            if run.score_bonus_pct > 0 {
+                active_parts.push(i18n.t_fmt(
+                    "expedition.boon.score.desc",
+                    &[("val", run.score_bonus_pct.to_string())],
+                ));
+            }
+            if run.starting_boosters > 0 {
+                active_parts.push(i18n.t_fmt(
+                    "city.panel.expedition.active_boosters",
+                    &[("val", run.starting_boosters.to_string())],
+                ));
+            }
+            if run.fury_headstart > 0 {
+                active_parts.push(i18n.t_fmt(
+                    "expedition.boon.fury.desc",
+                    &[("val", run.fury_headstart.to_string())],
+                ));
+            }
+            if !active_parts.is_empty() {
+                modal
+                    .spawn((
+                        Node {
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: Val::Px(6.0),
+                            row_gap: Val::Px(4.0),
+                            padding: UiRect::all(Val::Px(8.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_CARD),
+                        BorderColor(COLOR_ACCENT_TEAL),
+                        BorderRadius::all(Val::Px(RADIUS_MD)),
+                    ))
+                    .with_children(|strip| {
+                        for part in active_parts {
+                            spawn_resource_pill(strip, &part, COLOR_ACCENT_TEAL_TEXT);
+                        }
+                    });
+            }
+
             for (idx, boon) in run.pending_boons.iter().enumerate() {
                 modal
                     .spawn((
@@ -1768,7 +2113,7 @@ pub(super) fn spawn_login_calendar_modal(
                 TextColor(if available {
                     COLOR_ACCENT_GOLD
                 } else {
-                    COLOR_ACCENT_GREEN
+                    COLOR_ACCENT_GREEN_TEXT
                 }),
             ));
 
@@ -1832,7 +2177,7 @@ pub(super) fn spawn_login_calendar_modal(
                                 TextColor(if is_today {
                                     COLOR_ACCENT_GOLD
                                 } else if is_claimed {
-                                    COLOR_ACCENT_GREEN
+                                    COLOR_ACCENT_GREEN_TEXT
                                 } else {
                                     COLOR_TEXT_PRIMARY
                                 }),
@@ -1846,7 +2191,22 @@ pub(super) fn spawn_login_calendar_modal(
                                             height: Val::Px(32.0),
                                             ..default()
                                         },
-                                        BorderRadius::all(Val::Px(6.0)),
+                                        BorderRadius::all(Val::Px(RADIUS_SM)),
+                                    ));
+                                }
+                                if let Some(recipe) =
+                                    ctx.data.tool_shop.iter().find(|r| r.tool == t)
+                                {
+                                    card.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            &recipe.name_key,
+                                            &[("count", "+1".to_string())],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_SMALL - 1.5,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_TEAL_TEXT),
                                     ));
                                 }
                             }
@@ -1882,14 +2242,14 @@ pub(super) fn spawn_login_calendar_modal(
                     }
                 });
 
-            if available {
-                modal
-                    .spawn(Node {
-                        justify_content: JustifyContent::Center,
-                        margin: UiRect::top(Val::Px(6.0)),
-                        ..default()
-                    })
-                    .with_children(|row| {
+            modal
+                .spawn(Node {
+                    justify_content: JustifyContent::Center,
+                    margin: UiRect::top(Val::Px(6.0)),
+                    ..default()
+                })
+                .with_children(|row| {
+                    if available {
                         spawn_small_button_colored(
                             row,
                             &i18n.t_fmt(
@@ -1901,8 +2261,17 @@ pub(super) fn spawn_login_calendar_modal(
                             COLOR_TEXT_DARK,
                             true,
                         );
-                    });
-            }
+                    } else {
+                        spawn_small_button_colored(
+                            row,
+                            i18n.t("city.chapter.continue"),
+                            CityAction::CloseModal,
+                            COLOR_ACCENT_GOLD,
+                            COLOR_TEXT_DARK,
+                            true,
+                        );
+                    }
+                });
         },
     );
 }
@@ -1918,7 +2287,7 @@ pub(super) fn spawn_chapter_dialogue_modal(
     let Some(dlg) = &ctx.pending_dialogue else {
         return;
     };
-    spawn_modal_shell(
+    spawn_modal_shell_ex(
         root,
         ctx,
         fjord_art,
@@ -1928,6 +2297,8 @@ pub(super) fn spawn_chapter_dialogue_modal(
         i18n.t("city.chapter.continue"),
         CityAction::CloseModal,
         scroll_offset_y,
+        false,
+        false,
         |modal| {
             modal
                 .spawn(Node {
