@@ -507,9 +507,9 @@ pub(super) fn compute_board_layout(
         BOARD_TOP_RESERVED_PX
     };
     let bottom_reserved = if narrow {
-        116.0
+        148.0
     } else if compact {
-        96.0
+        126.0
     } else {
         BOARD_BOTTOM_RESERVED_PX
     };

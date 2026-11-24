@@ -1876,3 +1876,34 @@ fn every_locale_key_is_used_and_every_used_key_exists() {
         missing.join("\n")
     );
 }
+
+#[test]
+fn collect_rune_objectives_are_always_included_in_board_rune_pool() {
+    let data = GameDataBundle::load_bundled(Language::En).unwrap();
+    let mut rng = StdRng::seed_from_u64(4242);
+
+    // Every bundled level's CollectRune objectives must be spawnable on its board.
+    for level in &data.levels {
+        let board = Board::new_for_level(level, &mut rng);
+        for obj in &level.objectives {
+            if let wyrdstone_core::Objective::CollectRune { rune, .. } = obj {
+                let idx = RuneType::ALL.iter().position(|r| r == rune).unwrap();
+                assert!(
+                    idx < board.rune_pool_len(),
+                    "Level {} requires {:?} (index {}), but rune_pool_len is {}",
+                    level.id,
+                    rune,
+                    idx,
+                    board.rune_pool_len()
+                );
+            }
+        }
+    }
+
+    // Even if a level misconfigures rune_types_count = 5 with CollectRune(Water),
+    // Board::new_for_level must auto-expand the rune pool to include Water.
+    let mut misconfigured = data.level_by_id("meadery_1").unwrap().clone();
+    misconfigured.rune_types_count = 5;
+    let board = Board::new_for_level(&misconfigured, &mut rng);
+    assert_eq!(board.rune_pool_len(), 6);
+}

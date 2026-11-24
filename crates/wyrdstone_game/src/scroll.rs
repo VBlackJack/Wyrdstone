@@ -361,6 +361,9 @@ fn max_scroll_y(
     child_nodes: &Query<(&ComputedNode, &GlobalTransform), Without<ScrollablePanel>>,
 ) -> f32 {
     let inv = computed.inverse_scale_factor();
+    if !inv.is_finite() || inv <= 0.0 {
+        return 0.0;
+    }
     let container_bottom = (gtf.translation().y + computed.size().y * 0.5) * inv;
     let mut max_child_bottom = container_bottom;
     if let Some(kids) = children {
@@ -379,7 +382,7 @@ fn max_scroll_y(
 
 /// Maximum scroll offset for a given content overflow: zero when the content fits.
 fn scroll_extent(overflow: f32) -> f32 {
-    if overflow > SCROLL_OVERFLOW_EPSILON_PX {
+    if overflow.is_finite() && overflow > SCROLL_OVERFLOW_EPSILON_PX {
         overflow + SCROLL_BOTTOM_PADDING_PX
     } else {
         0.0
@@ -388,6 +391,9 @@ fn scroll_extent(overflow: f32) -> f32 {
 
 fn point_inside_node(pos: Vec2, computed: &ComputedNode, gtf: &GlobalTransform) -> bool {
     let inv = computed.inverse_scale_factor();
+    if !inv.is_finite() || inv <= 0.0 {
+        return false;
+    }
     let half = computed.size() * inv * 0.5;
     let center = gtf.translation().truncate() * inv;
     let delta = (pos - center).abs();

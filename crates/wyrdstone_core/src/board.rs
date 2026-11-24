@@ -234,7 +234,21 @@ impl Board {
     pub fn new_for_level<R: Rng>(level: &LevelDef, rng: &mut R) -> Self {
         let cols = level.cols;
         let rows = level.rows;
-        let rune_pool_len = level.rune_types_count.clamp(3, RuneType::ALL.len());
+        let required_pool = level
+            .objectives
+            .iter()
+            .filter_map(|obj| match obj {
+                crate::level::Objective::CollectRune { rune, .. } => {
+                    RuneType::ALL.iter().position(|r| r == rune).map(|i| i + 1)
+                }
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        let rune_pool_len = level
+            .rune_types_count
+            .max(required_pool)
+            .clamp(3, RuneType::ALL.len());
         let portals: Vec<(CellPos, CellPos)> = level
             .portals
             .iter()
@@ -356,6 +370,10 @@ impl Board {
 
     pub fn rows(&self) -> usize {
         self.rows
+    }
+
+    pub fn rune_pool_len(&self) -> usize {
+        self.rune_pool_len
     }
 
     fn idx(&self, pos: CellPos) -> usize {

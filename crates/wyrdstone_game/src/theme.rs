@@ -34,7 +34,7 @@ pub const VFX_LARGE_TEX_SIZE: usize = 256;
 
 /// Board layout ratios and spacing constants.
 pub const BOARD_TOP_RESERVED_PX: f32 = 116.0;
-pub const BOARD_BOTTOM_RESERVED_PX: f32 = 104.0;
+pub const BOARD_BOTTOM_RESERVED_PX: f32 = 136.0;
 pub const BOARD_SIDE_MARGIN_PX: f32 = 32.0;
 pub const TILE_GAP_RATIO: f32 = 0.08;
 pub const MAX_TILE_SIZE_PX: f32 = 96.0;

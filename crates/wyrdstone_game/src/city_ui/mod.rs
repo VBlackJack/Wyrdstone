@@ -46,6 +46,24 @@ const HARVEST_POLL_SECS: f32 = 5.0;
 #[derive(Component)]
 pub struct CityRoot;
 
+/// Marker on the Fjord map image container used to compute exact pixel anchor coordinates.
+#[derive(Component)]
+pub struct FjordMapContainer;
+
+/// Stores normalized terrain anchor coordinates (`0..=100%`) and tier scale for resolution-independent placement.
+#[derive(Component)]
+pub struct MapBuildingPin {
+    pub map_x_pct: f32,
+    pub map_y_pct: f32,
+    pub tier_scale: f32,
+}
+
+/// Marker on the building sprite stage inside a `MapBuildingPin` so its size scales proportionally with the map.
+#[derive(Component)]
+pub struct MapBuildingStage {
+    pub tier_scale: f32,
+}
+
 /// Marker on the building pin targeted by the active Saga quest so its border pulses gold.
 #[derive(Component)]
 pub struct QuestBeaconPin;
@@ -135,6 +153,8 @@ pub struct CityLayoutMode {
     pub last_notice_key: Option<String>,
     /// Seconds left before the current notice toast is cleared.
     pub notice_secs_left: f32,
+    pub pending_chapter_delay_secs: f32,
+    pub last_map_size: Vec2,
 }
 
 #[derive(Component)]
@@ -214,6 +234,8 @@ pub fn setup_city_ui(
         just_built_id: None,
         last_notice_key: ctx.status_notice_key.clone(),
         notice_secs_left: NOTICE_TOAST_DURATION_SECS,
+        pending_chapter_delay_secs: 0.0,
+        last_map_size: Vec2::ZERO,
     });
     spawn_city_tree(
         &mut commands,
@@ -980,6 +1002,7 @@ fn spawn_city_tree(
             .with_children(|main| {
                 // Interactive Painted Fjord Map (100% panoramic; clicking empty terrain closes inspector)
                 main.spawn((
+                    FjordMapContainer,
                     Button,
                     NoButtonScale,
                     CityAction::CloseInspector,
@@ -1303,37 +1326,41 @@ fn spawn_map_building_pin(
 
     // Landscape progression: Tier 0 shows a low mossy ruin cairn; Tier 1..=3 raises and grows the real Viking building!
     let tier_scale = match tier {
-        0 => 0.62,
-        1 => 0.86,
-        2 => 1.00,
-        _ => 1.15,
+        0 => 0.56,
+        1 => 0.88,
+        2 => 1.04,
+        _ => 1.20,
     };
-    let pin_w = if is_portrait { 108.0 } else { 146.0 };
-    let base_w = if is_portrait { 72.0 } else { 116.0 };
-    let base_h = if is_portrait { 64.0 } else { 102.0 };
+    let pin_w = if is_portrait { 116.0 } else { 164.0 };
+    let base_w = if is_portrait { 104.0 } else { 176.0 };
+    let base_h = if is_portrait { 92.0 } else { 154.0 };
     let sprite_w = base_w * tier_scale;
     let sprite_h = base_h * tier_scale;
 
-    let nameplate_shadow = if selected || harvest_ready || is_quest_target {
+    let nameplate_shadow = if selected || harvest_ready || is_quest_target || tier >= 3 {
         gold_glow_shadow()
     } else {
         button_shadow()
     };
     let ground_glow_color = if selected || harvest_ready || is_quest_target || is_just_built {
-        Color::srgba(0.96, 0.78, 0.28, 0.56)
+        Color::srgba(0.98, 0.82, 0.30, 0.68)
+    } else if tier >= 3 {
+        Color::srgba(0.98, 0.78, 0.28, 0.48)
     } else if tier >= 2 {
-        Color::srgba(0.95, 0.70, 0.26, 0.26)
+        Color::srgba(0.95, 0.70, 0.26, 0.32)
+    } else if tier == 1 {
+        Color::srgba(0.95, 0.68, 0.24, 0.18)
     } else {
         Color::srgba(0.02, 0.04, 0.08, 0.72)
     };
 
-    let max_left_pct = if is_portrait { 64.0 } else { 76.0 };
-    let max_top_pct = if is_portrait { 54.0 } else { 68.0 };
+    let max_left_pct = if is_portrait { 62.0 } else { 75.0 };
+    let max_top_pct = if is_portrait { 52.0 } else { 64.0 };
     // Portrait pins use explicit coordinates when the building defines them, so that pins
     // never collapse into the same clamped column.
     let pin_left_pct = match (is_portrait, b.portrait_left_pct) {
         (true, Some(left)) => left,
-        _ => (b.map_x_pct - 9.0).clamp(1.0, max_left_pct),
+        _ => (b.map_x_pct - 6.0).clamp(1.0, max_left_pct),
     };
     let pin_top_pct = match (is_portrait, b.portrait_top_pct) {
         (true, Some(top)) => top,
@@ -1341,6 +1368,11 @@ fn spawn_map_building_pin(
     };
 
     map.spawn((
+        MapBuildingPin {
+            map_x_pct: b.map_x_pct,
+            map_y_pct: b.map_y_pct,
+            tier_scale,
+        },
         Button,
         CityAction::SelectBuilding(b.id.clone()),
         Node {
@@ -1357,42 +1389,77 @@ fn spawn_map_building_pin(
     ))
     .with_children(|pin| {
         // Cutout isometric building (or mossy stone ruin at Tier 0) standing directly on the Fjord terrain.
-        pin.spawn(Node {
-            width: Val::Px(sprite_w),
-            height: Val::Px(sprite_h),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::FlexEnd,
-            ..default()
-        })
+        pin.spawn((
+            MapBuildingStage { tier_scale },
+            Node {
+                width: Val::Px(sprite_w),
+                height: Val::Px(sprite_h),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::FlexEnd,
+                ..default()
+            },
+        ))
         .with_children(|stage| {
-            // Soft elliptical ground contact shadow or golden selection halo at the building base.
+            // Soft elliptical ground contact shadow or golden selection/tier halo at the building base.
             stage.spawn((
                 ImageNode::new(vfx.soft_orb.clone()).with_color(ground_glow_color),
                 Node {
                     position_type: PositionType::Absolute,
                     bottom: Val::Px(-4.0),
-                    width: Val::Px(sprite_w * 0.96),
-                    height: Val::Px(sprite_h * 0.36),
+                    width: Val::Percent(106.0),
+                    height: Val::Percent(42.0),
                     ..default()
                 },
                 PickingBehavior::IGNORE,
             ));
 
+            // Warm radiant sanctuary aura behind Tier 2-3 rebuilt buildings so upgrades stand out.
+            if tier >= 2 {
+                let aura_alpha = if tier >= 3 { 0.34 } else { 0.18 };
+                stage.spawn((
+                    ImageNode::new(vfx.soft_orb.clone())
+                        .with_color(Color::srgba(1.0, 0.80, 0.30, aura_alpha)),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(118.0),
+                        height: Val::Percent(105.0),
+                        ..default()
+                    },
+                    PickingBehavior::IGNORE,
+                ));
+            }
+
             if is_just_built {
                 stage.spawn((
                     BuildingBuildRing {
                         elapsed: 0.0,
-                        duration: 0.95,
+                        duration: 1.05,
                     },
                     ImageNode::new(vfx.shockwave_ring.clone())
-                        .with_color(Color::srgba(1.0, 0.86, 0.34, 0.96)),
+                        .with_color(Color::srgba(1.0, 0.86, 0.34, 0.98)),
                     Node {
                         position_type: PositionType::Absolute,
-                        width: Val::Px(sprite_w * 1.45),
-                        height: Val::Px(sprite_w * 1.45),
+                        width: Val::Percent(155.0),
+                        height: Val::Percent(155.0),
                         ..default()
                     },
-                    Transform::from_scale(Vec3::splat(0.35)),
+                    Transform::from_scale(Vec3::splat(0.30)),
+                    PickingBehavior::IGNORE,
+                ));
+                stage.spawn((
+                    BuildingBuildRing {
+                        elapsed: 0.0,
+                        duration: 0.72,
+                    },
+                    ImageNode::new(vfx.shockwave_ring.clone())
+                        .with_color(Color::srgba(0.45, 0.94, 0.82, 0.85)),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(125.0),
+                        height: Val::Percent(125.0),
+                        ..default()
+                    },
+                    Transform::from_scale(Vec3::splat(0.20)),
                     PickingBehavior::IGNORE,
                 ));
             }
@@ -1418,8 +1485,8 @@ fn spawn_map_building_pin(
                         ..default()
                     },
                     Node {
-                        max_width: Val::Percent(100.0),
-                        max_height: Val::Percent(100.0),
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
                         ..default()
                     },
                 ));
@@ -1427,9 +1494,9 @@ fn spawn_map_building_pin(
                     img_cmd.insert((
                         BuildingBuildAnim {
                             elapsed: 0.0,
-                            duration: 0.85,
+                            duration: 0.95,
                         },
-                        Transform::from_scale(Vec3::splat(0.25)),
+                        Transform::from_scale(Vec3::splat(0.20)),
                     ));
                 }
                 img_cmd.with_children(|img_box| {
@@ -1542,6 +1609,31 @@ fn spawn_map_building_pin(
                     COLOR_TEXT_PRIMARY
                 }),
             ));
+            if tier > 0 {
+                plate
+                    .spawn(Node {
+                        column_gap: Val::Px(3.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|srow| {
+                        for idx in 0..b.max_tier {
+                            let filled = idx < tier;
+                            srow.spawn((
+                                ImageNode::new(vfx.icon_star.clone()).with_color(if filled {
+                                    Color::WHITE
+                                } else {
+                                    Color::srgba(0.30, 0.36, 0.46, 0.45)
+                                }),
+                                Node {
+                                    width: Val::Px(13.0),
+                                    height: Val::Px(13.0),
+                                    ..default()
+                                },
+                            ));
+                        }
+                    });
+            }
 
             if harvest_ready {
                 plate
@@ -1953,6 +2045,16 @@ pub fn handle_city_buttons(
         }
     }
 
+    // Open queued Chapter Dialogue after the building rise animation finishes on the map.
+    if layout_mode.pending_chapter_delay_secs > 0.0 {
+        layout_mode.pending_chapter_delay_secs -= time.delta_secs();
+        if layout_mode.pending_chapter_delay_secs <= 0.0 && ctx.pending_dialogue.is_some() {
+            ctx.active_modal = ActiveModal::ChapterDialogue;
+            scroll_mem.modal_offset_y = 0.0;
+            rebuild = true;
+        }
+    }
+
     if layout_mode.last_displayed_energy != ctx.city.energy {
         let max_energy = ctx.city.max_energy(&ctx.data.balance);
         let prev_below = layout_mode.last_displayed_energy < max_energy;
@@ -2346,12 +2448,13 @@ pub fn handle_city_buttons(
                             layout_mode.last_ready_harvests =
                                 count_ready_harvests(&ctx, now_unix_secs());
                             layout_mode.just_built_id = Some(def.id.clone());
+                            // Close inspector so the player watches the building rise cleanly on the Fjord map.
+                            layout_mode.inspector_open = false;
                             if new_tier == 1 && !ctx.city.seen_chapters.contains(&def.id) {
                                 if let Some(dlg) = chapter_dialogue_for_building(&def.id) {
                                     ctx.city.seen_chapters.insert(def.id.clone());
                                     ctx.pending_dialogue = Some(dlg);
-                                    ctx.active_modal = ActiveModal::ChapterDialogue;
-                                    scroll_mem.modal_offset_y = 0.0;
+                                    layout_mode.pending_chapter_delay_secs = 1.15;
                                 }
                             }
                             ctx.persist();
@@ -2717,6 +2820,7 @@ pub fn handle_city_buttons(
     }
 
     if rebuild {
+        layout_mode.last_map_size = Vec2::ZERO;
         for entity in &roots {
             commands.entity(entity).despawn_recursive();
         }
@@ -2739,10 +2843,8 @@ pub fn handle_city_buttons(
 fn chapter_dialogue_for_building(building_id: &str) -> Option<ChapterDialogue> {
     let speaker = match building_id {
         wyrdstone_core::HUB_BUILDING_ID | "watchtower" => "jarl",
-        "forge" => "smith",
-        "longship_dock" => "navigator",
-        "odin_shrine" => "seer",
-        "meadery" => "innkeeper",
+        "forge" | "meadery" => "brokk",
+        "longship_dock" | "odin_shrine" => "volva",
         _ => return None,
     };
     Some(ChapterDialogue {
@@ -2957,6 +3059,63 @@ pub fn animate_city_ambience(
     let beacon_col = Color::srgb(0.95 + 0.05 * glow, 0.72 + 0.25 * glow, 0.24 + 0.45 * glow);
     for mut border in &mut beacon_q {
         border.0 = beacon_col;
+    }
+}
+
+/// Keeps every building's base center anchored to its exact terrain spot across all window resolutions and aspect ratios.
+#[allow(clippy::type_complexity)]
+pub fn sync_map_building_layout(
+    mut layout_mode: ResMut<CityLayoutMode>,
+    map_q: Query<&ComputedNode, With<FjordMapContainer>>,
+    mut pins: Query<(&MapBuildingPin, &mut Node), Without<MapBuildingStage>>,
+    mut stages: Query<(&MapBuildingStage, &mut Node), Without<MapBuildingPin>>,
+) {
+    let Ok(map_computed) = map_q.get_single() else {
+        return;
+    };
+    let inv = map_computed.inverse_scale_factor();
+    if !inv.is_finite() || inv <= 0.0 {
+        return;
+    }
+    let map_w = map_computed.size().x * inv;
+    let map_h = map_computed.size().y * inv;
+    if !map_w.is_finite() || !map_h.is_finite() || map_w < 100.0 || map_h < 100.0 {
+        return;
+    }
+    if (map_w - layout_mode.last_map_size.x).abs() < 1.0
+        && (map_h - layout_mode.last_map_size.y).abs() < 1.0
+    {
+        return;
+    }
+    layout_mode.last_map_size = Vec2::new(map_w, map_h);
+
+    // Scale building dimensions proportionally with the rendered map so pins stay aligned and never collide.
+    let unit = (map_w * 0.125).min(map_h * 0.23).clamp(58.0, 200.0);
+    let pin_w = (unit * 1.04).clamp(112.0, 174.0);
+
+    for (pin, mut node) in &mut pins {
+        let sprite_w = unit * pin.tier_scale;
+        let sprite_h = sprite_w * 0.88;
+        let anchor_x = (pin.map_x_pct / 100.0) * map_w;
+        let anchor_y = (pin.map_y_pct / 100.0) * map_h;
+        let max_left = (map_w - pin_w - 4.0).max(4.0);
+        let max_top = (map_h - sprite_h - 48.0).max(4.0);
+        let target_left = (anchor_x - pin_w * 0.5).clamp(4.0, max_left);
+        let target_top = (anchor_y - sprite_h).clamp(4.0, max_top);
+        if target_left.is_finite() && target_top.is_finite() && pin_w.is_finite() {
+            node.left = Val::Px(target_left);
+            node.top = Val::Px(target_top);
+            node.width = Val::Px(pin_w);
+        }
+    }
+
+    for (stage, mut node) in &mut stages {
+        let target_w = unit * stage.tier_scale;
+        let target_h = target_w * 0.88;
+        if target_w.is_finite() && target_h.is_finite() {
+            node.width = Val::Px(target_w);
+            node.height = Val::Px(target_h);
+        }
     }
 }
 

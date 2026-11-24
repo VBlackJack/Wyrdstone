@@ -840,9 +840,9 @@ pub(super) fn spawn_match3_hud(
                                     padding: if is_compact {
                                         UiRect::axes(Val::Px(6.0), Val::Px(4.0))
                                     } else {
-                                        UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                                        UiRect::axes(Val::Px(8.0), Val::Px(5.0))
                                     },
-                                    column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
+                                    column_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),
                                     align_items: AlignItems::Center,
                                     min_height: Val::Px(MIN_TOUCH_TARGET_PX),
                                     min_width: Val::Px(MIN_TOUCH_TARGET_PX),
@@ -881,7 +881,7 @@ pub(super) fn spawn_match3_hud(
                                 btn.spawn((
                                     Text::new(tool_lbl),
                                     TextFont {
-                                        font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
+                                        font_size: FONT_SMALL,
                                         ..default()
                                     },
                                     TextColor(text_col),

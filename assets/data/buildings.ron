@@ -10,8 +10,8 @@
         level_id: "great_hall_1",
         mastery_level_id: Some("great_hall_2"),
         legendary_level_id: Some("great_hall_3"),
-        map_x_pct: 48.0,
-        map_y_pct: 48.0,
+        map_x_pct: 49.0,
+        map_y_pct: 54.0,
         portrait_left_pct: Some(34.0),
         portrait_top_pct: Some(36.0),
         upgrade_costs: [
@@ -33,8 +33,8 @@
         level_id: "forge_1",
         mastery_level_id: Some("forge_2"),
         legendary_level_id: Some("forge_3"),
-        map_x_pct: 20.0,
-        map_y_pct: 47.0,
+        map_x_pct: 21.0,
+        map_y_pct: 46.0,
         portrait_left_pct: Some(1.0),
         portrait_top_pct: Some(22.0),
         upgrade_costs: [
@@ -56,8 +56,8 @@
         level_id: "dock_1",
         mastery_level_id: Some("dock_2"),
         legendary_level_id: Some("dock_3"),
-        map_x_pct: 73.0,
-        map_y_pct: 56.0,
+        map_x_pct: 73.5,
+        map_y_pct: 61.5,
         portrait_left_pct: Some(67.0),
         portrait_top_pct: Some(34.0),
         upgrade_costs: [
@@ -80,7 +80,7 @@
         mastery_level_id: Some("shrine_2"),
         legendary_level_id: Some("shrine_3"),
         map_x_pct: 18.0,
-        map_y_pct: 72.0,
+        map_y_pct: 77.0,
         portrait_left_pct: Some(1.0),
         portrait_top_pct: Some(50.0),
         upgrade_costs: [
@@ -103,7 +103,7 @@
         mastery_level_id: Some("meadery_2"),
         legendary_level_id: Some("meadery_3"),
         map_x_pct: 76.0,
-        map_y_pct: 78.0,
+        map_y_pct: 83.0,
         portrait_left_pct: Some(67.0),
         portrait_top_pct: Some(60.0),
         upgrade_costs: [
@@ -125,8 +125,8 @@
         level_id: "watchtower_1",
         mastery_level_id: Some("watchtower_2"),
         legendary_level_id: Some("watchtower_3"),
-        map_x_pct: 82.0,
-        map_y_pct: 35.0,
+        map_x_pct: 81.5,
+        map_y_pct: 39.5,
         portrait_left_pct: Some(67.0),
         portrait_top_pct: Some(8.0),
         upgrade_costs: [

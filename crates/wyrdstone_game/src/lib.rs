@@ -59,7 +59,24 @@ pub fn run_app() {
         ..default()
     };
 
-    app.add_plugins(DefaultPlugins.set(window_plugin))
+    let mut default_plugins = DefaultPlugins
+        .set(window_plugin)
+        .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(
+    );
+    #[cfg(target_os = "windows")]
+    {
+        default_plugins = default_plugins.set(bevy::render::RenderPlugin {
+            render_creation: bevy::render::settings::RenderCreation::Automatic(
+                bevy::render::settings::WgpuSettings {
+                    backends: Some(bevy::render::settings::Backends::DX12),
+                    ..default()
+                },
+            ),
+            ..default()
+        });
+    }
+
+    app.add_plugins(default_plugins)
         .insert_resource(ClearColor(COLOR_BG_DEEP))
         .insert_resource(ctx)
         .init_resource::<scroll::UiScrollMemory>()
@@ -108,7 +125,12 @@ pub fn run_app() {
         )
         .add_systems(
             Update,
-            (city_ui::handle_city_buttons, city_ui::animate_city_ambience)
+            (
+                city_ui::handle_city_buttons,
+                city_ui::sync_map_building_layout,
+                city_ui::animate_city_ambience,
+            )
+                .chain()
                 .run_if(in_state(AppState::FjordCity)),
         )
         .add_systems(OnExit(AppState::FjordCity), city_ui::cleanup_city_ui)
