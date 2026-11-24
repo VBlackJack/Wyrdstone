@@ -16,6 +16,9 @@
 
 //! Characterization of the shipped turn resolution (clear order determinism and scenarios S1-S11).
 
+mod support;
+
+use support::{check_scenario, legacy_run, scenario, SCENARIO_COUNT};
 use wyrdstone_core::{
     ActiveTool, Board, Booster, Cell, CellPos, GameDataBundle, Language, MatchStepOutcome, RuneType,
 };
@@ -88,5 +91,75 @@ fn clear_order_is_deterministic_for_a_bifrost_chain() {
         assert_eq!(step.cleared_positions, first_step.cleared_positions);
         assert_eq!(step.cleared_runes, first_step.cleared_runes);
         assert_eq!(step.score_gained, first_step.score_gained);
+    }
+}
+
+/// Replays scenario `n` through the legacy rule calls and checks property, digest and RNG position.
+fn characterize(n: usize) {
+    let run = legacy_run(scenario(n));
+    check_scenario(n, &run);
+}
+
+#[test]
+fn s1_plain_three_match() {
+    characterize(1);
+}
+
+#[test]
+fn s2_two_deep_cascade_scores_and_charges_fury_per_step() {
+    characterize(2);
+}
+
+#[test]
+fn s3_relic_drop_resets_last_combo_to_zero() {
+    characterize(3);
+}
+
+#[test]
+fn s4_boss_crosses_phase_two_mid_cascade() {
+    characterize(4);
+}
+
+#[test]
+fn s5_frost_spreads_before_the_shuffle_check() {
+    characterize(5);
+}
+
+#[test]
+fn s6_curses_tick_on_swaps_not_on_tools() {
+    characterize(6);
+}
+
+#[test]
+fn s7_mjolnir_keeps_moves_and_finalizes_the_turn() {
+    characterize(7);
+}
+
+#[test]
+fn s8_fury_clears_cascade_without_riposte_or_frost_and_support_gods_skip_finalize() {
+    characterize(8);
+}
+
+#[test]
+fn s9_victory_sweep_single_burst_and_capped_skip() {
+    characterize(9);
+}
+
+#[test]
+fn s10_bifrost_and_line_super_combo() {
+    characterize(10);
+}
+
+#[test]
+fn s11_riposte_counts_down_only_on_move_consuming_turns() {
+    characterize(11);
+}
+
+#[test]
+fn scenarios_replay_identically_in_one_process() {
+    for n in 1..=SCENARIO_COUNT {
+        let first = support::digest::digest(&legacy_run(scenario(n)));
+        let second = support::digest::digest(&legacy_run(scenario(n)));
+        assert_eq!(first, second, "scenario S{n} is not reproducible");
     }
 }
