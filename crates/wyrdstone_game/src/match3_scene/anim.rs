@@ -1747,8 +1747,15 @@ pub fn tick_board_animation(
             if input_state.skip_valhalla {
                 input_state.skip_valhalla = false;
                 flush_remaining_bonus_boosters(ctx.as_mut());
-                finalize_level_transition(&mut ctx, &mut next_state);
-                input_state.phase = BoardAnimPhase::Idle;
+                if !finalize_level_transition(
+                    &mut commands,
+                    &mut ctx,
+                    &sound_bank,
+                    &mut input_state,
+                    &mut next_state,
+                ) {
+                    input_state.phase = BoardAnimPhase::Idle;
+                }
                 return;
             }
             elapsed += dt;
@@ -1917,8 +1924,15 @@ pub fn tick_board_animation(
 
             if elapsed >= duration {
                 flush_remaining_bonus_boosters(ctx.as_mut());
-                finalize_level_transition(&mut ctx, &mut next_state);
-                input_state.phase = BoardAnimPhase::Idle;
+                if !finalize_level_transition(
+                    &mut commands,
+                    &mut ctx,
+                    &sound_bank,
+                    &mut input_state,
+                    &mut next_state,
+                ) {
+                    input_state.phase = BoardAnimPhase::Idle;
+                }
             } else {
                 input_state.phase = BoardAnimPhase::VictoryCelebration {
                     elapsed,
@@ -1935,8 +1949,15 @@ pub fn tick_board_animation(
         } => {
             if input_state.skip_valhalla {
                 input_state.skip_valhalla = false;
-                finalize_level_transition(&mut ctx, &mut next_state);
-                input_state.phase = BoardAnimPhase::Idle;
+                if !finalize_level_transition(
+                    &mut commands,
+                    &mut ctx,
+                    &sound_bank,
+                    &mut input_state,
+                    &mut next_state,
+                ) {
+                    input_state.phase = BoardAnimPhase::Idle;
+                }
                 return;
             }
             elapsed += dt;
@@ -1946,8 +1967,15 @@ pub fn tick_board_animation(
                 }
             }
             if elapsed >= duration {
-                finalize_level_transition(&mut ctx, &mut next_state);
-                input_state.phase = BoardAnimPhase::Idle;
+                if !finalize_level_transition(
+                    &mut commands,
+                    &mut ctx,
+                    &sound_bank,
+                    &mut input_state,
+                    &mut next_state,
+                ) {
+                    input_state.phase = BoardAnimPhase::Idle;
+                }
             } else {
                 input_state.phase = BoardAnimPhase::DefeatBeat {
                     elapsed,
@@ -2040,7 +2068,14 @@ fn enter_defeat_beat(
     };
 }
 
-fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<AppState>) {
+/// Returns true when the Match-3 scene transitions in-place to a new stage (e.g. Ragnarok Gauntlet).
+fn finalize_level_transition(
+    commands: &mut Commands,
+    ctx: &mut GameContext,
+    sound_bank: &SoundBank,
+    input_state: &mut Match3InputState,
+    next_state: &mut NextState<AppState>,
+) -> bool {
     let finished = ctx.active_session.as_ref().and_then(|s| match s.outcome {
         LevelOutcome::InProgress => None,
         outcome => Some((
@@ -2052,11 +2087,27 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
             s.earned_stars_with(&ctx.data.balance.session),
             s.boss.as_ref().map(|b| b.def.clone()),
             s.time_left_secs == Some(0.0),
+            s.moves_left,
+            s.fury,
+            s.overdrive_turns_left,
+            s.trial_moves_used(),
         )),
     });
 
-    if let Some((outcome, level_id, building_id, rewards, score, stars, boss_def, timed_out)) =
-        finished
+    if let Some((
+        outcome,
+        level_id,
+        building_id,
+        rewards,
+        score,
+        stars,
+        boss_def,
+        timed_out,
+        moves_left,
+        fury,
+        overdrive_turns,
+        trial_moves_used,
+    )) = finished
     {
         ctx.last_outcome = Some(outcome);
         ctx.last_rewards = rewards;
@@ -2066,13 +2117,81 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
         ctx.last_glory_reward = 0;
         ctx.last_blitz_medal = None;
         ctx.last_blitz_new_best = false;
+        ctx.last_trial_par = None;
+        ctx.last_trial_first_clear = false;
+        ctx.last_gauntlet_stages = None;
         ctx.last_defeat_out_of_time = outcome == LevelOutcome::Defeat && timed_out;
         ctx.city.stats.best_score = ctx.city.stats.best_score.max(score);
         if outcome == LevelOutcome::Victory {
             if ctx.tutorial_step == 1 {
                 ctx.tutorial_step = 2;
             }
-            if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
+            if building_id == wyrdstone_core::GAUNTLET_BUILDING_ID {
+                let has_next = ctx.active_gauntlet.as_mut().is_some_and(|run| {
+                    run.advance_after_stage(moves_left, fury, overdrive_turns, score, rewards)
+                });
+                if has_next {
+                    if let Ok(next_boss_key) = ctx.advance_gauntlet_stage() {
+                        let (stage_num, total_stages, cols, rows) = (
+                            ctx.active_gauntlet
+                                .as_ref()
+                                .map_or(1, |r| r.stage_index + 1),
+                            ctx.active_gauntlet.as_ref().map_or(4, |r| r.total_stages),
+                            ctx.active_session.as_ref().map_or(8, |s| s.board.cols()),
+                            ctx.active_session.as_ref().map_or(8, |s| s.board.rows()),
+                        );
+                        *input_state = Match3InputState {
+                            reduced_motion: ctx.reduced_motion,
+                            is_compact_hud: input_state.is_compact_hud,
+                            dirty_static_board: true,
+                            dirty_board: true,
+                            dirty_hud: true,
+                            ..default()
+                        };
+                        play_sfx(commands, sound_bank, SfxKind::BossRiposte);
+                        spawn_floating_score(
+                            commands,
+                            &[CellPos::new(cols / 2, rows / 2)],
+                            ctx.data.i18n.t_fmt(
+                                "match3.callout.gauntlet_next",
+                                &[
+                                    ("stage", stage_num.to_string()),
+                                    ("total", total_stages.to_string()),
+                                    ("boss", ctx.data.i18n.t(&next_boss_key).to_string()),
+                                    (
+                                        "bonus",
+                                        wyrdstone_core::GAUNTLET_STAGE_BONUS_MOVES.to_string(),
+                                    ),
+                                ],
+                            ),
+                            COLOR_ACCENT_GOLD,
+                            30.0,
+                            input_state,
+                        );
+                        return true;
+                    }
+                }
+                if let Some(run) = ctx.active_gauntlet.take() {
+                    let total = run.total_stages as u32;
+                    let glory = ctx
+                        .city
+                        .record_gauntlet_result(total, true, &run.total_rewards);
+                    ctx.last_rewards = run.total_rewards;
+                    ctx.last_score = run.cumulative_score;
+                    ctx.last_glory_reward = glory;
+                    ctx.last_gauntlet_stages = Some((total, total));
+                }
+            } else if building_id == wyrdstone_core::TRIAL_BUILDING_ID {
+                if let Some(trial) = ctx.data.trial_by_id(&level_id).cloned() {
+                    let (first_clear, hit_par, glory, awarded) =
+                        ctx.city.record_trial_victory(&trial, trial_moves_used);
+                    ctx.last_rewards = awarded;
+                    ctx.last_glory_reward = glory;
+                    ctx.last_trial_par = Some(hit_par);
+                    ctx.last_trial_first_clear = first_clear;
+                    ctx.last_stars = if hit_par { 3 } else { 2 };
+                }
+            } else if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
                 ctx.city
                     .record_expedition_wave(wave, &rewards, &ctx.data.balance);
@@ -2092,7 +2211,7 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
                 ctx.active_modal = ActiveModal::ExpeditionBoons;
                 ctx.persist();
                 next_state.set(AppState::FjordCity);
-                return;
+                return false;
             } else if let Some(boss) = boss_def {
                 ctx.last_glory_reward = boss.glory_reward;
                 ctx.city.record_boss_victory_with_rewards(&boss, &rewards);
@@ -2132,13 +2251,29 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
             if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 ctx.active_expedition = None;
             }
-            ctx.city.reset_win_streak();
+            if building_id == wyrdstone_core::GAUNTLET_BUILDING_ID {
+                if let Some(run) = ctx.active_gauntlet.take() {
+                    let cleared = run.stages_cleared();
+                    let total = run.total_stages as u32;
+                    let glory = ctx
+                        .city
+                        .record_gauntlet_result(cleared, false, &run.total_rewards);
+                    ctx.last_rewards = run.total_rewards;
+                    ctx.last_score = run.cumulative_score;
+                    ctx.last_glory_reward = glory;
+                    ctx.last_gauntlet_stages = Some((cleared, total));
+                }
+            }
+            if building_id != wyrdstone_core::TRIAL_BUILDING_ID {
+                ctx.city.reset_win_streak();
+            }
             ctx.last_discovered_relic_key = None;
         }
         ctx.active_modal = ActiveModal::None;
         ctx.persist();
         next_state.set(AppState::LevelResult);
     }
+    false
 }
 
 #[allow(clippy::type_complexity)]

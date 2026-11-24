@@ -179,6 +179,8 @@ pub enum CityAction {
     PlayDailyTrial,
     StartExpedition,
     StartValhallaBlitz,
+    StartTrial(String),
+    StartGauntlet,
     PickExpeditionBoon(usize),
     ToggleExpeditionOath,
     EndExpedition,
@@ -411,6 +413,20 @@ fn spawn_play_mode_buttons(parent: &mut ChildBuilder, ctx: &GameContext) {
         CityAction::StartValhallaBlitz,
         COLOR_ACCENT_GOLD,
         COLOR_TEXT_DARK,
+        true,
+    );
+    let trials_lbl = i18n.t_fmt(
+        "city.panel.trials.button",
+        &[
+            ("done", ctx.city.completed_trials.len().to_string()),
+            ("total", ctx.data.trials.len().to_string()),
+        ],
+    );
+    spawn_small_button(
+        parent,
+        &trials_lbl,
+        CityAction::ToggleModal(ActiveModal::Trials),
+        COLOR_ACCENT_TEAL,
         true,
     );
 }
@@ -1372,6 +1388,9 @@ fn spawn_city_tree(
                 ActiveModal::Help => modals::spawn_help_modal(root, ctx, fjord_art, vfx, m_scroll),
                 ActiveModal::Raids => {
                     modals::spawn_raids_modal(root, ctx, fjord_art, vfx, m_scroll)
+                }
+                ActiveModal::Trials => {
+                    modals::spawn_trials_modal(root, ctx, fjord_art, vfx, m_scroll)
                 }
                 ActiveModal::Patrons => {
                     modals::spawn_patrons_modal(root, ctx, fjord_art, vfx, m_scroll)
@@ -2502,6 +2521,28 @@ pub fn handle_city_buttons(
                 }
             },
             CityAction::StartValhallaBlitz => match ctx.start_valhalla_blitz() {
+                Ok(()) => {
+                    next_state.set(AppState::Match3);
+                    return;
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                }
+            },
+            CityAction::StartTrial(trial_id) => match ctx.start_trial(trial_id) {
+                Ok(()) => {
+                    next_state.set(AppState::Match3);
+                    return;
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                }
+            },
+            CityAction::StartGauntlet => match ctx.start_gauntlet() {
                 Ok(()) => {
                     next_state.set(AppState::Match3);
                     return;

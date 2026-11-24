@@ -1105,6 +1105,11 @@ impl Board {
         [left, right, up, down].into_iter().flatten()
     }
 
+    /// Returns true when at least one 3+ rune match is currently sitting on the board.
+    pub fn has_pending_matches(&self) -> bool {
+        !self.find_match_groups().is_empty()
+    }
+
     fn find_match_groups(&self) -> Vec<MatchGroup> {
         let mut h_runs: Vec<Vec<CellPos>> = Vec::new();
         let mut v_runs: Vec<Vec<CellPos>> = Vec::new();

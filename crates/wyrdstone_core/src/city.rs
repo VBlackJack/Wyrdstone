@@ -22,8 +22,9 @@ use crate::balance::{
     DEFAULT_DAILY_STREAK_BONUS_PCT_PER_DAY,
 };
 use crate::board::ActiveTool;
-use crate::boss::BossDef;
+use crate::boss::{BossDef, GAUNTLET_CLEAR_GLORY, GAUNTLET_STAGE_PARTIAL_GLORY};
 use crate::patron::PatronGod;
+use crate::trials::{TrialDef, TRIAL_PAR_BONUS_GLORY};
 use crate::turn::ClearStatsDelta;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -391,6 +392,10 @@ pub struct ClanStats {
     pub best_blitz_score: u32,
     #[serde(default)]
     pub blitz_runs_completed: u32,
+    #[serde(default)]
+    pub best_gauntlet_stage: u32,
+    #[serde(default)]
+    pub gauntlets_cleared: u32,
 }
 
 impl ClanStats {
@@ -445,6 +450,10 @@ pub struct CityState {
     pub last_login_claim_day: Option<u64>,
     #[serde(default)]
     pub seen_chapters: HashSet<String>,
+    #[serde(default)]
+    pub completed_trials: HashSet<String>,
+    #[serde(default)]
+    pub par_trials: HashSet<String>,
 }
 
 impl CityState {
@@ -487,6 +496,8 @@ impl CityState {
             login_streak_day: 0,
             last_login_claim_day: None,
             seen_chapters: HashSet::new(),
+            completed_trials: HashSet::new(),
+            par_trials: HashSet::new(),
         }
     }
 
@@ -1360,6 +1371,52 @@ impl CityState {
         self.stats.total_victories = self.stats.total_victories.saturating_add(1);
         self.bump_win_streak();
         (medal, glory, is_new_best)
+    }
+
+    /// Records a Yggdrasil Trial puzzle victory, granting first-clear & first-Par rewards once.
+    /// Returns `(is_first_clear, hit_par, glory_awarded, resources_awarded)`.
+    pub fn record_trial_victory(
+        &mut self,
+        trial: &TrialDef,
+        moves_used: u32,
+    ) -> (bool, bool, u32, ResourceBundle) {
+        let is_first_clear = self.completed_trials.insert(trial.id.clone());
+        let hit_par = moves_used <= trial.par_moves;
+        let is_first_par = hit_par && self.par_trials.insert(trial.id.clone());
+        let mut glory_awarded = 0u32;
+        let mut resources_awarded = ResourceBundle::default();
+        if is_first_clear {
+            resources_awarded.add(&trial.first_clear_rewards);
+            self.resources.add(&trial.first_clear_rewards);
+            glory_awarded = glory_awarded.saturating_add(trial.first_clear_glory);
+        }
+        if is_first_par {
+            glory_awarded = glory_awarded.saturating_add(TRIAL_PAR_BONUS_GLORY);
+        }
+        self.glory = self.glory.saturating_add(glory_awarded);
+        self.stats.total_victories = self.stats.total_victories.saturating_add(1);
+        (is_first_clear, hit_par, glory_awarded, resources_awarded)
+    }
+
+    /// Records the outcome of a Ragnarok Gauntlet boss-rush attempt and returns total Glory awarded.
+    pub fn record_gauntlet_result(
+        &mut self,
+        stages_cleared: u32,
+        full_clear: bool,
+        rewards: &ResourceBundle,
+    ) -> u32 {
+        self.stats.best_gauntlet_stage = self.stats.best_gauntlet_stage.max(stages_cleared);
+        self.resources.add(rewards);
+        let glory = if full_clear {
+            self.stats.gauntlets_cleared = self.stats.gauntlets_cleared.saturating_add(1);
+            self.stats.total_victories = self.stats.total_victories.saturating_add(1);
+            self.bump_win_streak();
+            GAUNTLET_CLEAR_GLORY
+        } else {
+            stages_cleared.saturating_mul(GAUNTLET_STAGE_PARTIAL_GLORY)
+        };
+        self.glory = self.glory.saturating_add(glory);
+        glory
     }
 
     /// Returns the number of unlocked Skalds' Feats ready to claim.

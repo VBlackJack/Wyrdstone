@@ -25,6 +25,18 @@ use serde::{Deserialize, Serialize};
 
 /// Building identifier carried by Mythological Boss Raid levels.
 pub const BOSS_RAID_BUILDING_ID: &str = "boss_raid";
+/// Building identifier carried by Ragnarok Gauntlet boss-rush stages.
+pub const GAUNTLET_BUILDING_ID: &str = "ragnarok_gauntlet";
+/// Starting shared move pool for the 4-boss Ragnarok Gauntlet.
+pub const GAUNTLET_STARTING_MOVES: u32 = 42;
+/// Bonus moves granted after defeating each non-final Gauntlet boss.
+pub const GAUNTLET_STAGE_BONUS_MOVES: u32 = 8;
+/// Boss HP scaling percentage during Ragnarok Gauntlet stages.
+pub const GAUNTLET_HP_SCALE_PCT: u32 = 75;
+/// Grand Glory reward for defeating all bosses in a Ragnarok Gauntlet run.
+pub const GAUNTLET_CLEAR_GLORY: u32 = 150;
+/// Partial Glory reward per cleared boss when a Gauntlet run falls short.
+pub const GAUNTLET_STAGE_PARTIAL_GLORY: u32 = 15;
 /// Number of cells along each side of a boss raid board.
 const BOSS_BOARD_SIZE: usize = 8;
 /// Number of rune types in play during a boss raid.
@@ -305,5 +317,64 @@ impl BossState {
             board.apply_boss_riposte_with(self.active_riposte(), self.tuning.curse_turns, rng);
         self.last_riposte_cells = hit.clone();
         hit
+    }
+}
+
+/// Active state of a 4-boss consecutive Ragnarok Gauntlet rush.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GauntletRun {
+    pub stage_index: usize,
+    pub total_stages: usize,
+    pub moves_left: u32,
+    pub carried_fury: u32,
+    pub carried_overdrive_turns: u32,
+    pub cumulative_score: u32,
+    pub total_rewards: ResourceBundle,
+    pub boss_ids: Vec<String>,
+}
+
+impl GauntletRun {
+    /// Initializes a new Ragnarok Gauntlet sequence across all bundled bosses.
+    pub fn new(bosses: &[BossDef]) -> Self {
+        let boss_ids: Vec<String> = bosses.iter().map(|b| b.id.clone()).collect();
+        let total_stages = boss_ids.len();
+        Self {
+            stage_index: 0,
+            total_stages,
+            moves_left: GAUNTLET_STARTING_MOVES,
+            carried_fury: 0,
+            carried_overdrive_turns: 0,
+            cumulative_score: 0,
+            total_rewards: ResourceBundle::default(),
+            boss_ids,
+        }
+    }
+
+    /// Returns the boss ID for the current Gauntlet stage, if still active.
+    pub fn current_boss_id(&self) -> Option<&str> {
+        self.boss_ids.get(self.stage_index).map(String::as_str)
+    }
+
+    /// Number of bosses already defeated in this run.
+    pub fn stages_cleared(&self) -> u32 {
+        self.stage_index as u32
+    }
+
+    /// Records a cleared Gauntlet boss stage and advances to the next stage if one remains.
+    pub fn advance_after_stage(
+        &mut self,
+        remaining_moves: u32,
+        fury: u32,
+        overdrive_turns: u32,
+        stage_score: u32,
+        stage_rewards: ResourceBundle,
+    ) -> bool {
+        self.cumulative_score = self.cumulative_score.saturating_add(stage_score);
+        self.total_rewards.add(&stage_rewards);
+        self.stage_index = self.stage_index.saturating_add(1);
+        self.carried_fury = fury;
+        self.carried_overdrive_turns = overdrive_turns;
+        self.moves_left = remaining_moves.saturating_add(GAUNTLET_STAGE_BONUS_MOVES);
+        self.stage_index < self.boss_ids.len()
     }
 }

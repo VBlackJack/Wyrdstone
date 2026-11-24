@@ -49,6 +49,7 @@ pub fn validate_bundle(b: &GameDataBundle) -> Result<(), String> {
     check_references(b, &mut problems);
     check_levels(&b.levels, &mut problems);
     check_bosses(b, &mut problems);
+    check_trials(b, &mut problems);
     check_tool_shop(b, &mut problems);
     check_balance(&b.balance, b, &mut problems);
     check_i18n_keys(b, &mut problems);
@@ -96,6 +97,7 @@ fn check_unique_ids(b: &GameDataBundle, problems: &mut Vec<String>) {
         b.achievements.iter().map(|x| x.id.as_str()),
         problems,
     );
+    check_unique("trials", b.trials.iter().map(|x| x.id.as_str()), problems);
 }
 
 fn check_references(b: &GameDataBundle, problems: &mut Vec<String>) {
@@ -346,6 +348,43 @@ fn check_tool_shop(b: &GameDataBundle, problems: &mut Vec<String>) {
     }
 }
 
+fn check_trials(b: &GameDataBundle, problems: &mut Vec<String>) {
+    for trial in &b.trials {
+        if trial.max_moves == 0 {
+            problems.push(format!("trial '{}': max_moves must be positive", trial.id));
+        }
+        if trial.par_moves == 0 || trial.par_moves > trial.max_moves {
+            problems.push(format!(
+                "trial '{}': par_moves {} outside 1..={}",
+                trial.id, trial.par_moves, trial.max_moves
+            ));
+        }
+        if trial.objectives.is_empty() {
+            problems.push(format!(
+                "trial '{}': objectives must not be empty",
+                trial.id
+            ));
+        }
+        match trial.build_board() {
+            Ok(board) => {
+                if board.has_pending_matches() {
+                    problems.push(format!(
+                        "trial '{}': initial board must have no pre-existing matches",
+                        trial.id
+                    ));
+                }
+                if !board.has_valid_moves() {
+                    problems.push(format!(
+                        "trial '{}': initial board must have at least one valid move",
+                        trial.id
+                    ));
+                }
+            }
+            Err(err) => problems.push(err),
+        }
+    }
+}
+
 fn check_i18n_keys(b: &GameDataBundle, problems: &mut Vec<String>) {
     let mut check_key = |owner: &str, key: &str| {
         for lang in [Language::En, Language::Fr] {
@@ -391,6 +430,11 @@ fn check_i18n_keys(b: &GameDataBundle, problems: &mut Vec<String>) {
         let owner = format!("tool_shop '{:?}'", tool.tool);
         check_key(&owner, &tool.name_key);
         check_key(&owner, &tool.desc_key);
+    }
+    for trial in &b.trials {
+        let owner = format!("trial '{}'", trial.id);
+        check_key(&owner, &trial.name_key);
+        check_key(&owner, &trial.hint_key);
     }
 }
 

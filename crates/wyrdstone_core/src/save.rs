@@ -23,6 +23,7 @@ use crate::city::{AmuletDef, BuildingDef, CityState, CollectionDef, QuestDef, To
 use crate::expedition::ExpeditionRun;
 use crate::i18n::{I18nCatalog, Language};
 use crate::level::LevelDef;
+use crate::trials::TrialDef;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -126,6 +127,7 @@ const BUNDLED_COLLECTIONS_RON: &str = include_str!("../../../assets/data/collect
 const BUNDLED_TOOL_SHOP_RON: &str = include_str!("../../../assets/data/tool_shop.ron");
 const BUNDLED_BOSSES_RON: &str = include_str!("../../../assets/data/bosses.ron");
 const BUNDLED_ACHIEVEMENTS_RON: &str = include_str!("../../../assets/data/achievements.ron");
+const BUNDLED_TRIALS_RON: &str = include_str!("../../../assets/data/trials.ron");
 
 /// All static game definitions loaded once at startup.
 #[derive(Debug, Clone)]
@@ -139,6 +141,7 @@ pub struct GameDataBundle {
     pub tool_shop: Vec<ToolRecipeDef>,
     pub bosses: Vec<BossDef>,
     pub achievements: Vec<AchievementDef>,
+    pub trials: Vec<TrialDef>,
     pub i18n: I18nCatalog,
 }
 
@@ -163,6 +166,8 @@ impl GameDataBundle {
             .map_err(|e| format!("Failed to parse bosses.ron: {e}"))?;
         let achievements: Vec<AchievementDef> = ron::from_str(BUNDLED_ACHIEVEMENTS_RON)
             .map_err(|e| format!("Failed to parse achievements.ron: {e}"))?;
+        let trials: Vec<TrialDef> = ron::from_str(BUNDLED_TRIALS_RON)
+            .map_err(|e| format!("Failed to parse trials.ron: {e}"))?;
         let i18n = I18nCatalog::from_json_strs(BUNDLED_EN_JSON, BUNDLED_FR_JSON, initial_language)
             .map_err(|e| format!("Failed to parse locales: {e}"))?;
 
@@ -176,6 +181,7 @@ impl GameDataBundle {
             tool_shop,
             bosses,
             achievements,
+            trials,
             i18n,
         };
         crate::validate::validate_bundle(&bundle)
@@ -201,6 +207,11 @@ impl GameDataBundle {
     /// Finds an amulet definition by its unique identifier.
     pub fn amulet_by_id(&self, id: &str) -> Option<&AmuletDef> {
         self.amulets.iter().find(|a| a.id == id)
+    }
+
+    /// Finds a Yggdrasil Trial puzzle definition by its unique identifier.
+    pub fn trial_by_id(&self, id: &str) -> Option<&TrialDef> {
+        self.trials.iter().find(|t| t.id == id)
     }
 }
 

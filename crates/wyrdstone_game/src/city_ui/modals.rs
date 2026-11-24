@@ -1254,6 +1254,22 @@ pub(super) fn spawn_stats_modal(
                         ("best", st.best_win_streak.to_string()),
                     ],
                 ),
+                i18n.t_fmt(
+                    "city.panel.stats.trials",
+                    &[
+                        ("done", ctx.city.completed_trials.len().to_string()),
+                        ("total", ctx.data.trials.len().to_string()),
+                        ("par", ctx.city.par_trials.len().to_string()),
+                    ],
+                ),
+                i18n.t_fmt(
+                    "city.panel.stats.gauntlet",
+                    &[
+                        ("best", st.best_gauntlet_stage.to_string()),
+                        ("total", ctx.data.bosses.len().to_string()),
+                        ("clears", st.gauntlets_cleared.to_string()),
+                    ],
+                ),
             ];
             for line in rows {
                 card.spawn((
@@ -1776,6 +1792,103 @@ pub(super) fn spawn_raids_modal(
                     });
                 });
 
+            let gauntlet_unlocked = ctx.city.glory >= 50 || !ctx.city.defeated_bosses.is_empty();
+            modal
+                .spawn((
+                    Node {
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Px(12.0)),
+                        column_gap: Val::Px(12.0),
+                        row_gap: Val::Px(8.0),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.20, 0.10, 0.14, 0.96)),
+                    BorderColor(COLOR_ACCENT_GOLD),
+                    BorderRadius::all(Val::Px(10.0)),
+                ))
+                .with_children(|gbox| {
+                    gbox.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        flex_shrink: 1.0,
+                        row_gap: Val::Px(3.0),
+                        ..default()
+                    })
+                    .with_children(|info| {
+                        info.spawn((
+                            Text::new(i18n.t("city.panel.raids.gauntlet_title")),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                        info.spawn((
+                            Text::new(i18n.t_fmt(
+                                "city.panel.raids.gauntlet_desc",
+                                &[
+                                    ("moves", wyrdstone_core::GAUNTLET_STARTING_MOVES.to_string()),
+                                    (
+                                        "bonus",
+                                        wyrdstone_core::GAUNTLET_STAGE_BONUS_MOVES.to_string(),
+                                    ),
+                                    ("glory", wyrdstone_core::GAUNTLET_CLEAR_GLORY.to_string()),
+                                ],
+                            )),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_PRIMARY),
+                        ));
+                        info.spawn((
+                            Text::new(i18n.t_fmt(
+                                "city.panel.raids.gauntlet_stats",
+                                &[
+                                    ("best", ctx.city.stats.best_gauntlet_stage.to_string()),
+                                    ("total", ctx.data.bosses.len().to_string()),
+                                    ("clears", ctx.city.stats.gauntlets_cleared.to_string()),
+                                ],
+                            )),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_TEAL_TEXT),
+                        ));
+                    });
+                    if gauntlet_unlocked {
+                        let glbl = i18n.t_fmt(
+                            "city.panel.raids.gauntlet_enter",
+                            &[("cost", energy_cost.to_string())],
+                        );
+                        spawn_small_button_colored(
+                            gbox,
+                            &glbl,
+                            CityAction::StartGauntlet,
+                            if has_energy {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            if has_energy {
+                                COLOR_TEXT_DARK
+                            } else {
+                                COLOR_TEXT_MUTED
+                            },
+                            has_energy,
+                        );
+                    } else {
+                        spawn_resource_pill(
+                            gbox,
+                            i18n.t("city.panel.raids.gauntlet_locked"),
+                            COLOR_TEXT_MUTED,
+                        );
+                    }
+                });
+
             for boss in &ctx.data.bosses {
                 let unlocked = ctx.city.glory >= boss.required_glory;
                 let slain = ctx.city.defeated_bosses.contains(&boss.id);
@@ -1939,6 +2052,165 @@ pub(super) fn spawn_raids_modal(
                                 COLOR_TEXT_MUTED,
                             );
                         }
+                    });
+            }
+        },
+    );
+}
+
+pub(super) fn spawn_trials_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    scroll_offset_y: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    spawn_modal_shell(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        640.0,
+        i18n.t("city.panel.trials.title"),
+        i18n.t("city.panel.amulets.close"),
+        CityAction::ToggleModal(ActiveModal::Trials),
+        scroll_offset_y,
+        |modal| {
+            modal.spawn((
+                Text::new(i18n.t_fmt(
+                    "city.panel.trials.subtitle",
+                    &[
+                        ("done", ctx.city.completed_trials.len().to_string()),
+                        ("total", ctx.data.trials.len().to_string()),
+                        ("par", ctx.city.par_trials.len().to_string()),
+                    ],
+                )),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_TEAL_TEXT),
+            ));
+
+            for trial in &ctx.data.trials {
+                let cleared = ctx.city.completed_trials.contains(&trial.id);
+                let par_done = ctx.city.par_trials.contains(&trial.id);
+                modal
+                    .spawn((
+                        Node {
+                            flex_wrap: FlexWrap::Wrap,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::all(Val::Px(12.0)),
+                            column_gap: Val::Px(12.0),
+                            row_gap: Val::Px(8.0),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_CARD),
+                        BorderColor(if par_done {
+                            COLOR_ACCENT_GOLD
+                        } else if cleared {
+                            COLOR_ACCENT_GREEN
+                        } else {
+                            COLOR_PANEL_BORDER
+                        }),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|row| {
+                        row.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            flex_shrink: 1.0,
+                            row_gap: Val::Px(3.0),
+                            ..default()
+                        })
+                        .with_children(|info| {
+                            info.spawn((
+                                Text::new(i18n.t(&trial.name_key)),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                            info.spawn((
+                                Text::new(i18n.t(&trial.hint_key)),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                            let meta = i18n.t_fmt(
+                                "city.panel.trials.moves",
+                                &[
+                                    ("par", trial.par_moves.to_string()),
+                                    ("max", trial.max_moves.to_string()),
+                                ],
+                            );
+                            info.spawn((
+                                Text::new(meta),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_TEAL_TEXT),
+                            ));
+                            if par_done {
+                                info.spawn((
+                                    Text::new(i18n.t("city.panel.trials.par_seal")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            } else if cleared {
+                                info.spawn((
+                                    Text::new(i18n.t("city.panel.trials.solved")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GREEN_TEXT),
+                                ));
+                            } else {
+                                info.spawn((
+                                    Text::new(format_reward_summary(
+                                        i18n,
+                                        trial.first_clear_rewards,
+                                        trial.first_clear_glory,
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GREEN_TEXT),
+                                ));
+                            }
+                        });
+
+                        spawn_small_button_colored(
+                            row,
+                            if cleared {
+                                i18n.t("city.panel.trials.replay")
+                            } else {
+                                i18n.t("city.panel.trials.solve")
+                            },
+                            CityAction::StartTrial(trial.id.clone()),
+                            if par_done {
+                                COLOR_PANEL_CARD
+                            } else {
+                                COLOR_ACCENT_TEAL
+                            },
+                            if par_done {
+                                COLOR_TEXT_PRIMARY
+                            } else {
+                                COLOR_TEXT_ON_ACCENT
+                            },
+                            true,
+                        );
                     });
             }
         },

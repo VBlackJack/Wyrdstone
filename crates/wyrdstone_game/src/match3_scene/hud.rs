@@ -197,6 +197,7 @@ pub struct HudShape {
     overdrive_active: bool,
     overdrive_turns_left: u32,
     is_blitz: bool,
+    is_trial: bool,
     blitz_multiplier: u32,
     blitz_frozen: bool,
     blitz_medal: BlitzMedal,
@@ -249,6 +250,7 @@ pub(super) fn hud_shape(
         overdrive_active: session.overdrive_turns_left > 0,
         overdrive_turns_left: session.overdrive_turns_left,
         is_blitz: session.is_blitz,
+        is_trial: session.is_trial,
         blitz_multiplier: session.blitz_multiplier,
         blitz_frozen: session.blitz_freeze_secs > 0.0,
         blitz_medal: if session.is_blitz {
@@ -451,7 +453,23 @@ pub(super) fn spawn_match3_hud(
                                 COLOR_ACCENT_GOLD
                             }),
                         ));
-                        if !session.is_blitz
+                        if session.is_trial {
+                            mbox.spawn((
+                                Text::new(i18n.t_fmt(
+                                    "match3.hud.trial_par",
+                                    &[("par", session.trial_par_moves.to_string())],
+                                )),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                Node {
+                                    margin: UiRect::left(Val::Px(6.0)),
+                                    ..default()
+                                },
+                            ));
+                        } else if !session.is_blitz
                             && session.boss.is_none()
                             && session.level.building_id
                                 != wyrdstone_core::expedition::EXPEDITION_BUILDING_ID
@@ -628,6 +646,22 @@ pub(super) fn spawn_match3_hud(
                                 ..default()
                             })
                             .with_children(|bcol| {
+                                if let Some(run) = &ctx.active_gauntlet {
+                                    bcol.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            "match3.hud.gauntlet_stage",
+                                            &[
+                                                ("cur", (run.stage_index + 1).to_string()),
+                                                ("total", run.total_stages.to_string()),
+                                            ],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_GOLD),
+                                    ));
+                                }
                                 bcol.spawn((
                                     Match3BossHpText,
                                     Text::new(boss_hp_label(
@@ -1065,6 +1099,47 @@ pub(super) fn spawn_match3_hud(
                         ..default()
                     })
                     .with_children(|row| {
+                        if session.is_trial {
+                            let trial_hint = ctx
+                                .data
+                                .trial_by_id(&session.level.id)
+                                .map(|t| i18n.t(&t.hint_key).to_string())
+                                .unwrap_or_default();
+                            if !trial_hint.is_empty() {
+                                row.spawn((
+                                    Text::new(trial_hint),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_PRIMARY),
+                                ));
+                            }
+                            row.spawn((
+                                Button,
+                                Match3UiAction::RestartBoard,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(COLOR_ACCENT_TEAL),
+                                BorderRadius::all(Val::Px(8.0)),
+                            ))
+                            .with_children(|btn| {
+                                btn.spawn((
+                                    Text::new(i18n.t("match3.hud.restart")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_ON_ACCENT),
+                                ));
+                            });
+                            return;
+                        }
                         // Divine Fury Patron button
                         let fury_ready = session.can_trigger_fury();
                         let fury_lbl = fury_label(i18n, session, is_compact);
@@ -1629,6 +1704,7 @@ mod tests {
             overdrive_active: false,
             overdrive_turns_left: 0,
             is_blitz: false,
+            is_trial: false,
             blitz_multiplier: 1,
             blitz_frozen: false,
             blitz_medal: BlitzMedal::None,

@@ -1509,6 +1509,7 @@ pub fn handle_match3_hud_buttons(
     if keys.just_pressed(KeyCode::Space)
         && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
+        && !ctx.active_session.as_ref().is_some_and(|s| s.is_trial)
     {
         if input_state.confirm_retreat || input_state.confirm_loki_shuffle {
             input_state.confirm_retreat = false;
@@ -1528,7 +1529,11 @@ pub fn handle_match3_hud_buttons(
         (KeyCode::Digit6, ActiveTool::LokiShuffle),
     ];
     for (kc, tool) in key_tools {
-        if keys.just_pressed(kc) && input_state.is_idle() && ctx.active_modal != ActiveModal::Help {
+        if keys.just_pressed(kc)
+            && input_state.is_idle()
+            && ctx.active_modal != ActiveModal::Help
+            && !ctx.active_session.as_ref().is_some_and(|s| s.is_trial)
+        {
             if ctx.city.tools.count(tool) > 0 {
                 input_state.confirm_retreat = false;
                 if tool == ActiveTool::LokiShuffle {
@@ -1649,7 +1654,17 @@ pub fn handle_match3_hud_buttons(
                 if was_expedition {
                     ctx.active_expedition = None;
                 }
-                ctx.city.reset_win_streak();
+                if ctx
+                    .active_session
+                    .as_ref()
+                    .is_some_and(|s| s.level.building_id == wyrdstone_core::GAUNTLET_BUILDING_ID)
+                {
+                    ctx.active_gauntlet = None;
+                }
+                let is_trial_retreat = ctx.active_session.as_ref().is_some_and(|s| s.is_trial);
+                if !is_trial_retreat {
+                    ctx.city.reset_win_streak();
+                }
                 ctx.persist();
                 ctx.active_session = None;
                 ctx.armed_tool = None;
@@ -1710,7 +1725,8 @@ pub fn handle_match3_hud_buttons(
                 input_state.dirty_hud = true;
             }
             Match3UiAction::RestartBoard => {
-                if !input_state.confirm_restart {
+                let is_trial_now = ctx.active_session.as_ref().is_some_and(|s| s.is_trial);
+                if !is_trial_now && !input_state.confirm_restart {
                     input_state.confirm_restart = true;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     input_state.dirty_hud = true;
@@ -1718,7 +1734,11 @@ pub fn handle_match3_hud_buttons(
                 }
                 input_state.confirm_restart = false;
                 if let Some(level_id) = ctx.active_level_id.clone() {
-                    let res = if level_id.starts_with("boss_") {
+                    let res = if is_trial_now {
+                        ctx.start_trial(&level_id)
+                    } else if level_id.starts_with("gauntlet_") {
+                        ctx.start_gauntlet()
+                    } else if level_id.starts_with("boss_") {
                         ctx.start_boss_raid(&level_id)
                     } else {
                         ctx.start_level(&level_id)

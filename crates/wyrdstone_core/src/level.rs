@@ -21,12 +21,13 @@ use crate::balance::{
     SessionTuning,
 };
 use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, PreparedClear, RuneType};
-use crate::boss::{BossDef, BossState};
+use crate::boss::{BossDef, BossState, GauntletRun, GAUNTLET_BUILDING_ID, GAUNTLET_HP_SCALE_PCT};
 use crate::city::{AmuletEffect, CityBonuses, DivineSynergy, ResourceBundle, WarDraught};
 use crate::expedition::{ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITION_BUILDING_ID};
 use crate::patron::{
     PatronGod, FURY_CHARGE_MAX, FURY_PER_COMBO_STEP, FURY_PER_OBSTACLE, FURY_PER_TILE,
 };
+use crate::trials::TrialDef;
 use crate::turn::{Turn, TurnStep};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -454,6 +455,8 @@ pub struct LevelSession {
     pub blitz_freeze_secs: f32,
     pub blitz_bonus_time_earned: f32,
     pub blitz_tuning: BlitzTuning,
+    pub is_trial: bool,
+    pub trial_par_moves: u32,
     pub expedition_relics: Vec<ExpeditionRelic>,
     pub daily_blessing: Option<DailyBlessing>,
     pub boss: Option<BossState>,
@@ -774,6 +777,8 @@ impl LevelSession {
             blitz_freeze_secs: 0.0,
             blitz_bonus_time_earned: 0.0,
             blitz_tuning: BlitzTuning::default(),
+            is_trial: false,
+            trial_par_moves: 0,
             expedition_relics: Vec::new(),
             daily_blessing: None,
             boss,
@@ -793,6 +798,112 @@ impl LevelSession {
         session.is_blitz = true;
         session.blitz_tuning = balance.blitz;
         session.apply_session_tuning(&balance.session);
+        session
+    }
+
+    /// Starts a deterministic zero-RNG Yggdrasil Trial puzzle session.
+    pub fn start_trial(trial: &TrialDef, balance: &BalanceConfig) -> Result<Self, String> {
+        let board = trial.build_board()?;
+        let level = trial.to_level_def();
+        let objectives = level
+            .objectives
+            .iter()
+            .map(|obj| {
+                let target = match obj {
+                    Objective::ClearIce { target }
+                    | Objective::CollectRune { target, .. }
+                    | Objective::ReachScore { target }
+                    | Objective::DropRelics { target } => *target,
+                };
+                ObjectiveProgress {
+                    objective: obj.clone(),
+                    done: 0,
+                    target,
+                }
+            })
+            .collect();
+        Ok(Self {
+            initial_moves: trial.max_moves,
+            moves_left: trial.max_moves,
+            time_left_secs: None,
+            level,
+            board,
+            score: 0,
+            score_bonus_pct: 0,
+            resource_bonus_pct: 0,
+            objectives,
+            outcome: LevelOutcome::InProgress,
+            last_combo: 0,
+            last_shuffled: false,
+            turn_ice_broken: 0,
+            last_frost_spread: None,
+            patron: PatronGod::default(),
+            fury: 0,
+            fury_max: FURY_CHARGE_MAX,
+            fury_charge_bonus_pct: 0,
+            fury_resource_bonus_pct: 0,
+            boss_damage_bonus_pct: 0,
+            overdrive_charge: 0,
+            overdrive_max: balance.session.overdrive_charge_max.max(1),
+            overdrive_turns_left: 0,
+            just_triggered_overdrive: false,
+            overdrive_ignited_this_turn: false,
+            session_tuning: SessionTuning {
+                patron_favored_rune_fury_pct: 0,
+                overdrive_turns: 0,
+                ..balance.session
+            },
+            is_blitz: false,
+            blitz_multiplier: 1,
+            blitz_chain_timer_secs: 0.0,
+            blitz_freeze_secs: 0.0,
+            blitz_bonus_time_earned: 0.0,
+            blitz_tuning: BlitzTuning::default(),
+            is_trial: true,
+            trial_par_moves: trial.par_moves,
+            expedition_relics: Vec::new(),
+            daily_blessing: None,
+            boss: None,
+        })
+    }
+
+    /// Number of moves consumed so far in this session.
+    pub fn trial_moves_used(&self) -> u32 {
+        self.initial_moves.saturating_sub(self.moves_left)
+    }
+
+    /// Starts one stage of a 4-boss Ragnarok Gauntlet rush, preserving move pool, Fury, and Overdrive.
+    pub fn start_gauntlet_stage<R: Rng>(
+        run: &GauntletRun,
+        boss_def: &BossDef,
+        balance: &BalanceConfig,
+        amulet: Option<AmuletEffect>,
+        city_bonuses: CityBonuses,
+        patron: PatronGod,
+        rng: &mut R,
+    ) -> Self {
+        let mut scaled_boss = boss_def.clone();
+        scaled_boss.max_hp =
+            ((u64::from(boss_def.max_hp) * u64::from(GAUNTLET_HP_SCALE_PCT)) / 100).max(100) as u32;
+        scaled_boss.max_moves = run.moves_left;
+        let mut level = scaled_boss.to_level_def();
+        level.id = format!("gauntlet_{}_{}", run.stage_index + 1, boss_def.id);
+        level.building_id = GAUNTLET_BUILDING_ID.to_string();
+        let mut session = Self::start_full(
+            level,
+            amulet,
+            city_bonuses,
+            patron,
+            Some(BossState::new_with(scaled_boss, &balance.boss)),
+            rng,
+        );
+        session.apply_session_tuning(&balance.session);
+        if run.stage_index > 0 {
+            session.initial_moves = run.moves_left;
+            session.moves_left = run.moves_left;
+            session.fury = run.carried_fury.min(session.fury_max);
+            session.overdrive_turns_left = run.carried_overdrive_turns;
+        }
         session
     }
 
@@ -949,7 +1060,7 @@ impl LevelSession {
 
     /// Returns true when the Divine Fury gauge is fully charged and ready to unleash.
     pub fn can_trigger_fury(&self) -> bool {
-        self.outcome == LevelOutcome::InProgress && self.fury >= self.fury_max
+        !self.is_trial && self.outcome == LevelOutcome::InProgress && self.fury >= self.fury_max
     }
 
     /// Unleashes the active Patron God's Divine Fury power (free, consumes no move).

@@ -2833,3 +2833,161 @@ fn save_data_deserializes_without_secondary_amulet_or_war_draught() {
     assert!(loaded.city.equipped_amulet_secondary.is_none());
     assert!(loaded.city.active_war_draught.is_none());
 }
+
+#[test]
+fn all_bundled_yggdrasil_trials_are_solvable_within_par() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    assert_eq!(data.trials.len(), 6);
+
+    let solutions: Vec<(&str, Vec<(CellPos, CellPos)>)> = vec![
+        (
+            "trial_bifrost_spark",
+            vec![(CellPos::new(2, 2), CellPos::new(3, 2))],
+        ),
+        (
+            "trial_frost_prison",
+            vec![(CellPos::new(2, 2), CellPos::new(3, 2))],
+        ),
+        (
+            "trial_valkyrie_drop",
+            vec![
+                (CellPos::new(2, 4), CellPos::new(2, 5)),
+                (CellPos::new(5, 4), CellPos::new(5, 5)),
+            ],
+        ),
+        (
+            "trial_chain_breaker",
+            vec![
+                (CellPos::new(2, 0), CellPos::new(2, 1)),
+                (CellPos::new(3, 4), CellPos::new(3, 5)),
+            ],
+        ),
+        (
+            "trial_bomb_nova",
+            vec![(CellPos::new(2, 2), CellPos::new(3, 2))],
+        ),
+        (
+            "trial_allfather_gambit",
+            vec![
+                (CellPos::new(1, 1), CellPos::new(2, 1)),
+                (CellPos::new(5, 4), CellPos::new(5, 5)),
+            ],
+        ),
+    ];
+
+    let mut city = CityState::new(&data.balance);
+    for (trial_id, moves) in solutions {
+        let trial = data
+            .trial_by_id(trial_id)
+            .unwrap_or_else(|| panic!("missing trial '{trial_id}'"));
+        let mut rng = StdRng::seed_from_u64(trial.seed);
+        let mut session =
+            LevelSession::start_trial(trial, &data.balance).expect("trial board builds");
+        for (a, b) in moves {
+            let step = session.play_swap(a, b, &data.balance, &mut rng);
+            assert!(
+                step.valid,
+                "solution swap ({a:?} <-> {b:?}) rejected on {trial_id}"
+            );
+        }
+        assert_eq!(
+            session.outcome,
+            LevelOutcome::Victory,
+            "trial {trial_id} did not reach Victory"
+        );
+        let used = session.trial_moves_used();
+        assert!(
+            used <= trial.par_moves,
+            "trial {trial_id} took {used} moves (par {})",
+            trial.par_moves
+        );
+
+        let (first_clear, hit_par, glory_1, res_1) = city.record_trial_victory(trial, used);
+        assert!(first_clear && hit_par);
+        assert_eq!(
+            glory_1,
+            trial.first_clear_glory + wyrdstone_core::TRIAL_PAR_BONUS_GLORY
+        );
+        assert_eq!(res_1, trial.first_clear_rewards);
+
+        // Replaying already-Par trial grants zero duplicate first-clear rewards.
+        let (first_2, hit_par_2, glory_2, res_2) = city.record_trial_victory(trial, used);
+        assert!(!first_2 && hit_par_2);
+        assert_eq!(glory_2, 0);
+        assert!(res_2.is_zero());
+    }
+    assert_eq!(city.completed_trials.len(), 6);
+    assert_eq!(city.par_trials.len(), 6);
+}
+
+#[test]
+fn ragnarok_gauntlet_advances_all_four_bosses_and_persists_stats() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    let mut run = wyrdstone_core::GauntletRun::new(&data.bosses);
+    assert_eq!(run.total_stages, 4);
+    assert_eq!(run.moves_left, wyrdstone_core::GAUNTLET_STARTING_MOVES);
+
+    let mut rng = StdRng::seed_from_u64(9001);
+    for stage in 0..4 {
+        let boss_id = run.current_boss_id().expect("boss id").to_string();
+        let boss_def = data.boss_by_id(&boss_id).expect("boss def").clone();
+        run.carried_fury = 75;
+        run.carried_overdrive_turns = 2;
+        let session = LevelSession::start_gauntlet_stage(
+            &run,
+            &boss_def,
+            &data.balance,
+            None,
+            city.compute_bonuses(&data.balance),
+            PatronGod::Thor,
+            &mut rng,
+        );
+        if stage > 0 {
+            assert_eq!(session.moves_left, run.moves_left);
+            assert_eq!(session.fury, 75);
+            assert_eq!(session.overdrive_turns_left, 2);
+        }
+        let expected_hp = (boss_def.max_hp * wyrdstone_core::GAUNTLET_HP_SCALE_PCT) / 100;
+        assert_eq!(session.boss.as_ref().expect("boss").def.max_hp, expected_hp);
+
+        let has_next = run.advance_after_stage(
+            run.moves_left.saturating_sub(4),
+            60,
+            1,
+            1_500,
+            ResourceBundle {
+                wood: 25,
+                stone: 25,
+                gold: 25,
+                mead: 10,
+            },
+        );
+        assert_eq!(has_next, stage < 3);
+    }
+
+    let glory = city.record_gauntlet_result(4, true, &run.total_rewards);
+    assert_eq!(glory, wyrdstone_core::GAUNTLET_CLEAR_GLORY);
+    assert_eq!(city.stats.best_gauntlet_stage, 4);
+    assert_eq!(city.stats.gauntlets_cleared, 1);
+    assert_eq!(run.cumulative_score, 6_000);
+}
+
+#[test]
+fn save_data_deserializes_without_trials_or_gauntlet_fields() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let base = SaveData::new_game(&data.balance, Language::En);
+    let mut val = serde_json::to_value(&base).expect("serialize");
+    let city_obj = val["city"].as_object_mut().expect("city map");
+    city_obj.remove("completed_trials");
+    city_obj.remove("par_trials");
+    let stats_obj = city_obj["stats"].as_object_mut().expect("stats map");
+    stats_obj.remove("best_gauntlet_stage");
+    stats_obj.remove("gauntlets_cleared");
+    let json = serde_json::to_string(&val).expect("to string");
+    let loaded: SaveData = serde_json::from_str(&json).expect("backward-compat load");
+    assert!(loaded.city.completed_trials.is_empty());
+    assert!(loaded.city.par_trials.is_empty());
+    assert_eq!(loaded.city.stats.best_gauntlet_stage, 0);
+    assert_eq!(loaded.city.stats.gauntlets_cleared, 0);
+}

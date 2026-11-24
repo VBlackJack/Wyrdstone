@@ -26,8 +26,8 @@ use wyrdstone_core::save::{
     LoadOutcome, ReadOnlyResolution, DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME,
 };
 use wyrdstone_core::{
-    ActiveTool, BalanceConfig, CityState, DailyBlessing, ExpeditionRun, GameDataBundle, Language,
-    LevelOutcome, LevelSession, ResourceBundle, SaveData, HUB_BUILDING_ID,
+    ActiveTool, BalanceConfig, CityState, DailyBlessing, ExpeditionRun, GameDataBundle,
+    GauntletRun, Language, LevelOutcome, LevelSession, ResourceBundle, SaveData, HUB_BUILDING_ID,
 };
 
 /// File name of the primary save inside the platform data directory.
@@ -76,6 +76,7 @@ pub enum ActiveModal {
     Settings,
     Help,
     Raids,
+    Trials,
     Patrons,
     Achievements,
     ExpeditionBoons,
@@ -114,6 +115,7 @@ pub struct GameContext {
     pub active_session: Option<LevelSession>,
     pub active_level_id: Option<String>,
     pub active_expedition: Option<ExpeditionRun>,
+    pub active_gauntlet: Option<GauntletRun>,
     pub armed_tool: Option<ActiveTool>,
     pub last_outcome: Option<LevelOutcome>,
     pub last_rewards: ResourceBundle,
@@ -123,6 +125,9 @@ pub struct GameContext {
     pub last_glory_reward: u32,
     pub last_blitz_medal: Option<wyrdstone_core::BlitzMedal>,
     pub last_blitz_new_best: bool,
+    pub last_trial_par: Option<bool>,
+    pub last_trial_first_clear: bool,
+    pub last_gauntlet_stages: Option<(u32, u32)>,
     pub last_defeat_out_of_time: bool,
     pub open_inspector_on_city_enter: bool,
     pub last_discovered_relic_key: Option<String>,
@@ -305,6 +310,7 @@ impl GameContext {
             active_session: None,
             active_level_id: None,
             active_expedition,
+            active_gauntlet: None,
             armed_tool: None,
             last_outcome: None,
             last_rewards: ResourceBundle::default(),
@@ -314,6 +320,9 @@ impl GameContext {
             last_glory_reward: 0,
             last_blitz_medal: None,
             last_blitz_new_best: false,
+            last_trial_par: None,
+            last_trial_first_clear: false,
+            last_gauntlet_stages: None,
             last_defeat_out_of_time: false,
             open_inspector_on_city_enter: false,
             last_discovered_relic_key: None,
@@ -567,11 +576,15 @@ impl GameContext {
         self.confirm_reset = false;
         self.active_session = None;
         self.active_level_id = None;
+        self.active_gauntlet = None;
         self.armed_tool = None;
         self.last_outcome = None;
         self.last_glory_reward = 0;
         self.last_blitz_medal = None;
         self.last_blitz_new_best = false;
+        self.last_trial_par = None;
+        self.last_trial_first_clear = false;
+        self.last_gauntlet_stages = None;
         self.last_defeat_out_of_time = false;
         self.open_inspector_on_city_enter = false;
         self.pending_dialogue = None;
@@ -620,12 +633,16 @@ impl GameContext {
         self.active_session = None;
         self.active_level_id = None;
         self.active_expedition = None;
+        self.active_gauntlet = None;
         self.last_outcome = None;
         self.last_stars = 0;
         self.last_daily_streak = None;
         self.last_glory_reward = 0;
         self.last_blitz_medal = None;
         self.last_blitz_new_best = false;
+        self.last_trial_par = None;
+        self.last_trial_first_clear = false;
+        self.last_gauntlet_stages = None;
         self.last_defeat_out_of_time = false;
         self.open_inspector_on_city_enter = false;
         self.last_discovered_relic_key = None;
@@ -673,6 +690,7 @@ impl GameContext {
         session
             .apply_daily_blessing_with(DailyBlessing::for_day(day_idx), &self.data.balance.session);
         let consumed_draught = self.apply_loadout_extras(&mut session);
+        self.active_gauntlet = None;
         self.active_level_id = Some(format!("daily_{day_idx}"));
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -700,6 +718,7 @@ impl GameContext {
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.active_gauntlet = None;
         self.active_level_id = Some(wyrdstone_core::BLITZ_BUILDING_ID.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -730,6 +749,7 @@ impl GameContext {
         session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.active_gauntlet = None;
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -763,6 +783,7 @@ impl GameContext {
         session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.active_gauntlet = None;
         self.active_level_id = Some(boss_id.to_string());
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
@@ -792,6 +813,7 @@ impl GameContext {
             );
             session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
             let consumed_draught = self.apply_loadout_extras(&mut session);
+            self.active_gauntlet = None;
             self.active_level_id = Some(session.level.id.clone());
             self.active_session = Some(session);
             self.active_modal = ActiveModal::None;
@@ -824,6 +846,7 @@ impl GameContext {
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.active_gauntlet = None;
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
         self.active_session = Some(session);
@@ -857,6 +880,7 @@ impl GameContext {
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.active_gauntlet = None;
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
         self.active_session = Some(session);
@@ -865,6 +889,104 @@ impl GameContext {
         self.status_notice_key = None;
         self.persist();
         Ok(())
+    }
+
+    /// Launches a deterministic zero-RNG Yggdrasil Trial puzzle (0 Endurance, deterministic refills).
+    pub fn start_trial(&mut self, trial_id: &str) -> Result<(), &'static str> {
+        let Some(trial) = self.data.trial_by_id(trial_id).cloned() else {
+            return Err("city.error.level_not_found");
+        };
+        let Ok(session) = LevelSession::start_trial(&trial, &self.data.balance) else {
+            return Err("city.error.level_not_found");
+        };
+        self.rng = StdRng::seed_from_u64(trial.seed);
+        self.active_expedition = None;
+        self.active_gauntlet = None;
+        self.active_level_id = Some(trial.id);
+        self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
+        self.armed_tool = None;
+        self.status_notice_key = None;
+        Ok(())
+    }
+
+    /// Launches the 4-boss Ragnarok Gauntlet rush, consuming 1 Endurance.
+    pub fn start_gauntlet(&mut self) -> Result<(), &'static str> {
+        if self.city.glory < 50 && self.city.defeated_bosses.is_empty() {
+            return Err("city.panel.raids.gauntlet_locked");
+        }
+        if !self.city.try_spend_energy(&self.data.balance) {
+            return Err("city.error.not_enough_energy");
+        }
+        let run = GauntletRun::new(&self.data.bosses);
+        let Some(boss_id) = run.current_boss_id() else {
+            return Err("city.error.level_not_found");
+        };
+        let Some(boss_def) = self.data.boss_by_id(boss_id).cloned() else {
+            return Err("city.error.level_not_found");
+        };
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
+        let mut session = LevelSession::start_gauntlet_stage(
+            &run,
+            &boss_def,
+            &self.data.balance,
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            &mut self.rng,
+        );
+        session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        self.apply_loadout_extras(&mut session);
+        self.active_level_id = Some(session.level.id.clone());
+        self.active_gauntlet = Some(run);
+        self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
+        self.armed_tool = None;
+        self.status_notice_key = None;
+        self.persist();
+        Ok(())
+    }
+
+    /// Launches the next boss stage of an active Ragnarok Gauntlet without leaving Match-3.
+    pub fn advance_gauntlet_stage(&mut self) -> Result<String, &'static str> {
+        let Some(run) = self.active_gauntlet.as_ref() else {
+            return Err("city.error.level_not_found");
+        };
+        let Some(boss_id) = run.current_boss_id() else {
+            return Err("city.error.level_not_found");
+        };
+        let Some(boss_def) = self.data.boss_by_id(boss_id).cloned() else {
+            return Err("city.error.level_not_found");
+        };
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
+        let mut session = LevelSession::start_gauntlet_stage(
+            run,
+            &boss_def,
+            &self.data.balance,
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            &mut self.rng,
+        );
+        session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        if let Some(extra) = self.city.secondary_amulet_effect(&self.data.amulets) {
+            if !matches!(extra, wyrdstone_core::AmuletEffect::ExtraMoves(_)) {
+                session.apply_extra_amulet_effect(extra, &mut self.rng);
+            }
+        }
+        let synergies = self.city.active_synergies();
+        for &syn in &synergies {
+            if !matches!(syn, wyrdstone_core::DivineSynergy::TricksterTempo) {
+                session.apply_synergies(&[syn], &mut self.rng);
+            }
+        }
+        self.active_level_id = Some(session.level.id.clone());
+        self.active_session = Some(session);
+        self.armed_tool = None;
+        self.persist();
+        Ok(boss_def.name_key)
     }
 }
 
@@ -1137,6 +1259,7 @@ mod read_only_notice_tests {
             active_session: None,
             active_level_id: None,
             active_expedition: None,
+            active_gauntlet: None,
             armed_tool: None,
             last_outcome: None,
             last_rewards: ResourceBundle::default(),
@@ -1146,6 +1269,9 @@ mod read_only_notice_tests {
             last_glory_reward: 0,
             last_blitz_medal: None,
             last_blitz_new_best: false,
+            last_trial_par: None,
+            last_trial_first_clear: false,
+            last_gauntlet_stages: None,
             last_defeat_out_of_time: false,
             open_inspector_on_city_enter: false,
             last_discovered_relic_key: None,

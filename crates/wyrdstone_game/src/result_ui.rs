@@ -102,9 +102,20 @@ pub(crate) fn star_threshold_hint_args(
 
 fn find_next_level_id(ctx: &GameContext) -> Option<String> {
     let cur_id = ctx.active_level_id.as_deref()?;
+    if cur_id.starts_with("trial_") {
+        let cur_idx = ctx.data.trials.iter().position(|t| t.id == cur_id)?;
+        return ctx
+            .data
+            .trials
+            .iter()
+            .skip(cur_idx + 1)
+            .map(|t| t.id.clone())
+            .next();
+    }
     if cur_id.starts_with("daily_")
         || cur_id.starts_with("boss_")
         || cur_id.starts_with("expedition_")
+        || cur_id.starts_with("gauntlet_")
         || cur_id == wyrdstone_core::BLITZ_BUILDING_ID
     {
         return None;
@@ -384,6 +395,41 @@ fn spawn_result_ui(
                                                     TextColor(COLOR_ACCENT_GREEN_TEXT),
                                                 ));
                                             }
+                                        } else if let Some(hit_par) = ctx.last_trial_par {
+                                            let badge_key = if hit_par {
+                                                "result.trial.par_achieved"
+                                            } else {
+                                                "result.trial.par_missed"
+                                            };
+                                            card.spawn((
+                                                Text::new(i18n.t(badge_key)),
+                                                TextFont {
+                                                    font_size: FONT_BODY,
+                                                    ..default()
+                                                },
+                                                TextColor(if hit_par {
+                                                    COLOR_ACCENT_GOLD
+                                                } else {
+                                                    COLOR_ACCENT_TEAL_TEXT
+                                                }),
+                                            ));
+                                        } else if let Some((reached, total)) =
+                                            ctx.last_gauntlet_stages
+                                        {
+                                            card.spawn((
+                                                Text::new(i18n.t_fmt(
+                                                    "result.gauntlet.cleared",
+                                                    &[
+                                                        ("cur", reached.to_string()),
+                                                        ("total", total.to_string()),
+                                                    ],
+                                                )),
+                                                TextFont {
+                                                    font_size: FONT_BODY,
+                                                    ..default()
+                                                },
+                                                TextColor(COLOR_ACCENT_GOLD),
+                                            ));
                                         } else if let Some(session) = &ctx.active_session {
                                             if ctx.last_stars >= 3 {
                                                 card.spawn((
@@ -1000,8 +1046,12 @@ fn spawn_result_ui(
                                         }
                                     });
 
+                                    let is_trial = ctx
+                                        .active_level_id
+                                        .as_deref()
+                                        .is_some_and(|id| id.starts_with("trial_"));
                                     let primary_is_next = is_victory && next_level_id.is_some();
-                                    let replay_free = is_daily;
+                                    let replay_free = is_daily || is_trial;
                                     let replay_ok = can_replay && (replay_free || has_energy);
                                     let primary_is_replay = !is_victory && replay_ok;
                                     let primary_is_fjord = !primary_is_next && !primary_is_replay;
@@ -1016,26 +1066,30 @@ fn spawn_result_ui(
                                     })
                                     .with_children(|row| {
                                         if let Some(next_id) = next_level_id {
-                                            let next_lbl = i18n.t_fmt(
-                                                "result.button.next_level",
-                                                &[("cost", energy_cost.to_string())],
-                                            );
+                                            let next_ok = is_trial || has_energy;
+                                            let next_lbl = if is_trial {
+                                                i18n.t("result.button.next_trial").to_string()
+                                            } else {
+                                                i18n.t_fmt(
+                                                    "result.button.next_level",
+                                                    &[("cost", energy_cost.to_string())],
+                                                )
+                                            };
                                             spawn_result_btn(
                                                 row,
                                                 &next_lbl,
-                                                has_energy
-                                                    .then_some(ResultAction::NextLevel(next_id)),
-                                                if has_energy {
+                                                next_ok.then_some(ResultAction::NextLevel(next_id)),
+                                                if next_ok {
                                                     COLOR_ACCENT_GREEN
                                                 } else {
                                                     COLOR_BUTTON_DISABLED
                                                 },
-                                                if has_energy {
+                                                if next_ok {
                                                     COLOR_TEXT_ON_ACCENT
                                                 } else {
                                                     COLOR_TEXT_MUTED
                                                 },
-                                                primary_is_next && has_energy,
+                                                primary_is_next && next_ok,
                                             );
                                         }
                                         spawn_result_btn(
@@ -1214,6 +1268,10 @@ fn try_replay_active_level(ctx: &mut GameContext) -> Result<(), &'static str> {
         } else {
             Err("city.panel.daily.done")
         }
+    } else if level_id.starts_with("trial_") {
+        ctx.start_trial(&level_id)
+    } else if level_id.starts_with("gauntlet_") {
+        ctx.start_gauntlet()
     } else if level_id.starts_with("boss_") {
         ctx.start_boss_raid(&level_id)
     } else if level_id.starts_with("expedition_") {
@@ -1236,7 +1294,12 @@ fn execute_result_action(
             false
         }
         ResultAction::NextLevel(next_id) => {
-            match ctx.start_level(next_id) {
+            let res = if next_id.starts_with("trial_") {
+                ctx.start_trial(next_id)
+            } else {
+                ctx.start_level(next_id)
+            };
+            match res {
                 Ok(()) => {
                     next_state.set(AppState::Match3);
                 }
@@ -1357,8 +1420,12 @@ pub fn handle_result_buttons(
         }
         *focus_idx = None;
         let has_energy = ctx.city.energy >= ctx.data.balance.energy_cost_per_level;
+        let is_trial = ctx
+            .active_level_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("trial_"));
         if ctx.last_outcome == Some(LevelOutcome::Victory) {
-            if has_energy {
+            if has_energy || is_trial {
                 if let Some(next_id) = find_next_level_id(&ctx) {
                     execute_result_action(
                         &ResultAction::NextLevel(next_id),
@@ -1374,7 +1441,7 @@ pub fn handle_result_buttons(
                 .as_deref()
                 .is_some_and(|id| id.starts_with("daily_"));
             let can_replay = !is_daily || ctx.city.is_daily_available(today_day_index());
-            if can_replay && (is_daily || has_energy) {
+            if can_replay && (is_daily || is_trial || has_energy) {
                 execute_result_action(&ResultAction::Replay, &mut ctx, &mut next_state);
                 return;
             }

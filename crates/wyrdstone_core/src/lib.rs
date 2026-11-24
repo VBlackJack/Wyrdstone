@@ -27,6 +27,7 @@ pub mod level;
 pub mod patron;
 pub mod save;
 pub mod text;
+pub mod trials;
 pub mod turn;
 pub mod validate;
 
@@ -37,7 +38,11 @@ pub use balance::{
 pub use board::{
     ActiveTool, Board, Booster, Cell, CellPos, FallMove, MatchStepOutcome, PreparedClear, RuneType,
 };
-pub use boss::{BossDef, BossRiposteKind, BossState, BOSS_RAID_BUILDING_ID};
+pub use boss::{
+    BossDef, BossRiposteKind, BossState, GauntletRun, BOSS_RAID_BUILDING_ID, GAUNTLET_BUILDING_ID,
+    GAUNTLET_CLEAR_GLORY, GAUNTLET_HP_SCALE_PCT, GAUNTLET_STAGE_BONUS_MOVES,
+    GAUNTLET_STAGE_PARTIAL_GLORY, GAUNTLET_STARTING_MOVES,
+};
 pub use city::{
     validate_city_content, AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats,
     CollectionDef, DivineSynergy, QuestCondition, QuestDef, ResourceBundle, ToolInventory,
@@ -57,6 +62,7 @@ pub use text::{
     format_achievement_desc, format_blessing_desc, format_boon_desc, format_boss_desc,
     format_building_bonus, format_patron_desc, format_rank_perk,
 };
+pub use trials::{TrialDef, TRIAL_BUILDING_ID, TRIAL_PAR_BONUS_GLORY};
 pub use turn::{
     BonusBlast, BossHit, ClearPreview, ClearReport, ClearStatsDelta, FuryOutcome, RelicReport,
     SwapRejected, ToolRejected, Turn, TurnEnd, TurnOrigin, TurnStep, VICTORY_SKIP_MAX_DETONATIONS,
