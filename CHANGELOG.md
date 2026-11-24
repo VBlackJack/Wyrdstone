@@ -21,7 +21,12 @@ All notable changes to Wyrdstone are documented in this file.
 - **Data-Driven Gameplay Tuning**: Login tribute table, daily streak scaling and tools, win-streak boosters, clan rank perks, building bonuses and upgrade perks, amulet tier steps, mastery ladder, star thresholds, daily blessings, patron fury values, Daily Trial generation, Endless Expedition pacing and boons, and boss damage/phase/curse tuning now live in `balance.ron` and the content RON files; achievements declare their unlock condition in `achievements.ron`. Bundled data is validated at startup (cross-references, ranges, reserved ids), and golden tests pin the previous numbers so the move changed no value.
 - **Externalized RON Data**: Moved Skalds' Feats (`achievements.ron`), Clan Rank thresholds (`balance.ron`), and per-building passive harvest yields (`buildings.ron`) out of Rust code.
 
+### Changed
+- **Single Turn Engine**: Match-3 turn resolution (swaps, tools, Divine Fury, cascades, relic drops, end-of-turn hooks, victory boosters) now runs through one step machine in `wyrdstone_core`; the animation layer only plays its steps. A differential fuzz against the previous behaviour proves the move changed no rule. Clear order is now deterministic.
+
 ### Fixed
+- **Fjord Map Buildings**: Buildings fill their sprite box again and stay anchored to their terrain spot on every window size; rebuilt buildings show their tier stars and the chapter dialogue opens after the rise animation.
+- **Board Clearance**: More space is reserved under the Match-3 board so the tool bar no longer overlaps it.
 - **Unwinnable Content**: `meadery_1` now targets a rune that actually spawns; Expedition wave 1 only targets runes inside its pool; Daily Trial relics never land on blocked cells. Data-feasibility tests cover every bundled level, a full year of dailies, and Expedition waves.
 - **Board Dead-Ends**: The shuffle fallback is verified, swaps must form a match involving a swapped cell (hints agree), and unshufflable boards are regenerated instead of soft-locking.
 - **Save Safety**: An unreadable save is never overwritten: it is copied aside, the `.bak` is tried, and the session stays read-only (with a persistent warning) while the original could still load. Saves are fsynced and a rotating `.bak` is kept.
