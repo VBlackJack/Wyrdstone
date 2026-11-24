@@ -177,6 +177,7 @@ enum Stage {
 }
 
 /// Cursor over one turn. Never dropped before it reports [`TurnStep::Ended`].
+#[must_use = "a turn must be advanced until it reports TurnStep::Ended"]
 #[derive(Debug, Clone)]
 pub struct Turn {
     consumes_turn: bool,
@@ -506,12 +507,10 @@ impl Turn {
             curse_hits = session.tick_cursed_runes_if_needed();
             let hits = session.tick_boss_riposte_if_needed(rng);
             if !hits.is_empty() {
-                let name_key = session
+                riposte = session
                     .boss
                     .as_ref()
-                    .map(|boss| boss.def.name_key.clone())
-                    .unwrap_or_default();
-                riposte = Some((hits, name_key));
+                    .map(|boss| (hits, boss.def.name_key.clone()));
             }
         }
         // The shuffle check is unconditional, even for tool and fury turns.

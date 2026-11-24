@@ -203,6 +203,35 @@ type ShimmerQuery<'w, 's> = Query<
 
 const MAX_FLYING_ORBS_PER_WAVE: usize = 10;
 
+/// Multiplier applied to the clear animation duration when boosters fire in the same clear.
+const BOOSTER_CLEAR_DURATION_FACTOR: f32 = 1.85;
+/// Base duration of the victory celebration, in seconds, before the per-booster bonus.
+const VICTORY_BASE_SECS: f32 = 2.5;
+/// Extra celebration seconds added per remaining booster converted at level end.
+const VICTORY_SECS_PER_BOOSTER: f32 = 0.62;
+/// Upper bound of the victory celebration duration, in seconds.
+const VICTORY_MAX_SECS: f32 = 7.5;
+/// Delay before the first victory burst, in seconds.
+const VICTORY_FIRST_BURST_DELAY_SECS: f32 = 0.32;
+/// Delay between consecutive victory bursts, in seconds.
+const VICTORY_BURST_INTERVAL_SECS: f32 = 0.58;
+/// Minimum combo count that earns the first combo callout.
+const COMBO_TIER_2: u32 = 2;
+/// Combo count of the second combo callout tier.
+const COMBO_TIER_3: u32 = 3;
+/// Combo count of the third combo callout tier.
+const COMBO_TIER_4: u32 = 4;
+/// Combo count from which the top combo callout tier applies.
+const COMBO_TIER_5: u32 = 5;
+/// Score popup font size without a combo.
+const COMBO_POPUP_SIZE_BASE: f32 = 24.0;
+/// Score popup font size at combo tier 2.
+const COMBO_POPUP_SIZE_TIER_2: f32 = 28.0;
+/// Score popup font size at combo tier 3.
+const COMBO_POPUP_SIZE_TIER_3: f32 = 32.0;
+/// Score popup font size at combo tier 4 and above.
+const COMBO_POPUP_SIZE_TOP: f32 = 36.0;
+
 /// Spawns curved Bezier energy orbs flying from cleared tiles up to the HUD objectives or Boss bar.
 #[allow(clippy::too_many_arguments)]
 fn spawn_flying_orbs(
@@ -979,7 +1008,7 @@ pub fn tick_board_animation(
                         let base_clear = if preview.fired_boosters.is_empty() {
                             ctx.data.balance.clear_anim_seconds
                         } else {
-                            ctx.data.balance.clear_anim_seconds * 1.85
+                            ctx.data.balance.clear_anim_seconds * BOOSTER_CLEAR_DURATION_FACTOR
                         };
                         let cleared_set: HashSet<CellPos> =
                             preview.prepared.cells.iter().copied().collect();
@@ -1234,13 +1263,13 @@ pub fn tick_board_animation(
                 }
                 if gained_score > 0 {
                     let i18n = &ctx.data.i18n;
-                    let popup_label = if combo >= 5 {
+                    let popup_label = if combo >= COMBO_TIER_5 {
                         i18n.t_fmt("match3.callout.combo5", &[("combo", combo.to_string())])
-                    } else if combo == 4 {
+                    } else if combo == COMBO_TIER_4 {
                         i18n.t_fmt("match3.callout.combo4", &[("combo", combo.to_string())])
-                    } else if combo == 3 {
+                    } else if combo == COMBO_TIER_3 {
                         i18n.t_fmt("match3.callout.combo3", &[("combo", combo.to_string())])
-                    } else if combo == 2 {
+                    } else if combo == COMBO_TIER_2 {
                         i18n.t_fmt(
                             "match3.callout.combo2",
                             &[("score", gained_score.to_string())],
@@ -1248,16 +1277,16 @@ pub fn tick_board_animation(
                     } else {
                         i18n.t_fmt("match3.popup.score", &[("n", gained_score.to_string())])
                     };
-                    let popup_color = if combo >= 2 {
+                    let popup_color = if combo >= COMBO_TIER_2 {
                         COLOR_ACCENT_GOLD
                     } else {
                         COLOR_TEXT_PRIMARY
                     };
                     let popup_size = match combo {
-                        0 | 1 => 24.0,
-                        2 => 28.0,
-                        3 => 32.0,
-                        _ => 36.0,
+                        c if c < COMBO_TIER_2 => COMBO_POPUP_SIZE_BASE,
+                        COMBO_TIER_2 => COMBO_POPUP_SIZE_TIER_2,
+                        COMBO_TIER_3 => COMBO_POPUP_SIZE_TIER_3,
+                        _ => COMBO_POPUP_SIZE_TOP,
                     };
                     spawn_floating_score(
                         &mut commands,
@@ -1497,13 +1526,16 @@ pub fn tick_board_animation(
                                     Transform::from_xyz(0.0, 10.0, Z_SELECTION_RING + 3.0),
                                 ));
                                 let victory_secs = ctx.anim_duration(
-                                    (2.5 + end.remaining_boosters as f32 * 0.62).min(7.5),
+                                    (VICTORY_BASE_SECS
+                                        + end.remaining_boosters as f32 * VICTORY_SECS_PER_BOOSTER)
+                                        .min(VICTORY_MAX_SECS),
                                 );
                                 input_state.dirty_hud = true;
                                 input_state.phase = BoardAnimPhase::VictoryCelebration {
                                     elapsed: 0.0,
                                     duration: victory_secs,
-                                    next_burst_at: ctx.anim_duration(0.32),
+                                    next_burst_at: ctx
+                                        .anim_duration(VICTORY_FIRST_BURST_DELAY_SECS),
                                     burst_index: 0,
                                 };
                             }
@@ -1577,7 +1609,7 @@ pub fn tick_board_animation(
                 };
 
                 if let Some(blast) = blast {
-                    next_burst_at += ctx.anim_duration(0.58);
+                    next_burst_at += ctx.anim_duration(VICTORY_BURST_INTERVAL_SECS);
                     let b_pos = blast.pos;
                     let b_kind = blast.booster;
                     let gained_pts = blast.score_raw;

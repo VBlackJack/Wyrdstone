@@ -1031,6 +1031,7 @@ fn start_tool_turn(
     let valid = ctx
         .active_session
         .as_ref()
+        .filter(|s| s.outcome == LevelOutcome::InProgress)
         .and_then(|s| s.board.prepare_tool_step(tool, cell))
         .is_some();
     if !valid {

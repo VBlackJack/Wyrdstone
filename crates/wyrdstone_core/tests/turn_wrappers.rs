@@ -249,14 +249,6 @@ fn board_helper_digests() -> Vec<(String, u64)> {
     out
 }
 
-#[test]
-#[ignore = "prints the digests to pin"]
-fn capture_board_helper_digests() {
-    for (label, digest) in board_helper_digests() {
-        println!("DIGEST {label} {digest:#018x}");
-    }
-}
-
 fn drain(session: &mut LevelSession, mut turn: Turn, rng: &mut StdRng) -> MatchStepOutcome {
     let balance = &bundled().balance;
     let mut total = MatchStepOutcome::default();
@@ -621,6 +613,21 @@ const BOARD_HELPER_DIGESTS: &[u64] = &[
 
 #[test]
 fn board_helpers_are_unchanged() {
-    let got: Vec<u64> = board_helper_digests().into_iter().map(|(_, d)| d).collect();
-    assert_eq!(got.as_slice(), BOARD_HELPER_DIGESTS);
+    let digests = board_helper_digests();
+    let got: Vec<u64> = digests.iter().map(|(_, d)| *d).collect();
+    let listing: String = digests
+        .iter()
+        .map(|(label, d)| {
+            format!(
+                "{label} {d:#018x}
+"
+            )
+        })
+        .collect();
+    assert_eq!(
+        got.as_slice(),
+        BOARD_HELPER_DIGESTS,
+        "board helper digests changed; current values:
+{listing}"
+    );
 }

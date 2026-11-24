@@ -21,6 +21,7 @@ mod support;
 
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use support::{
     apply_setup, bundled, check_scenario, fall_map_vec, legacy_play, legacy_run, level_world,
@@ -28,8 +29,9 @@ use support::{
     FuryEvent, LokiEvent, RelicsEvent, Run, Scenario, SkipEvent, World,
 };
 use wyrdstone_core::{
-    ActiveTool, CellPos, CityBonuses, ExpeditionRun, FallMove, LevelOutcome, LevelSession,
-    PatronGod, SwapRejected, ToolRejected, Turn, TurnStep, VICTORY_SKIP_MAX_DETONATIONS,
+    ActiveTool, Booster, BossRiposteKind, CellPos, CityBonuses, ExpeditionRun, FallMove,
+    LevelOutcome, LevelSession, PatronGod, SwapRejected, ToolRejected, Turn, TurnStep,
+    VICTORY_SKIP_MAX_DETONATIONS,
 };
 
 /// Number of fuzz seeds per level family.
@@ -44,9 +46,12 @@ const FUZZ_RANDOM_PAIR_PCT: u32 = 80;
 /// Percent chance to unleash a ready fury instead of the rolled action.
 const FUZZ_FURY_PCT: u32 = 60;
 /// Upper bound (exclusive) of celebration bursts played before a victory skip.
+/// Every Nth seed opens with a Bifrost shard swapped against a bomb (the combo random play rarely
+/// builds on its own).
+const FUZZ_SUPER_COMBO_EVERY: u64 = 4;
 const FUZZ_MAX_BURSTS: u32 = 3;
 /// Expedition wave range explored by the fuzz.
-const FUZZ_EXPEDITION_WAVES: u64 = 5;
+const FUZZ_EXPEDITION_WAVES: u64 = 7;
 /// Starting boosters granted to fuzz expedition runs.
 const FUZZ_EXPEDITION_BOOSTERS: u32 = 2;
 
@@ -59,18 +64,39 @@ fn fall_vec(fall: &[FallMove]) -> Vec<(CellPos, i32)> {
     fall_map_vec(&map)
 }
 
+/// Rule paths only observable from engine steps (the shared event type does not carry them).
+#[derive(Default, Debug, Clone, Copy)]
+struct StepCounters {
+    super_combos: u32,
+    fog_cleared: u32,
+    riposte_chain: u32,
+    riposte_freeze: u32,
+    riposte_crates: u32,
+    riposte_curse: u32,
+}
+
+thread_local! {
+    static STEP_COUNTERS: RefCell<StepCounters> = RefCell::new(StepCounters::default());
+}
+
 /// Converts one engine step into the observation the legacy driver produces, applying the
 /// lifetime statistics the way the animation layer does on a committed clear.
 fn push_step(w: &mut World, turn: &Turn, step: TurnStep, events: &mut Vec<Event>) {
     match step {
-        TurnStep::ClearPending(preview) => events.push(Event::Pending(pending_event(
-            &preview.prepared,
-            preview.combo,
-            turn.consumes_turn(),
-            preview.fired_boosters,
-            snap(w),
-        ))),
+        TurnStep::ClearPending(preview) => {
+            if !preview.prepared.converted_boosters.is_empty() {
+                STEP_COUNTERS.with(|c| c.borrow_mut().super_combos += 1);
+            }
+            events.push(Event::Pending(pending_event(
+                &preview.prepared,
+                preview.combo,
+                turn.consumes_turn(),
+                preview.fired_boosters,
+                snap(w),
+            )));
+        }
         TurnStep::Cleared(report) => {
+            STEP_COUNTERS.with(|c| c.borrow_mut().fog_cleared += report.step.fog_cleared);
             w.stats.record_clear(report.stats);
             events.push(Event::Cleared(ClearedEvent {
                 combo: report.combo,
@@ -93,6 +119,19 @@ fn push_step(w: &mut World, turn: &Turn, step: TurnStep, events: &mut Vec<Event>
             snap: snap(w),
         })),
         TurnStep::Ended(end) => {
+            if end.riposte.is_some() {
+                let kind = w.session.boss.as_ref().map(|boss| boss.active_riposte());
+                STEP_COUNTERS.with(|c| {
+                    let mut c = c.borrow_mut();
+                    match kind {
+                        Some(BossRiposteKind::ChainRunes(_)) => c.riposte_chain += 1,
+                        Some(BossRiposteKind::FreezeCells(_)) => c.riposte_freeze += 1,
+                        Some(BossRiposteKind::DropCrates(_)) => c.riposte_crates += 1,
+                        Some(BossRiposteKind::CurseRunes(_)) => c.riposte_curse += 1,
+                        None => {}
+                    }
+                });
+            }
             let (riposte_hits, riposte_name_key) = match end.riposte {
                 Some((hits, name_key)) => (hits, Some(name_key)),
                 None => (Vec::new(), None),
@@ -521,9 +560,38 @@ impl Coverage {
     }
 }
 
+/// Plants a shard next to a bomb in the board centre and returns the swap that fires the combo.
+fn plant_super_combo(w: &mut World) -> Option<(CellPos, CellPos)> {
+    let a = CellPos::new(w.session.board.cols() / 2, w.session.board.rows() / 2);
+    let b = CellPos::new(a.col + 1, a.row);
+    for (pos, booster) in [(a, Booster::BifrostShard), (b, Booster::Bomb)] {
+        let cell = w.session.board.get_mut(pos)?;
+        if cell.blocked {
+            return None;
+        }
+        cell.booster = booster;
+        cell.rune.get_or_insert(wyrdstone_core::RuneType::Fire);
+    }
+    Some((a, b))
+}
+
 fn fuzz_one(label: &str, base: World, seed: u64, coverage: &mut Coverage) {
     let mut legacy = base.clone();
     let mut engine = base;
+    if seed.is_multiple_of(FUZZ_SUPER_COMBO_EVERY) {
+        if let Some((a, b)) = plant_super_combo(&mut legacy) {
+            let _ = plant_super_combo(&mut engine);
+            let action = Action::Swap(a, b);
+            let legacy_events = legacy_play(&mut legacy, action);
+            let engine_events = engine_play(&mut engine, action);
+            assert_eq!(
+                legacy_events, engine_events,
+                "super combo events differ: {label} seed {seed}"
+            );
+            assert_same_world(label, 0, action, &legacy, &engine);
+            coverage.record(&legacy_events);
+        }
+    }
     let mut chooser = StdRng::seed_from_u64(seed ^ FUZZ_ACTION_SALT);
     for step in 0..FUZZ_MAX_ACTIONS {
         match legacy.session.outcome {
@@ -567,12 +635,14 @@ fn fuzz_one(label: &str, base: World, seed: u64, coverage: &mut Coverage) {
 #[test]
 fn engine_matches_the_legacy_rule_calls_on_random_play() {
     let mut coverage = Coverage::default();
+    STEP_COUNTERS.with(|c| *c.borrow_mut() = StepCounters::default());
     for seed in 0..FUZZ_SEEDS {
         for (label, world) in fuzz_worlds(seed) {
             fuzz_one(label, world, seed, &mut coverage);
         }
     }
-    println!("fuzz coverage: {coverage:?}");
+    let steps = STEP_COUNTERS.with(|c| *c.borrow());
+    println!("fuzz coverage: {coverage:?} {steps:?}");
     let c = &coverage;
     let exercised = [
         c.swaps,
@@ -591,10 +661,16 @@ fn engine_matches_the_legacy_rule_calls_on_random_play() {
         c.victories,
         c.bursts,
         c.skips,
+        steps.super_combos,
+        steps.fog_cleared,
+        steps.riposte_chain,
+        steps.riposte_freeze,
+        steps.riposte_crates,
+        steps.riposte_curse,
     ];
     assert!(
         exercised.iter().all(|&count| count > 0),
-        "the fuzz must exercise every rule path: {coverage:?}"
+        "the fuzz must exercise every rule path: {coverage:?} {steps:?}"
     );
 }
 
