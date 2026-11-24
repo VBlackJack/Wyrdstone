@@ -138,16 +138,39 @@ pub enum HudBanner {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HudShape {
     low_moves: bool,
+    projected_stars: u8,
     has_boss: bool,
     boss_phase2: bool,
     boss_hit_flash: bool,
+    boss_riposte_imminent: bool,
     boss_weakness: Option<RuneType>,
     banner: HudBanner,
     fury_ready: bool,
     objectives_complete: Vec<bool>,
 }
 
-pub(super) fn hud_shape(session: &LevelSession) -> HudShape {
+pub(super) fn projected_stars(
+    session: &LevelSession,
+    tuning: &wyrdstone_core::SessionTuning,
+) -> u8 {
+    let ratio = if session.initial_moves > 0 {
+        session.moves_left as f32 / session.initial_moves as f32
+    } else {
+        0.0
+    };
+    if ratio >= tuning.three_star_moves_ratio {
+        3
+    } else if ratio >= tuning.two_star_moves_ratio {
+        2
+    } else {
+        1
+    }
+}
+
+pub(super) fn hud_shape(
+    session: &LevelSession,
+    tuning: &wyrdstone_core::SessionTuning,
+) -> HudShape {
     let banner = if session.last_frost_spread.is_some() {
         HudBanner::FrostSpread
     } else if session.last_shuffled {
@@ -160,9 +183,11 @@ pub(super) fn hud_shape(session: &LevelSession) -> HudShape {
     let boss = session.boss.as_ref();
     HudShape {
         low_moves: session.moves_left <= LOW_MOVES_THRESHOLD,
+        projected_stars: projected_stars(session, tuning),
         has_boss: boss.is_some(),
         boss_phase2: boss.is_some_and(|b| b.is_phase2()),
         boss_hit_flash: boss.is_some_and(|b| b.last_damage_dealt > 0),
+        boss_riposte_imminent: boss.is_some_and(|b| b.turns_until_riposte <= 1),
         boss_weakness: boss.map(|b| b.active_weakness()),
         banner,
         fury_ready: session.can_trigger_fury(),
@@ -258,8 +283,10 @@ pub(super) fn spawn_match3_hud(
     modal_scroll_y: f32,
     is_compact: bool,
     can_undo: bool,
+    undo_used: bool,
     confirm_retreat: bool,
     confirm_loki_shuffle: bool,
+    confirm_restart: bool,
     in_valhalla: bool,
 ) {
     let i18n = &ctx.data.i18n;
@@ -345,6 +372,37 @@ pub(super) fn spawn_match3_hud(
                                 COLOR_ACCENT_GOLD
                             }),
                         ));
+                        if session.boss.is_none()
+                            && session.level.building_id
+                                != wyrdstone_core::expedition::EXPEDITION_BUILDING_ID
+                        {
+                            let stars_now = projected_stars(session, &ctx.data.balance.session);
+                            mbox.spawn(Node {
+                                column_gap: Val::Px(2.0),
+                                margin: UiRect::left(Val::Px(6.0)),
+                                align_items: AlignItems::Center,
+                                ..default()
+                            })
+                            .with_children(|srow| {
+                                for s_idx in 0..3u8 {
+                                    let active = s_idx < stars_now;
+                                    srow.spawn((
+                                        ImageNode::new(vfx.icon_star.clone()).with_color(
+                                            if active {
+                                                Color::WHITE
+                                            } else {
+                                                Color::srgba(0.28, 0.34, 0.44, 0.40)
+                                            },
+                                        ),
+                                        Node {
+                                            width: Val::Px(13.0),
+                                            height: Val::Px(13.0),
+                                            ..default()
+                                        },
+                                    ));
+                                }
+                            });
+                        }
                     });
                     if let Some(secs) = session.time_left_secs {
                         let whole = secs.ceil() as u32;
@@ -458,7 +516,9 @@ pub(super) fn spawn_match3_hud(
                                         font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
                                         ..default()
                                     },
-                                    TextColor(if boss.is_phase2() {
+                                    TextColor(if boss.turns_until_riposte <= 1 {
+                                        COLOR_ACCENT_CRIMSON_TEXT
+                                    } else if boss.is_phase2() {
                                         COLOR_ACCENT_GOLD
                                     } else {
                                         COLOR_ACCENT_CRIMSON_TEXT
@@ -472,7 +532,11 @@ pub(super) fn spawn_match3_hud(
                                         ..default()
                                     },
                                     BackgroundColor(Color::srgba(0.16, 0.08, 0.10, 0.95)),
-                                    BorderColor(COLOR_ACCENT_GOLD),
+                                    BorderColor(if boss.turns_until_riposte <= 1 {
+                                        COLOR_ACCENT_CRIMSON
+                                    } else {
+                                        COLOR_ACCENT_GOLD
+                                    }),
                                     BorderRadius::all(Val::Px(5.0)),
                                 ))
                                 .with_children(|track| {
@@ -485,6 +549,18 @@ pub(super) fn spawn_match3_hud(
                                         },
                                         BackgroundColor(COLOR_ACCENT_CRIMSON),
                                         BorderRadius::all(Val::Px(4.0)),
+                                    ));
+                                    // Phase-2 enrage threshold marker at 50% HP.
+                                    track.spawn((
+                                        Node {
+                                            position_type: PositionType::Absolute,
+                                            left: Val::Percent(50.0),
+                                            top: Val::Px(0.0),
+                                            width: Val::Px(2.0),
+                                            height: Val::Percent(100.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(COLOR_ACCENT_GOLD),
                                     ));
                                 });
                             });
@@ -642,8 +718,13 @@ pub(super) fn spawn_match3_hud(
                         undo_btn.insert(NoButtonScale);
                     }
                     undo_btn.with_children(|btn| {
+                        let undo_lbl = if undo_used {
+                            i18n.t("match3.hud.undo_used")
+                        } else {
+                            i18n.t("match3.hud.undo_ready")
+                        };
                         btn.spawn((
-                            Text::new(i18n.t("match3.hud.undo")),
+                            Text::new(undo_lbl),
                             TextFont {
                                 font_size: FONT_SMALL,
                                 ..default()
@@ -673,7 +754,7 @@ pub(super) fn spawn_match3_hud(
                         ))
                         .with_children(|btn| {
                             btn.spawn((
-                                Text::new(i18n.t("city.panel.help.button")),
+                                Text::new(i18n.t("match3.hud.pause")),
                                 TextFont {
                                     font_size: FONT_SMALL,
                                     ..default()
@@ -1093,6 +1174,70 @@ pub(super) fn spawn_match3_hud(
                                     },
                                 ))
                                 .with_children(|body| {
+                                    if session.time_left_secs.is_some() {
+                                        body.spawn((
+                                            Text::new(i18n.t("match3.hud.paused_banner")),
+                                            TextFont {
+                                                font_size: FONT_BODY,
+                                                ..default()
+                                            },
+                                            TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                        ));
+                                    }
+                                    let is_daily = session.level.building_id
+                                        == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID;
+                                    let is_exp = session.level.building_id
+                                        == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID;
+                                    let has_energy =
+                                        ctx.city.energy >= ctx.data.balance.energy_cost_per_level;
+                                    if !is_daily && !is_exp && has_energy {
+                                        let r_lbl = if confirm_restart {
+                                            i18n.t("match3.hud.restart_confirm").to_string()
+                                        } else {
+                                            i18n.t_fmt(
+                                                "match3.hud.restart",
+                                                &[(
+                                                    "cost",
+                                                    ctx.data
+                                                        .balance
+                                                        .energy_cost_per_level
+                                                        .to_string(),
+                                                )],
+                                            )
+                                        };
+                                        body.spawn((
+                                            Button,
+                                            Match3UiAction::RestartBoard,
+                                            Node {
+                                                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(1.5)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(if confirm_restart {
+                                                COLOR_ACCENT_CRIMSON
+                                            } else {
+                                                COLOR_PANEL_CARD
+                                            }),
+                                            BorderColor(COLOR_ACCENT_GOLD),
+                                            BorderRadius::all(Val::Px(RADIUS_SM)),
+                                        ))
+                                        .with_children(
+                                            |btn| {
+                                                btn.spawn((
+                                                    Text::new(r_lbl),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_TEXT_PRIMARY),
+                                                ));
+                                            },
+                                        );
+                                    }
+
                                     // Quick Pause Settings (Audio + Colorblind) right inside Match-3
                                     body.spawn((
                                         Text::new(i18n.t("match3.pause.settings_title")),
@@ -1298,9 +1443,11 @@ mod tests {
     fn shape() -> HudShape {
         HudShape {
             low_moves: false,
+            projected_stars: 3,
             has_boss: false,
             boss_phase2: false,
             boss_hit_flash: false,
+            boss_riposte_imminent: false,
             boss_weakness: None,
             banner: HudBanner::None,
             fury_ready: false,
@@ -1356,5 +1503,13 @@ mod tests {
         let mut rotated_weakness = boss.clone();
         rotated_weakness.boss_weakness = Some(RuneType::Ice);
         assert!(!can_update_in_place(Some(&boss), &rotated_weakness));
+
+        let mut imminent = boss.clone();
+        imminent.boss_riposte_imminent = true;
+        assert!(!can_update_in_place(Some(&boss), &imminent));
+
+        let mut fewer_stars = shape();
+        fewer_stars.projected_stars = 2;
+        assert!(!can_update_in_place(Some(&shape()), &fewer_stars));
     }
 }

@@ -233,11 +233,12 @@ pub fn setup_city_ui(
             ctx.active_modal = ActiveModal::ChapterDialogue;
         }
     }
+    let inspector_open = std::mem::take(&mut ctx.open_inspector_on_city_enter);
     let ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
     commands.insert_resource(CityLayoutMode {
         is_portrait,
         menu_open: false,
-        inspector_open: false,
+        inspector_open,
         last_displayed_energy: ctx.city.energy,
         last_ready_harvests: ready_harvests,
         last_muted: sound_bank.muted,
@@ -258,7 +259,7 @@ pub fn setup_city_ui(
         &scroll_mem,
         is_portrait,
         false,
-        false,
+        inspector_open,
         None,
     );
 }

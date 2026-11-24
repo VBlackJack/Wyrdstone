@@ -247,7 +247,9 @@ fn spawn_flying_orbs(
     if cells.is_empty() {
         return;
     }
-    let has_boss = session.boss.is_some();
+    let boss_weakness = session.boss.as_ref().map(|b| b.active_weakness());
+    let has_boss = boss_weakness.is_some();
+    let has_non_boss_obj = !session.objectives.is_empty();
     let step = (cells.len() / MAX_FLYING_ORBS_PER_WAVE).max(1);
     let obj_target = Vec2::new(-win_w * 0.14, win_h * 0.43);
     let boss_target = Vec2::new(win_w * 0.16, win_h * 0.43);
@@ -259,15 +261,14 @@ fn spawn_flying_orbs(
         .enumerate()
     {
         let start = cell_to_world(pos, layout);
-        let to_boss = has_boss && idx % 2 == 1;
+        let rune_opt = session.board.get(pos).and_then(|c| c.rune);
+        let matches_weakness = boss_weakness.is_some_and(|w| rune_opt == Some(w));
+        let to_boss = has_boss && (matches_weakness || !has_non_boss_obj || idx % 2 == 1);
         let target = if to_boss { boss_target } else { obj_target };
         let color = if to_boss {
             Color::srgba(1.0, 0.56, 0.24, 0.96)
         } else {
-            session
-                .board
-                .get(pos)
-                .and_then(|c| c.rune)
+            rune_opt
                 .map(|r| {
                     let [rr, gg, bb] = rune_base_rgb(r);
                     Color::srgba(
@@ -841,21 +842,33 @@ fn spawn_floating_score(
         sum += cell_to_world(p, layout);
     }
     let center = sum / cells.len() as f32;
-    commands.spawn((
-        Match3Cleanup,
-        FloatingScore {
-            elapsed: 0.0,
-            lifetime: FLOATING_TEXT_LIFETIME_SECS,
-        },
-        Text2d::new(label),
-        TextFont {
-            font_size,
-            ..default()
-        },
-        TextColor(color),
-        Transform::from_xyz(center.x, center.y + 8.0, Z_SELECTION_RING + 2.0)
-            .with_scale(Vec3::splat(0.65)),
-    ));
+    commands
+        .spawn((
+            Match3Cleanup,
+            FloatingScore {
+                elapsed: 0.0,
+                lifetime: FLOATING_TEXT_LIFETIME_SECS,
+            },
+            Text2d::new(label.clone()),
+            TextFont {
+                font_size,
+                ..default()
+            },
+            TextColor(color),
+            Transform::from_xyz(center.x, center.y + 8.0, Z_SELECTION_RING + 2.0)
+                .with_scale(Vec3::splat(0.65)),
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text2d::new(label),
+                TextFont {
+                    font_size,
+                    ..default()
+                },
+                TextColor(Color::srgba(0.03, 0.04, 0.08, 0.88)),
+                Transform::from_xyz(1.5, -1.5, -0.05),
+            ));
+        });
 }
 
 /// Advances the stepped Match-3 animation state machine (swap -> clear -> fall -> cascade).
@@ -902,7 +915,7 @@ pub fn tick_board_animation(
             .unwrap_or(false);
         if timer_changed {
             if ctx.active_session.as_ref().map(|s| s.outcome) == Some(LevelOutcome::Defeat) {
-                finalize_level_transition(&mut ctx, &mut next_state);
+                enter_defeat_beat(&mut commands, &ctx, &sound_bank, &mut input_state, true);
                 return;
             }
             // Update timer text in-place instead of rebuilding the entire HUD every second.
@@ -932,6 +945,15 @@ pub fn tick_board_animation(
     let phase = std::mem::take(&mut input_state.phase);
     match phase {
         BoardAnimPhase::Idle => {
+            if let Some((ba, bb)) = input_state.buffered_swap.take() {
+                if ctx.active_modal != ActiveModal::Help && ctx.armed_tool.is_none() {
+                    input_state.clear_hint();
+                    if super::start_swap_animation(ba, bb, &ctx, &mut input_state) {
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                        return;
+                    }
+                }
+            }
             input_state.idle_secs += dt;
             if input_state.idle_secs >= HINT_IDLE_SECS {
                 if !input_state.hint_checked {
@@ -939,7 +961,7 @@ pub fn tick_board_animation(
                     input_state.hint_pair = ctx
                         .active_session
                         .as_ref()
-                        .and_then(|s| s.board.find_hint_move());
+                        .and_then(|s| s.board.find_best_hint_move());
                 }
                 if let Some((ha, hb)) = input_state.hint_pair {
                     let pulse = if input_state.reduced_motion {
@@ -947,11 +969,28 @@ pub fn tick_board_animation(
                     } else {
                         1.0 + 0.11 * ((input_state.idle_secs * 5.0).sin() * 0.5 + 0.5)
                     };
+                    let wa = cell_to_world(ha, &input_state);
+                    let wb = cell_to_world(hb, &input_state);
+                    let nudge = if input_state.reduced_motion {
+                        0.0
+                    } else {
+                        3.5 * (input_state.idle_secs * 5.0).sin().max(0.0)
+                    };
                     let glow = Color::srgb(1.0, 0.96, 0.72);
                     for (tile, mut tf, mut sprite) in &mut tile_q {
                         if tile.pos == ha || tile.pos == hb {
                             tf.scale = Vec3::splat(pulse);
                             sprite.color = glow;
+                            if nudge > 0.0 {
+                                let base = if tile.pos == ha { wa } else { wb };
+                                let dir = if tile.pos == ha {
+                                    (wb - wa).normalize_or_zero()
+                                } else {
+                                    (wa - wb).normalize_or_zero()
+                                };
+                                tf.translation.x = base.x + dir.x * nudge;
+                                tf.translation.y = base.y + dir.y * nudge;
+                            }
                         }
                     }
                 }
@@ -973,10 +1012,15 @@ pub fn tick_board_animation(
                     let p = wa.lerp(wb, t);
                     tf.translation.x = p.x;
                     tf.translation.y = p.y;
+                    tf.translation.z = Z_RUNE_SPRITE + 0.4;
+                    if !input_state.reduced_motion {
+                        tf.scale = Vec3::splat(1.0 + 0.10 * (t * std::f32::consts::PI).sin());
+                    }
                 } else if tile.pos == b {
                     let p = wb.lerp(wa, t);
                     tf.translation.x = p.x;
                     tf.translation.y = p.y;
+                    tf.translation.z = Z_RUNE_SPRITE;
                 }
             }
 
@@ -1005,6 +1049,18 @@ pub fn tick_board_animation(
                         );
                     }
                     input_state.dirty_hud_soft = true;
+                    if !preview.prepared.converted_boosters.is_empty()
+                        || preview.fired_boosters.len() >= 2
+                    {
+                        spawn_floating_score(
+                            &mut commands,
+                            &preview.prepared.cells,
+                            ctx.data.i18n.t("match3.callout.super_combo").to_string(),
+                            COLOR_ACCENT_GOLD,
+                            30.0,
+                            &input_state,
+                        );
+                    }
                     if !preview.prepared.converted_boosters.is_empty() {
                         input_state.phase = BoardAnimPhase::SuperComboCharge {
                             turn,
@@ -1184,6 +1240,8 @@ pub fn tick_board_animation(
                     if !preview.fired_boosters.is_empty() {
                         play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
                         input_state.shake_secs = SHAKE_DURATION_SECS * 1.25;
+                    } else if !preview.prepared.spawned_boosters.is_empty() {
+                        play_sfx(&mut commands, &sound_bank, SfxKind::BoosterForged);
                     }
                     spawn_clear_particles(
                         &mut commands,
@@ -1223,6 +1281,10 @@ pub fn tick_board_animation(
             }
 
             if elapsed >= duration {
+                let was_fury_ready = ctx
+                    .active_session
+                    .as_ref()
+                    .is_some_and(|s| s.can_trigger_fury());
                 let step = {
                     let ctx_ref = ctx.as_mut();
                     ctx_ref.active_session.as_mut().and_then(|session| {
@@ -1235,14 +1297,40 @@ pub fn tick_board_animation(
                     return;
                 };
                 ctx.city.stats.record_clear(report.stats);
+                if report.step.ice_broken > 0
+                    || report.step.chains_broken > 0
+                    || report.step.crates_broken > 0
+                {
+                    play_sfx(&mut commands, &sound_bank, SfxKind::IceBreak);
+                }
+                if !was_fury_ready
+                    && ctx
+                        .active_session
+                        .as_ref()
+                        .is_some_and(|s| s.can_trigger_fury())
+                {
+                    play_sfx(&mut commands, &sound_bank, SfxKind::FuryReady);
+                }
                 let combo = report.combo;
                 let gained_score = report.score_awarded;
                 let boss_damaged = report.boss.as_ref().is_some_and(|hit| hit.damage > 0);
-                let boss_phase2_name = report
-                    .boss
-                    .as_ref()
-                    .filter(|hit| hit.entered_phase2)
-                    .map(|hit| ctx.data.i18n.t(&hit.name_key).to_string());
+                let boss_phase2_info =
+                    report
+                        .boss
+                        .as_ref()
+                        .filter(|hit| hit.entered_phase2)
+                        .map(|hit| {
+                            let bname = ctx.data.i18n.t(&hit.name_key).to_string();
+                            let wname = ctx
+                                .active_session
+                                .as_ref()
+                                .and_then(|s| s.boss.as_ref())
+                                .map(|b| {
+                                    ctx.data.i18n.t(b.active_weakness().i18n_key()).to_string()
+                                })
+                                .unwrap_or_default();
+                            (bname, wname)
+                        });
                 let mut fall_map = HashMap::new();
                 for fm in &report.fall {
                     fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
@@ -1250,12 +1338,12 @@ pub fn tick_board_animation(
                 if boss_damaged {
                     input_state.boss_hit_flash_secs = 0.38;
                 }
-                if let Some(bname) = boss_phase2_name {
+                if let Some((bname, wname)) = boss_phase2_info {
                     play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);
                     let msg = ctx
                         .data
                         .i18n
-                        .t_fmt("match3.boss.phase2", &[("boss", bname)]);
+                        .t_fmt("match3.boss.phase2", &[("boss", bname), ("rune", wname)]);
                     commands.spawn((
                         Match3Cleanup,
                         FloatingScore {
@@ -1397,6 +1485,16 @@ pub fn tick_board_animation(
                                 &relics.positions,
                                 session,
                                 &input_state,
+                            );
+                            spawn_flying_orbs(
+                                &mut commands,
+                                &vfx,
+                                &relics.positions,
+                                session,
+                                &input_state,
+                                window.width(),
+                                window.height(),
+                                ctx.anim_duration(0.55),
                             );
                             rebuild_board_now(
                                 &mut commands,
@@ -1553,8 +1651,13 @@ pub fn tick_board_animation(
                                 };
                             }
                             LevelOutcome::Defeat => {
-                                finalize_level_transition(&mut ctx, &mut next_state);
-                                input_state.phase = BoardAnimPhase::Idle;
+                                enter_defeat_beat(
+                                    &mut commands,
+                                    &ctx,
+                                    &sound_bank,
+                                    &mut input_state,
+                                    false,
+                                );
                             }
                             LevelOutcome::InProgress => {
                                 input_state.phase = BoardAnimPhase::Idle;
@@ -1768,6 +1871,34 @@ pub fn tick_board_animation(
                 };
             }
         }
+        BoardAnimPhase::DefeatBeat {
+            mut elapsed,
+            duration,
+            out_of_time,
+        } => {
+            if input_state.skip_valhalla {
+                input_state.skip_valhalla = false;
+                finalize_level_transition(&mut ctx, &mut next_state);
+                input_state.phase = BoardAnimPhase::Idle;
+                return;
+            }
+            elapsed += dt;
+            if !input_state.reduced_motion {
+                for (_, _, mut sprite) in &mut tile_q {
+                    sprite.color = Color::srgba(0.60, 0.65, 0.76, 1.0);
+                }
+            }
+            if elapsed >= duration {
+                finalize_level_transition(&mut ctx, &mut next_state);
+                input_state.phase = BoardAnimPhase::Idle;
+            } else {
+                input_state.phase = BoardAnimPhase::DefeatBeat {
+                    elapsed,
+                    duration,
+                    out_of_time,
+                };
+            }
+        }
     }
 }
 
@@ -1797,6 +1928,61 @@ fn ease_out_back_soft(t: f32) -> f32 {
     1.0 + c3 * u * u * u + c1 * u * u
 }
 
+fn enter_defeat_beat(
+    commands: &mut Commands,
+    ctx: &GameContext,
+    sound_bank: &SoundBank,
+    input_state: &mut Match3InputState,
+    out_of_time: bool,
+) {
+    let key = if out_of_time {
+        "match3.defeat.out_of_time"
+    } else {
+        "match3.defeat.out_of_moves"
+    };
+    play_sfx(commands, sound_bank, SfxKind::BossRiposte);
+    commands
+        .spawn((
+            Match3Cleanup,
+            FloatingScore {
+                elapsed: 0.0,
+                lifetime: 1.4,
+            },
+            Text2d::new(ctx.data.i18n.t(key).to_string()),
+            TextFont {
+                font_size: 36.0,
+                ..default()
+            },
+            TextColor(COLOR_ACCENT_CRIMSON_TEXT),
+            Transform::from_xyz(
+                0.0,
+                input_state.board_center_y + 20.0,
+                Z_SELECTION_RING + 3.0,
+            )
+            .with_scale(Vec3::splat(0.75)),
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text2d::new(ctx.data.i18n.t(key).to_string()),
+                TextFont {
+                    font_size: 36.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(0.03, 0.04, 0.08, 0.90)),
+                Transform::from_xyz(1.8, -1.8, -0.05),
+            ));
+        });
+    input_state.buffered_swap = None;
+    input_state.skip_valhalla = false;
+    input_state.shake_secs = SHAKE_DURATION_SECS;
+    input_state.dirty_hud = true;
+    input_state.phase = BoardAnimPhase::DefeatBeat {
+        elapsed: 0.0,
+        duration: ctx.anim_duration(1.15),
+        out_of_time,
+    };
+}
+
 fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<AppState>) {
     let finished = ctx.active_session.as_ref().and_then(|s| match s.outcome {
         LevelOutcome::InProgress => None,
@@ -1808,21 +1994,27 @@ fn finalize_level_transition(ctx: &mut GameContext, next_state: &mut NextState<A
             s.score,
             s.earned_stars_with(&ctx.data.balance.session),
             s.boss.as_ref().map(|b| b.def.clone()),
+            s.time_left_secs == Some(0.0),
         )),
     });
 
-    if let Some((outcome, level_id, building_id, rewards, score, stars, boss_def)) = finished {
+    if let Some((outcome, level_id, building_id, rewards, score, stars, boss_def, timed_out)) =
+        finished
+    {
         ctx.last_outcome = Some(outcome);
         ctx.last_rewards = rewards;
         ctx.last_score = score;
         ctx.last_stars = stars;
         ctx.last_daily_streak = None;
+        ctx.last_glory_reward = 0;
+        ctx.last_defeat_out_of_time = outcome == LevelOutcome::Defeat && timed_out;
         ctx.city.stats.best_score = ctx.city.stats.best_score.max(score);
         if outcome == LevelOutcome::Victory {
             if ctx.tutorial_step == 1 {
                 ctx.tutorial_step = 2;
             }
             if let Some(boss) = boss_def {
+                ctx.last_glory_reward = boss.glory_reward;
                 ctx.city.record_boss_victory_with_rewards(&boss, &rewards);
                 ctx.last_rewards = rewards;
             } else if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {

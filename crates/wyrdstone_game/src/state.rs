@@ -120,6 +120,9 @@ pub struct GameContext {
     pub last_score: u32,
     pub last_stars: u8,
     pub last_daily_streak: Option<u32>,
+    pub last_glory_reward: u32,
+    pub last_defeat_out_of_time: bool,
+    pub open_inspector_on_city_enter: bool,
     pub last_discovered_relic_key: Option<String>,
     pub status_notice_key: Option<String>,
     pub celebration_message: Option<String>,
@@ -306,6 +309,9 @@ impl GameContext {
             last_score: 0,
             last_stars: 0,
             last_daily_streak: None,
+            last_glory_reward: 0,
+            last_defeat_out_of_time: false,
+            open_inspector_on_city_enter: false,
             last_discovered_relic_key: None,
             status_notice_key,
             celebration_message: None,
@@ -559,6 +565,9 @@ impl GameContext {
         self.active_level_id = None;
         self.armed_tool = None;
         self.last_outcome = None;
+        self.last_glory_reward = 0;
+        self.last_defeat_out_of_time = false;
+        self.open_inspector_on_city_enter = false;
         self.pending_dialogue = None;
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
@@ -608,6 +617,9 @@ impl GameContext {
         self.last_outcome = None;
         self.last_stars = 0;
         self.last_daily_streak = None;
+        self.last_glory_reward = 0;
+        self.last_defeat_out_of_time = false;
+        self.open_inspector_on_city_enter = false;
         self.last_discovered_relic_key = None;
         self.status_notice_key = None;
         self.celebration_message = None;
@@ -1065,6 +1077,9 @@ mod read_only_notice_tests {
             last_score: 0,
             last_stars: 0,
             last_daily_streak: None,
+            last_glory_reward: 0,
+            last_defeat_out_of_time: false,
+            open_inspector_on_city_enter: false,
             last_discovered_relic_key: None,
             status_notice_key: None,
             celebration_message: None,

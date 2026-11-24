@@ -25,7 +25,9 @@ use std::f32::consts::TAU;
 const SAMPLE_RATE: u32 = 22_050;
 
 /// D-minor pentatonic frequencies (Hz) for escalating combo chimes.
-const COMBO_NOTES_HZ: [f32; 6] = [293.66, 349.23, 392.00, 440.00, 523.25, 587.33];
+const COMBO_NOTES_HZ: [f32; 8] = [
+    293.66, 349.23, 392.00, 440.00, 523.25, 587.33, 698.46, 783.99,
+];
 
 /// Named sound effects available across scenes.
 #[derive(Debug, Clone, Copy)]
@@ -33,6 +35,10 @@ pub enum SfxKind {
     Swap,
     Invalid,
     MatchCombo(u32),
+    IceBreak,
+    BoosterForged,
+    FuryReady,
+    StarPop(u8),
     ToolBlast,
     FuryUnleash,
     BossRiposte,
@@ -55,6 +61,10 @@ pub struct SoundBank {
     pub swap: Handle<AudioSource>,
     pub invalid: Handle<AudioSource>,
     pub combo_chimes: Vec<Handle<AudioSource>>,
+    pub ice_break: Handle<AudioSource>,
+    pub booster_forged: Handle<AudioSource>,
+    pub fury_ready: Handle<AudioSource>,
+    pub star_pops: [Handle<AudioSource>; 3],
     pub tool_blast: Handle<AudioSource>,
     pub fury_unleash: Handle<AudioSource>,
     pub boss_riposte: Handle<AudioSource>,
@@ -86,6 +96,23 @@ pub fn init_sound_bank(
         })
         .collect();
 
+    let ice_break = add_wav(
+        &mut audio_assets,
+        synth_harp_chord(0.18, &[1046.5, 1318.5, 1568.0]),
+    );
+    let booster_forged = add_wav(
+        &mut audio_assets,
+        synth_arpeggio(0.26, &[440.0, 587.33, 880.0]),
+    );
+    let fury_ready = add_wav(
+        &mut audio_assets,
+        synth_arpeggio(0.36, &[392.0, 523.25, 659.25, 783.99]),
+    );
+    let star_pops = [
+        add_wav(&mut audio_assets, synth_harp_chord(0.26, &[587.33, 880.0])),
+        add_wav(&mut audio_assets, synth_harp_chord(0.26, &[698.46, 1046.5])),
+        add_wav(&mut audio_assets, synth_harp_chord(0.32, &[880.0, 1318.5])),
+    ];
     let tool_blast = add_wav(&mut audio_assets, synth_thunder_strike(0.38));
     let fury_unleash = add_wav(&mut audio_assets, synth_fury_horn(0.62));
     let boss_riposte = add_wav(&mut audio_assets, synth_boss_roar(0.46));
@@ -127,6 +154,10 @@ pub fn init_sound_bank(
         swap,
         invalid,
         combo_chimes,
+        ice_break,
+        booster_forged,
+        fury_ready,
+        star_pops,
         tool_blast,
         fury_unleash,
         boss_riposte,
@@ -210,6 +241,10 @@ pub fn play_sfx(commands: &mut Commands, bank: &SoundBank, kind: SfxKind) {
                 .min((bank.combo_chimes.len() - 1) as u32) as usize;
             bank.combo_chimes[idx].clone()
         }
+        SfxKind::IceBreak => bank.ice_break.clone(),
+        SfxKind::BoosterForged => bank.booster_forged.clone(),
+        SfxKind::FuryReady => bank.fury_ready.clone(),
+        SfxKind::StarPop(idx) => bank.star_pops[idx.min(2) as usize].clone(),
         SfxKind::ToolBlast => bank.tool_blast.clone(),
         SfxKind::FuryUnleash => bank.fury_unleash.clone(),
         SfxKind::BossRiposte => bank.boss_riposte.clone(),

@@ -1378,8 +1378,18 @@ impl Board {
         self.find_hint_move().is_some()
     }
 
-    /// Returns the first valid adjacent swap `(a, b)` for auto-hinting, if one exists.
+    /// Returns the first valid adjacent swap `(a, b)` in board scan order, if one exists.
     pub fn find_hint_move(&self) -> Option<(CellPos, CellPos)> {
+        self.scan_hint_move(true)
+    }
+
+    /// Returns the highest-priority valid adjacent swap `(a, b)` for auto-hinting, if one exists.
+    pub fn find_best_hint_move(&self) -> Option<(CellPos, CellPos)> {
+        self.scan_hint_move(false)
+    }
+
+    fn scan_hint_move(&self, first_match: bool) -> Option<(CellPos, CellPos)> {
+        let mut best: Option<(u32, (CellPos, CellPos))> = None;
         for row in 0..self.rows {
             for col in 0..self.cols {
                 let a = CellPos::new(col, row);
@@ -1394,32 +1404,45 @@ impl Board {
                     if !self.cells[self.idx(nb)].can_be_swapped() {
                         continue;
                     }
-                    if self.swap_forms_valid_move(a, nb) {
-                        return Some((a, nb));
+                    let prio = self.swap_move_priority(a, nb);
+                    if prio > 0 {
+                        if first_match {
+                            return Some((a, nb));
+                        }
+                        if best.is_none_or(|(best_p, _)| prio > best_p) {
+                            best = Some((prio, (a, nb)));
+                        }
                     }
                 }
             }
         }
-        None
+        best.map(|(_, pair)| pair)
     }
 
-    fn swap_forms_valid_move(&self, a: CellPos, b: CellPos) -> bool {
+    fn swap_move_priority(&self, a: CellPos, b: CellPos) -> u32 {
         let ca = self.cells[self.idx(a)];
         let cb = self.cells[self.idx(b)];
-        let is_special = match (ca.booster, cb.booster) {
-            (Booster::BifrostShard, Booster::BifrostShard) => true,
-            (Booster::BifrostShard, _) => cb.rune.is_some(),
-            (_, Booster::BifrostShard) => ca.rune.is_some(),
+        match (ca.booster, cb.booster) {
+            (Booster::BifrostShard, Booster::BifrostShard) => return 400,
+            (
+                Booster::BifrostShard,
+                Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb,
+            )
+            | (
+                Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb,
+                Booster::BifrostShard,
+            ) => return 400,
+            (Booster::BifrostShard, _) if cb.rune.is_some() => return 350,
+            (_, Booster::BifrostShard) if ca.rune.is_some() => return 350,
             (
                 Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb,
                 Booster::LineHorizontal | Booster::LineVertical | Booster::Bomb,
-            ) => true,
-            _ => false,
-        };
-        if is_special {
-            return true;
+            ) => return 400,
+            _ => {}
         }
-        self.virtual_cell_matches(a, a, b) || self.virtual_cell_matches(b, a, b)
+        let pa = self.virtual_cell_match_priority(a, a, b);
+        let pb = self.virtual_cell_match_priority(b, a, b);
+        pa.max(pb)
     }
 
     fn virtual_matchable_rune(&self, pos: CellPos, a: CellPos, b: CellPos) -> Option<RuneType> {
@@ -1437,13 +1460,13 @@ impl Board {
         self.cells[self.idx(src)].rune
     }
 
-    fn virtual_cell_matches(&self, center: CellPos, a: CellPos, b: CellPos) -> bool {
+    fn virtual_cell_match_priority(&self, center: CellPos, a: CellPos, b: CellPos) -> u32 {
         let Some(rune) = self.virtual_matchable_rune(center, a, b) else {
-            return false;
+            return 0;
         };
         let count_dir = |dc: isize, dr: isize| -> usize {
             let mut matched = 0usize;
-            for step in 1isize..=2 {
+            for step in 1isize..=4 {
                 let nc = center.col as isize + dc * step;
                 let nr = center.row as isize + dr * step;
                 if nc < 0 || nr < 0 || (nc as usize) >= self.cols || (nr as usize) >= self.rows {
@@ -1458,8 +1481,20 @@ impl Board {
             }
             matched
         };
-        1 + count_dir(-1, 0) + count_dir(1, 0) >= MIN_MATCH_LEN
-            || 1 + count_dir(0, -1) + count_dir(0, 1) >= MIN_MATCH_LEN
+        let h_len = 1 + count_dir(-1, 0) + count_dir(1, 0);
+        let v_len = 1 + count_dir(0, -1) + count_dir(0, 1);
+        let max_len = h_len.max(v_len);
+        if max_len < MIN_MATCH_LEN {
+            0
+        } else if max_len >= 5 {
+            300
+        } else if h_len >= MIN_MATCH_LEN && v_len >= MIN_MATCH_LEN {
+            240
+        } else if max_len == 4 {
+            200
+        } else {
+            100
+        }
     }
 
     /// Recovers a deadlocked board: shuffles the free runes first, then falls back to

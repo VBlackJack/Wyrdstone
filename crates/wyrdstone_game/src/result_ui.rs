@@ -21,7 +21,7 @@ use crate::fjord_art::FjordTextures;
 use crate::scroll::{
     spawn_scrollbar_track, PressArm, ScrollPanelKind, ScrollablePanel, UiScrollMemory,
 };
-use crate::state::{today_day_index, AppState, GameContext};
+use crate::state::{today_day_index, ActiveModal, AppState, GameContext};
 use crate::theme::*;
 use crate::ui_style::{
     button_shadow, display_font, gold_glow_shadow, modal_shadow, sliced_panel_image, NoButtonScale,
@@ -40,6 +40,8 @@ pub struct ResultStarAnim {
     pub delay: f32,
     pub elapsed: f32,
     pub earned: bool,
+    pub star_idx: u8,
+    pub sfx_played: bool,
 }
 
 /// Locale template and placeholder for the animated score line.
@@ -62,11 +64,40 @@ pub struct RollUpNumber {
     pub done: bool,
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub enum ResultAction {
     ReturnToFjord,
     NextLevel(String),
     Replay,
+    OpenFjordModal(ActiveModal),
+    OpenUpgradeBuilding(String),
+    DrinkMead,
+}
+
+/// Computes `(extra_moves_needed, next_star_tier)` toward the next star tier, or `None` for 3 stars
+/// or levels without a move budget.
+pub(crate) fn star_threshold_hint_args(
+    stars: u8,
+    moves_left: u32,
+    initial_moves: u32,
+    two_star_ratio: f32,
+    three_star_ratio: f32,
+) -> Option<(u32, u8)> {
+    if stars >= 3 || initial_moves == 0 {
+        return None;
+    }
+    let next_star = if stars < 2 { 2 } else { 3 };
+    let target_ratio = if next_star == 2 {
+        two_star_ratio
+    } else {
+        three_star_ratio
+    };
+    let mut req_moves = (initial_moves as f32 * target_ratio).ceil() as u32;
+    while req_moves <= initial_moves && (req_moves as f32 / initial_moves as f32) < target_ratio {
+        req_moves += 1;
+    }
+    let need = req_moves.saturating_sub(moves_left).max(1);
+    Some((need, next_star))
 }
 
 fn find_next_level_id(ctx: &GameContext) -> Option<String> {
@@ -122,12 +153,22 @@ pub fn setup_result_ui(
     mut scroll_mem: ResMut<UiScrollMemory>,
 ) {
     scroll_mem.modal_offset_y = 0.0;
-    let i18n = &ctx.data.i18n;
     let is_victory = ctx.last_outcome == Some(LevelOutcome::Victory);
     // Victory SFX already plays at the start of VictoryCelebration; only play Defeat SFX here.
     if !is_victory {
         play_sfx(&mut commands, &sound_bank, SfxKind::Defeat);
     }
+    spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx);
+}
+
+fn spawn_result_ui(
+    commands: &mut Commands,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+) {
+    let i18n = &ctx.data.i18n;
+    let is_victory = ctx.last_outcome == Some(LevelOutcome::Victory);
 
     let is_daily = ctx
         .active_level_id
@@ -143,8 +184,10 @@ pub fn setup_result_ui(
     };
     let subtitle = if is_victory {
         i18n.t("result.victory.subtitle")
+    } else if ctx.last_defeat_out_of_time {
+        i18n.t("result.defeat.out_of_time")
     } else {
-        i18n.t("result.defeat.subtitle")
+        i18n.t("result.defeat.out_of_moves")
     };
     let accent = if is_victory {
         COLOR_ACCENT_GOLD
@@ -183,7 +226,7 @@ pub fn setup_result_ui(
                     modal_shadow()
                 };
                 root.spawn((
-                    sliced_panel_image(&vfx),
+                    sliced_panel_image(vfx),
                     Node {
                         width: Val::Px(500.0),
                         max_width: Val::Percent(94.0),
@@ -232,7 +275,7 @@ pub fn setup_result_ui(
                                 .with_children(|card| {
                                     card.spawn((
                                         Text::new(title),
-                                        display_font(&fjord_art, FONT_TITLE_MD + 10.0),
+                                        display_font(fjord_art, FONT_TITLE_MD + 10.0),
                                         TextColor(accent),
                                     ));
 
@@ -294,6 +337,8 @@ pub fn setup_result_ui(
                                                             delay: 0.16 + idx as f32 * 0.24,
                                                             elapsed: 0.0,
                                                             earned,
+                                                            star_idx: idx,
+                                                            sfx_played: ctx.reduced_motion,
                                                         },
                                                         ImageNode::new(vfx.icon_star.clone())
                                                             .with_color(tint),
@@ -313,6 +358,45 @@ pub fn setup_result_ui(
                                                 }
                                             },
                                         );
+                                        if let Some(session) = &ctx.active_session {
+                                            if ctx.last_stars >= 3 {
+                                                card.spawn((
+                                                    Text::new(i18n.t("result.stars.perfect")),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_ACCENT_GOLD),
+                                                ));
+                                            } else if let Some((need, next)) =
+                                                star_threshold_hint_args(
+                                                    ctx.last_stars,
+                                                    session.moves_left,
+                                                    session.initial_moves,
+                                                    ctx.data.balance.session.two_star_moves_ratio,
+                                                    ctx.data.balance.session.three_star_moves_ratio,
+                                                )
+                                            {
+                                                card.spawn((
+                                                    Text::new(i18n.t_fmt(
+                                                        "result.stars.next_hint",
+                                                        &[
+                                                            (
+                                                                "moves",
+                                                                session.moves_left.to_string(),
+                                                            ),
+                                                            ("need", need.to_string()),
+                                                            ("next", next.to_string()),
+                                                        ],
+                                                    )),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_TEXT_MUTED),
+                                                ));
+                                            }
+                                        }
                                         if let Some(streak) = ctx.last_daily_streak {
                                             card.spawn((
                                                 Text::new(i18n.t_fmt(
@@ -432,6 +516,53 @@ pub fn setup_result_ui(
                                                             }
                                                         });
                                                 }
+                                                if ctx.last_glory_reward > 0 {
+                                                    rew_row
+                                                        .spawn((
+                                                            Node {
+                                                                padding: UiRect::axes(
+                                                                    Val::Px(10.0),
+                                                                    Val::Px(5.0),
+                                                                ),
+                                                                column_gap: Val::Px(5.0),
+                                                                align_items: AlignItems::Center,
+                                                                border: UiRect::all(Val::Px(1.0)),
+                                                                ..default()
+                                                            },
+                                                            BackgroundColor(COLOR_PANEL_CARD),
+                                                            BorderColor(COLOR_ACCENT_GOLD),
+                                                            BorderRadius::all(Val::Px(8.0)),
+                                                        ))
+                                                        .with_children(|pill| {
+                                                            pill.spawn((
+                                                                ImageNode::new(
+                                                                    vfx.icon_star.clone(),
+                                                                ),
+                                                                Node {
+                                                                    width: Val::Px(18.0),
+                                                                    height: Val::Px(18.0),
+                                                                    ..default()
+                                                                },
+                                                            ));
+                                                            pill.spawn((
+                                                                Text::new(
+                                                                    i18n.t_fmt(
+                                                                        "city.panel.reward.glory",
+                                                                        &[(
+                                                                            "glory",
+                                                                            ctx.last_glory_reward
+                                                                                .to_string(),
+                                                                        )],
+                                                                    ),
+                                                                ),
+                                                                TextFont {
+                                                                    font_size: FONT_BODY,
+                                                                    ..default()
+                                                                },
+                                                                TextColor(COLOR_ACCENT_GOLD),
+                                                            ));
+                                                        });
+                                                }
                                             },
                                         );
                                         // Show breakdown of active reward multipliers (moves, clan/amulet/blessing, Divine Fury)
@@ -495,19 +626,26 @@ pub fn setup_result_ui(
                                             &ctx.data.buildings,
                                             ctx.data.bosses.len(),
                                         );
-                                        let upgrade_ready = ctx.data.buildings.iter().any(|b| {
-                                            ctx.city.is_building_unlocked(b)
-                                                && ctx
-                                                    .city
-                                                    .next_upgrade_cost(b)
-                                                    .map(|c| ctx.city.resources.can_afford(c))
-                                                    .unwrap_or(false)
-                                        });
-                                        let mut ready_badges: Vec<(String, Color)> = Vec::new();
+                                        let first_upgradeable_id = ctx
+                                            .data
+                                            .buildings
+                                            .iter()
+                                            .find(|b| {
+                                                ctx.city.is_building_unlocked(b)
+                                                    && ctx
+                                                        .city
+                                                        .next_upgrade_cost(b)
+                                                        .map(|c| ctx.city.resources.can_afford(c))
+                                                        .unwrap_or(false)
+                                            })
+                                            .map(|b| b.id.clone());
+                                        let mut ready_badges: Vec<(String, Color, ResultAction)> =
+                                            Vec::new();
                                         if quest_ready {
                                             ready_badges.push((
                                                 i18n.t("result.ready.quest").to_string(),
                                                 COLOR_ACCENT_GOLD,
+                                                ResultAction::ReturnToFjord,
                                             ));
                                         }
                                         if claimable_feats > 0 {
@@ -517,12 +655,16 @@ pub fn setup_result_ui(
                                                     &[("count", claimable_feats.to_string())],
                                                 ),
                                                 COLOR_ACCENT_GREEN,
+                                                ResultAction::OpenFjordModal(
+                                                    ActiveModal::Achievements,
+                                                ),
                                             ));
                                         }
-                                        if upgrade_ready {
+                                        if let Some(bldg_id) = first_upgradeable_id {
                                             ready_badges.push((
                                                 i18n.t("result.ready.upgrade").to_string(),
                                                 COLOR_ACCENT_TEAL,
+                                                ResultAction::OpenUpgradeBuilding(bldg_id),
                                             ));
                                         }
                                         if !ready_badges.is_empty() {
@@ -535,13 +677,18 @@ pub fn setup_result_ui(
                                                 ..default()
                                             })
                                             .with_children(|brow| {
-                                                for (lbl, col) in ready_badges {
+                                                for (lbl, col, act) in ready_badges {
                                                     brow.spawn((
+                                                        Button,
+                                                        act,
                                                         Node {
+                                                            min_height: Val::Px(32.0),
                                                             padding: UiRect::axes(
-                                                                Val::Px(10.0),
-                                                                Val::Px(4.0),
+                                                                Val::Px(12.0),
+                                                                Val::Px(5.0),
                                                             ),
+                                                            justify_content: JustifyContent::Center,
+                                                            align_items: AlignItems::Center,
                                                             border: UiRect::all(Val::Px(1.5)),
                                                             ..default()
                                                         },
@@ -693,6 +840,43 @@ pub fn setup_result_ui(
                                                                 COLOR_TEXT_PRIMARY
                                                             }),
                                                         ));
+                                                        let pct = (prog.done as f32
+                                                            / prog.target.max(1) as f32
+                                                            * 100.0)
+                                                            .clamp(0.0, 100.0);
+                                                        prog_box
+                                                            .spawn((
+                                                                Node {
+                                                                    width: Val::Px(220.0),
+                                                                    height: Val::Px(6.0),
+                                                                    margin: UiRect::bottom(
+                                                                        Val::Px(3.0),
+                                                                    ),
+                                                                    overflow: Overflow::clip(),
+                                                                    ..default()
+                                                                },
+                                                                BackgroundColor(Color::srgba(
+                                                                    0.08, 0.11, 0.18, 0.90,
+                                                                )),
+                                                                BorderRadius::all(Val::Px(3.0)),
+                                                            ))
+                                                            .with_children(|bar| {
+                                                                bar.spawn((
+                                                                    Node {
+                                                                        width: Val::Percent(pct),
+                                                                        height: Val::Percent(100.0),
+                                                                        ..default()
+                                                                    },
+                                                                    BackgroundColor(
+                                                                        if prog.is_complete() {
+                                                                            COLOR_ACCENT_GREEN
+                                                                        } else {
+                                                                            COLOR_ACCENT_TEAL
+                                                                        },
+                                                                    ),
+                                                                    BorderRadius::all(Val::Px(3.0)),
+                                                                ));
+                                                            });
                                                     }
                                                 }
                                             },
@@ -701,18 +885,107 @@ pub fn setup_result_ui(
 
                                     let energy_cost = ctx.data.balance.energy_cost_per_level;
                                     let has_energy = ctx.city.energy >= energy_cost;
+                                    let max_energy = ctx.city.max_energy(&ctx.data.balance);
                                     let next_level_id = if is_victory {
-                                        find_next_level_id(&ctx)
+                                        find_next_level_id(ctx)
                                     } else {
                                         None
                                     };
+                                    let can_drink_mead = !has_energy
+                                        && ctx.city.resources.mead
+                                            >= ctx.data.balance.mead_refill_cost;
+
+                                    card.spawn(Node {
+                                        column_gap: Val::Px(10.0),
+                                        row_gap: Val::Px(6.0),
+                                        flex_wrap: FlexWrap::Wrap,
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        margin: UiRect::top(Val::Px(4.0)),
+                                        ..default()
+                                    })
+                                    .with_children(|erow| {
+                                        erow.spawn((
+                                            Text::new(i18n.t_fmt(
+                                                "city.header.energy_full",
+                                                &[
+                                                    ("cur", ctx.city.energy.to_string()),
+                                                    ("max", max_energy.to_string()),
+                                                ],
+                                            )),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(if has_energy {
+                                                COLOR_ACCENT_TEAL_TEXT
+                                            } else {
+                                                COLOR_ACCENT_CRIMSON_TEXT
+                                            }),
+                                        ));
+                                        if can_drink_mead {
+                                            let mead_lbl = i18n.t_fmt(
+                                                "city.button.drink_mead",
+                                                &[
+                                                    (
+                                                        "energy",
+                                                        ctx.data
+                                                            .balance
+                                                            .mead_refill_energy
+                                                            .to_string(),
+                                                    ),
+                                                    (
+                                                        "cost",
+                                                        ctx.data
+                                                            .balance
+                                                            .mead_refill_cost
+                                                            .to_string(),
+                                                    ),
+                                                ],
+                                            );
+                                            erow.spawn((
+                                                Button,
+                                                ResultAction::DrinkMead,
+                                                Node {
+                                                    min_height: Val::Px(34.0),
+                                                    padding: UiRect::axes(
+                                                        Val::Px(12.0),
+                                                        Val::Px(5.0),
+                                                    ),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    border: UiRect::all(Val::Px(1.5)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgb(0.56, 0.36, 0.14)),
+                                                BorderColor(COLOR_ACCENT_GOLD),
+                                                BorderRadius::all(Val::Px(8.0)),
+                                            ))
+                                            .with_children(|btn| {
+                                                btn.spawn((
+                                                    Text::new(mead_lbl),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_TEXT_PRIMARY),
+                                                ));
+                                            });
+                                        }
+                                    });
+
+                                    let primary_is_next = is_victory && next_level_id.is_some();
+                                    let replay_free = is_daily;
+                                    let replay_ok = can_replay && (replay_free || has_energy);
+                                    let primary_is_replay = !is_victory && replay_ok;
+                                    let primary_is_fjord = !primary_is_next && !primary_is_replay;
 
                                     card.spawn(Node {
                                         column_gap: Val::Px(12.0),
                                         row_gap: Val::Px(8.0),
                                         flex_wrap: FlexWrap::Wrap,
                                         justify_content: JustifyContent::Center,
-                                        margin: UiRect::top(Val::Px(10.0)),
+                                        margin: UiRect::top(Val::Px(6.0)),
                                         ..default()
                                     })
                                     .with_children(|row| {
@@ -736,6 +1009,7 @@ pub fn setup_result_ui(
                                                 } else {
                                                     COLOR_TEXT_MUTED
                                                 },
+                                                primary_is_next && has_energy,
                                             );
                                         }
                                         spawn_result_btn(
@@ -744,10 +1018,9 @@ pub fn setup_result_ui(
                                             Some(ResultAction::ReturnToFjord),
                                             COLOR_ACCENT_GOLD,
                                             COLOR_TEXT_DARK,
+                                            primary_is_fjord,
                                         );
                                         if can_replay {
-                                            let replay_free = is_daily;
-                                            let replay_ok = replay_free || has_energy;
                                             let replay_lbl = if replay_free {
                                                 i18n.t("result.button.replay").to_string()
                                             } else {
@@ -770,6 +1043,7 @@ pub fn setup_result_ui(
                                                 } else {
                                                     COLOR_TEXT_MUTED
                                                 },
+                                                primary_is_replay,
                                             );
                                         }
                                     });
@@ -787,6 +1061,7 @@ fn spawn_result_btn(
     action: Option<ResultAction>,
     bg: Color,
     text_color: Color,
+    is_primary: bool,
 ) {
     let mut cmd = parent.spawn((
         Button,
@@ -799,7 +1074,11 @@ fn spawn_result_btn(
             ..default()
         },
         BackgroundColor(bg),
-        BorderColor(Color::NONE),
+        BorderColor(if is_primary {
+            COLOR_ACCENT_GOLD_HOVER
+        } else {
+            Color::NONE
+        }),
         BorderRadius::all(Val::Px(8.0)),
         button_shadow(),
     ));
@@ -822,8 +1101,10 @@ fn spawn_result_btn(
 
 /// Animates sequential elastic pop-in of earned mastery stars and numeric roll-ups on Victory.
 pub fn animate_result_stars(
+    mut commands: Commands,
     time: Res<Time>,
     ctx: Res<GameContext>,
+    sound_bank: Res<SoundBank>,
     mut stars: Query<(&mut ResultStarAnim, &mut Transform)>,
     mut rollups: Query<(&mut RollUpNumber, &mut Text)>,
 ) {
@@ -869,6 +1150,10 @@ pub fn animate_result_stars(
             continue;
         }
         anim.elapsed += dt;
+        if !anim.sfx_played && anim.elapsed >= anim.delay {
+            anim.sfx_played = true;
+            play_sfx(&mut commands, &sound_bank, SfxKind::StarPop(anim.star_idx));
+        }
         let t = ((anim.elapsed - anim.delay) / 0.36).clamp(0.0, 1.0);
         if t <= 0.0 {
             tf.scale = Vec3::splat(0.01);
@@ -916,41 +1201,70 @@ fn execute_result_action(
     action: &ResultAction,
     ctx: &mut GameContext,
     next_state: &mut NextState<AppState>,
-) {
+) -> bool {
     match action {
         ResultAction::ReturnToFjord => {
             next_state.set(AppState::FjordCity);
+            false
         }
-        ResultAction::NextLevel(next_id) => match ctx.start_level(next_id) {
-            Ok(()) => {
-                next_state.set(AppState::Match3);
+        ResultAction::NextLevel(next_id) => {
+            match ctx.start_level(next_id) {
+                Ok(()) => {
+                    next_state.set(AppState::Match3);
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    next_state.set(AppState::FjordCity);
+                }
             }
-            Err(err_key) => {
-                ctx.status_notice_key = Some(err_key.to_string());
-                next_state.set(AppState::FjordCity);
+            false
+        }
+        ResultAction::Replay => {
+            match try_replay_active_level(ctx) {
+                Ok(()) => {
+                    next_state.set(AppState::Match3);
+                }
+                Err(err_key) => {
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    next_state.set(AppState::FjordCity);
+                }
             }
-        },
-        ResultAction::Replay => match try_replay_active_level(ctx) {
-            Ok(()) => {
-                next_state.set(AppState::Match3);
+            false
+        }
+        ResultAction::OpenFjordModal(modal) => {
+            ctx.active_modal = *modal;
+            next_state.set(AppState::FjordCity);
+            false
+        }
+        ResultAction::OpenUpgradeBuilding(id) => {
+            ctx.selected_building_id = id.clone();
+            ctx.open_inspector_on_city_enter = true;
+            next_state.set(AppState::FjordCity);
+            false
+        }
+        ResultAction::DrinkMead => {
+            if ctx.city.try_drink_mead(&ctx.data.balance).is_ok() {
+                ctx.persist();
+                true
+            } else {
+                false
             }
-            Err(err_key) => {
-                ctx.status_notice_key = Some(err_key.to_string());
-                next_state.set(AppState::FjordCity);
-            }
-        },
+        }
     }
 }
 
 /// Handles Return to Fjord, Next Board, Play Again buttons, and keyboard navigation (`Tab`/`Arrows`/`Enter`/`Escape`).
 #[allow(clippy::too_many_arguments)]
 pub fn handle_result_buttons(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
     mut next_state: ResMut<NextState<AppState>>,
     touches: Res<Touches>,
     scroll_mem: Res<UiScrollMemory>,
+    (fjord_art, vfx, sound_bank): (Res<FjordTextures>, Res<VfxTextures>, Res<SoundBank>),
     (mut press_arm, mut focus_idx): (Local<PressArm>, Local<Option<usize>>),
+    roots: Query<Entity, With<ResultRoot>>,
     buttons: Query<(Entity, &Interaction, &ResultAction), Changed<Interaction>>,
     mut focus_buttons: Query<(Entity, &ResultAction, &mut BorderColor)>,
 ) {
@@ -1000,26 +1314,42 @@ pub fn handle_result_buttons(
     }
 
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-        if let Some(chosen) = focus_idx.and_then(|idx| {
-            focus_buttons.iter().nth(idx).map(|(_, act, _)| match act {
-                ResultAction::ReturnToFjord => ResultAction::ReturnToFjord,
-                ResultAction::NextLevel(id) => ResultAction::NextLevel(id.clone()),
-                ResultAction::Replay => ResultAction::Replay,
-            })
-        }) {
+        if let Some(chosen) =
+            focus_idx.and_then(|idx| focus_buttons.iter().nth(idx).map(|(_, act, _)| act.clone()))
+        {
             *focus_idx = None;
-            execute_result_action(&chosen, &mut ctx, &mut next_state);
+            if execute_result_action(&chosen, &mut ctx, &mut next_state) {
+                play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                for root in &roots {
+                    commands.entity(root).despawn_recursive();
+                }
+                spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx);
+            }
             return;
         }
         *focus_idx = None;
+        let has_energy = ctx.city.energy >= ctx.data.balance.energy_cost_per_level;
         if ctx.last_outcome == Some(LevelOutcome::Victory) {
-            if let Some(next_id) = find_next_level_id(&ctx) {
-                execute_result_action(&ResultAction::NextLevel(next_id), &mut ctx, &mut next_state);
-                return;
+            if has_energy {
+                if let Some(next_id) = find_next_level_id(&ctx) {
+                    execute_result_action(
+                        &ResultAction::NextLevel(next_id),
+                        &mut ctx,
+                        &mut next_state,
+                    );
+                    return;
+                }
             }
         } else {
-            execute_result_action(&ResultAction::Replay, &mut ctx, &mut next_state);
-            return;
+            let is_daily = ctx
+                .active_level_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("daily_"));
+            let can_replay = !is_daily || ctx.city.is_daily_available(today_day_index());
+            if can_replay && (is_daily || has_energy) {
+                execute_result_action(&ResultAction::Replay, &mut ctx, &mut next_state);
+                return;
+            }
         }
         next_state.set(AppState::FjordCity);
         return;
@@ -1036,7 +1366,27 @@ pub fn handle_result_buttons(
             continue;
         }
         *focus_idx = None;
-        execute_result_action(action, &mut ctx, &mut next_state);
+        if execute_result_action(action, &mut ctx, &mut next_state) {
+            play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+            for root in &roots {
+                commands.entity(root).despawn_recursive();
+            }
+            spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx);
+        }
         return;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::star_threshold_hint_args;
+
+    #[test]
+    fn star_threshold_hint_computes_exact_extra_moves_and_skips_perfect() {
+        // 20 moves total, 2-star >= 0.15 (3 moves), 3-star >= 0.35 (7 moves).
+        assert_eq!(star_threshold_hint_args(1, 1, 20, 0.15, 0.35), Some((2, 2)));
+        assert_eq!(star_threshold_hint_args(2, 4, 20, 0.15, 0.35), Some((3, 3)));
+        assert_eq!(star_threshold_hint_args(3, 10, 20, 0.15, 0.35), None);
+        assert_eq!(star_threshold_hint_args(1, 0, 0, 0.15, 0.35), None);
     }
 }

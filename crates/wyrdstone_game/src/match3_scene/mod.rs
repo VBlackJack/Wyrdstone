@@ -236,6 +236,7 @@ pub enum Match3UiAction {
     ToggleColorblind,
     ToggleFastAnim,
     ToggleReducedMotion,
+    RestartBoard,
 }
 
 /// Stepped animation phase machine so every swap, match, clear, fall, and cascade is readable.
@@ -283,6 +284,11 @@ pub enum BoardAnimPhase {
         next_burst_at: f32,
         burst_index: u32,
     },
+    DefeatBeat {
+        elapsed: f32,
+        duration: f32,
+        out_of_time: bool,
+    },
 }
 
 /// Tracks board layout metrics, pointer/touch gesture state, hints, shake, and animation phase.
@@ -313,12 +319,16 @@ pub struct Match3InputState {
     pub undo_used: bool,
     pub confirm_retreat: bool,
     pub confirm_loki_shuffle: bool,
+    pub confirm_restart: bool,
     pub skip_valhalla: bool,
     pub reduced_motion: bool,
     pub idle_secs: f32,
     pub hint_pair: Option<(CellPos, CellPos)>,
     pub hint_checked: bool,
     pub hover_cell: Option<CellPos>,
+    pub touch_tool_cell: Option<CellPos>,
+    pub buffered_swap: Option<(CellPos, CellPos)>,
+    pub drag_cancelled: bool,
     /// Raised when the board was rebuilt: the hover and drag overlay entities (not Match3Entity)
     /// may still exist for a cell that no longer matches, so the pointer handler, their only
     /// despawner, must clear and redraw them on its next idle frame, then lower the flag.
@@ -483,8 +493,10 @@ pub fn setup_match3_scene(
         scroll_mem.modal_offset_y,
         input_state.is_compact_hud,
         input_state.can_undo(&ctx),
+        input_state.undo_used,
         input_state.confirm_retreat,
         input_state.confirm_loki_shuffle,
+        input_state.confirm_restart,
         false,
     );
     commands.insert_resource(input_state);
@@ -791,33 +803,51 @@ pub(super) fn spawn_board_sprites(
                         Transform::from_xyz(tile_world.x, tile_world.y, Z_RUNE_SPRITE),
                     ));
                     if cell.curse_turns > 0 {
-                        let badge_font = (layout.tile_size * 0.42).clamp(14.0, 26.0);
+                        let urgent = cell.curse_turns == 1;
+                        let badge_size = layout.tile_size * 0.38;
+                        let badge_font = (layout.tile_size * 0.28).clamp(11.0, 18.0);
+                        let badge_offset = layout.tile_size * 0.28;
+                        // Render curse countdown badge at the top-right corner above Chain overlays.
+                        let badge_z = Z_CHAIN_OVERLAY - Z_RUNE_SPRITE + 0.3;
                         rune_cmd.with_children(|parent| {
                             parent.spawn((
                                 Sprite {
-                                    color: Color::srgba(0.86, 0.14, 0.34, 0.42),
+                                    color: if urgent {
+                                        Color::srgba(0.92, 0.12, 0.26, 0.56)
+                                    } else {
+                                        Color::srgba(0.86, 0.14, 0.34, 0.34)
+                                    },
                                     custom_size: Some(tile_size * 1.04),
                                     ..default()
                                 },
-                                Transform::from_xyz(0.0, 0.0, 1.4),
+                                Transform::from_xyz(0.0, 0.0, 0.4),
                             ));
-                            parent.spawn((
+                            let mut badge = parent.spawn((
                                 Sprite {
-                                    color: Color::srgba(0.06, 0.08, 0.12, 0.90),
-                                    custom_size: Some(Vec2::splat(layout.tile_size * 0.56)),
+                                    color: if urgent {
+                                        Color::srgba(0.78, 0.10, 0.18, 0.96)
+                                    } else {
+                                        Color::srgba(0.06, 0.08, 0.12, 0.92)
+                                    },
+                                    custom_size: Some(Vec2::splat(badge_size)),
                                     ..default()
                                 },
-                                Transform::from_xyz(0.0, 0.0, 1.5),
+                                Transform::from_xyz(badge_offset, badge_offset, badge_z),
                             ));
-                            parent.spawn((
-                                Text2d::new(cell.curse_turns.to_string()),
-                                TextFont {
-                                    font_size: badge_font,
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(1.0, 0.92, 0.94)),
-                                Transform::from_xyz(0.0, 0.0, 1.6),
-                            ));
+                            if urgent {
+                                badge.insert(BoosterPulse);
+                            }
+                            badge.with_children(|b| {
+                                b.spawn((
+                                    Text2d::new(cell.curse_turns.to_string()),
+                                    TextFont {
+                                        font_size: badge_font,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(1.0, 0.94, 0.96)),
+                                    Transform::from_xyz(0.0, 0.0, 0.05),
+                                ));
+                            });
                         });
                     }
                 }
@@ -881,11 +911,30 @@ pub(super) fn spawn_board_sprites(
         }
     }
 
-    // Highlight adjacent booster pairs so super-combo opportunities stand out clearly.
+    // Highlight adjacent booster pairs and draw connecting super-combo energy bridges.
+    let pairs = session.board.find_booster_combo_pairs();
     let mut combo_cells = HashSet::new();
-    for (a, b) in session.board.find_booster_combo_pairs() {
+    for &(a, b) in &pairs {
         combo_cells.insert(a);
         combo_cells.insert(b);
+        let wa = cell_to_world(a, layout);
+        let wb = cell_to_world(b, layout);
+        let mid = wa.lerp(wb, 0.5);
+        let delta = wb - wa;
+        let len = delta.length().max(1.0);
+        let angle = delta.y.atan2(delta.x);
+        commands.spawn((
+            Match3Cleanup,
+            Match3Entity,
+            BoosterPulse,
+            Sprite {
+                color: Color::srgba(1.0, 0.92, 0.44, 0.88),
+                custom_size: Some(Vec2::new(len * 0.68, (layout.tile_size * 0.12).max(5.0))),
+                ..default()
+            },
+            Transform::from_xyz(mid.x, mid.y, Z_BOOSTER_BADGE + 0.1)
+                .with_rotation(Quat::from_rotation_z(angle)),
+        ));
     }
     for pos in combo_cells {
         let w = cell_to_world(pos, layout);
@@ -894,7 +943,7 @@ pub(super) fn spawn_board_sprites(
             Match3Entity,
             BoosterPulse,
             Sprite {
-                color: Color::srgba(1.0, 0.86, 0.34, 0.34),
+                color: Color::srgba(1.0, 0.86, 0.34, 0.36),
                 custom_size: Some(Vec2::splat(layout.cell_step * 0.96)),
                 ..default()
             },
@@ -1220,8 +1269,11 @@ pub fn handle_match3_hud_buttons(
     (touches, mut press_arm): (Res<Touches>, Local<crate::scroll::PressArm>),
     buttons: Query<(Entity, &Interaction, &Match3UiAction), Changed<Interaction>>,
 ) {
-    // Allow players to fast-forward the Valhalla Bonus victory cascade with Space or Enter.
-    if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
+    // Allow players to fast-forward the Valhalla Bonus or Defeat beat with Space/Enter/Escape.
+    if matches!(
+        input_state.phase,
+        BoardAnimPhase::VictoryCelebration { .. } | BoardAnimPhase::DefeatBeat { .. }
+    ) {
         if keys.just_pressed(KeyCode::Space)
             || keys.just_pressed(KeyCode::Enter)
             || keys.just_pressed(KeyCode::Escape)
@@ -1233,6 +1285,7 @@ pub fn handle_match3_hud_buttons(
     if keys.just_pressed(KeyCode::Escape) {
         if ctx.active_modal == ActiveModal::Help {
             ctx.active_modal = ActiveModal::None;
+            input_state.confirm_restart = false;
             scroll_mem.modal_offset_y = 0.0;
             input_state.dirty_hud = true;
             return;
@@ -1305,14 +1358,19 @@ pub fn handle_match3_hud_buttons(
                 }
                 best
             });
-            let nc = (start.col as i32 + dc).clamp(0, cols.saturating_sub(1) as i32) as usize;
-            let nr = (start.row as i32 + dr).clamp(0, rows.saturating_sub(1) as i32) as usize;
-            let next = CellPos::new(nc, nr);
-            if session.board.get(next).map(|c| !c.blocked).unwrap_or(false) {
-                input_state.kbd_cursor = Some(next);
-            } else {
-                input_state.kbd_cursor = Some(start);
+            let mut nc = start.col as i32 + dc;
+            let mut nr = start.row as i32 + dr;
+            let mut landed = start;
+            while nc >= 0 && nc < cols as i32 && nr >= 0 && nr < rows as i32 {
+                let candidate = CellPos::new(nc as usize, nr as usize);
+                if session.board.get(candidate).is_some_and(|c| !c.blocked) {
+                    landed = candidate;
+                    break;
+                }
+                nc += dc;
+                nr += dr;
             }
+            input_state.kbd_cursor = Some(landed);
             input_state.last_input_was_kbd = true;
             update_kbd_cursor_marker(&mut commands, &input_state, &kbd_markers);
             return;
@@ -1590,9 +1648,11 @@ pub fn handle_match3_hud_buttons(
             Match3UiAction::ToggleHelp => {
                 input_state.confirm_retreat = false;
                 input_state.confirm_loki_shuffle = false;
+                input_state.confirm_restart = false;
                 ctx.toggle_modal(ActiveModal::Help);
                 if ctx.active_modal == ActiveModal::Help {
                     ctx.armed_tool = None;
+                    input_state.touch_tool_cell = None;
                     input_state.overlays_stale = true;
                 }
                 scroll_mem.modal_offset_y = 0.0;
@@ -1630,6 +1690,38 @@ pub fn handle_match3_hud_buttons(
                 ctx.persist();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 input_state.dirty_hud = true;
+            }
+            Match3UiAction::RestartBoard => {
+                if !input_state.confirm_restart {
+                    input_state.confirm_restart = true;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    input_state.dirty_hud = true;
+                    continue;
+                }
+                input_state.confirm_restart = false;
+                if let Some(level_id) = ctx.active_level_id.clone() {
+                    let res = if level_id.starts_with("boss_") {
+                        ctx.start_boss_raid(&level_id)
+                    } else {
+                        ctx.start_level(&level_id)
+                    };
+                    if res.is_ok() {
+                        *input_state = Match3InputState {
+                            reduced_motion: ctx.reduced_motion,
+                            is_compact_hud: input_state.is_compact_hud,
+                            dirty_static_board: true,
+                            dirty_board: true,
+                            dirty_hud: true,
+                            ..default()
+                        };
+                        ctx.active_modal = ActiveModal::None;
+                        scroll_mem.modal_offset_y = 0.0;
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    } else {
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        input_state.dirty_hud = true;
+                    }
+                }
             }
             Match3UiAction::TriggerFury => {
                 input_state.confirm_retreat = false;
@@ -1730,7 +1822,10 @@ pub fn handle_board_pointer_input(
     kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
     (ui_buttons, hud_bars): HudBlockerQueries,
 ) {
-    if matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }) {
+    if matches!(
+        input_state.phase,
+        BoardAnimPhase::VictoryCelebration { .. } | BoardAnimPhase::DefeatBeat { .. }
+    ) {
         if (mouse.just_pressed(MouseButton::Left) || touches.iter_just_pressed().next().is_some())
             && !ui_buttons.iter().any(|i| *i == Interaction::Pressed)
             && !hud_bars.iter().any(|i| *i == Interaction::Pressed)
@@ -1749,6 +1844,93 @@ pub fn handle_board_pointer_input(
         input_state.hover_cell = None;
         input_state.drag_highlight_cell = None;
         input_state.overlays_stale = false;
+
+        // Buffer an upcoming swipe during late Falling / SwapRevert frames so rapid chaining never drops input.
+        if ctx.active_modal != ActiveModal::Help
+            && ctx.armed_tool.is_none()
+            && matches!(
+                input_state.phase,
+                BoardAnimPhase::Falling { .. } | BoardAnimPhase::SwapRevert { .. }
+            )
+            && !ui_buttons.iter().any(|i| *i == Interaction::Pressed)
+            && !hud_bars.iter().any(|i| *i == Interaction::Pressed)
+        {
+            if let (Ok(window), Ok((camera, cam_transform)), Some(session)) = (
+                windows.get_single(),
+                camera_q.get_single(),
+                &ctx.active_session,
+            ) {
+                let (cols, rows) = (session.board.cols(), session.board.rows());
+                let swipe_threshold = ctx
+                    .data
+                    .balance
+                    .swipe_threshold_px
+                    .max(input_state.cell_step * 0.36);
+                let mut buf_press: Option<Vec2> = None;
+                let mut buf_curr: Option<Vec2> = None;
+                let mut buf_rel = false;
+                if let Some(touch) = touches.iter_just_pressed().next() {
+                    input_state.active_touch_id = Some(touch.id());
+                    buf_press = Some(touch.position());
+                } else if let Some(tid) = input_state.active_touch_id {
+                    if let Some(touch) = touches.get_pressed(tid) {
+                        buf_curr = Some(touch.position());
+                    } else {
+                        input_state.active_touch_id = None;
+                        buf_rel = true;
+                    }
+                }
+                if buf_press.is_none() && input_state.active_touch_id.is_none() {
+                    if mouse.just_pressed(MouseButton::Left) {
+                        buf_press = window.cursor_position();
+                    } else if mouse.pressed(MouseButton::Left) {
+                        buf_curr = window.cursor_position();
+                    } else if mouse.just_released(MouseButton::Left) {
+                        buf_rel = true;
+                    }
+                }
+                if let Some(sp) = buf_press {
+                    if let Ok(wp) = camera.viewport_to_world_2d(cam_transform, sp) {
+                        if let Some(cell) = world_to_cell(wp, cols, rows, &input_state) {
+                            input_state.drag_origin_cell = Some(cell);
+                            input_state.drag_origin_screen = Some(sp);
+                        }
+                    }
+                } else if let (Some(curr), Some(origin_cell), Some(origin_screen)) = (
+                    buf_curr,
+                    input_state.drag_origin_cell,
+                    input_state.drag_origin_screen,
+                ) {
+                    let delta = curr - origin_screen;
+                    if delta.length() >= swipe_threshold {
+                        let nb = if delta.x.abs() >= delta.y.abs() {
+                            if delta.x > 0.0 && origin_cell.col + 1 < cols {
+                                Some(CellPos::new(origin_cell.col + 1, origin_cell.row))
+                            } else if delta.x < 0.0 && origin_cell.col > 0 {
+                                Some(CellPos::new(origin_cell.col - 1, origin_cell.row))
+                            } else {
+                                None
+                            }
+                        } else if delta.y > 0.0 && origin_cell.row + 1 < rows {
+                            Some(CellPos::new(origin_cell.col, origin_cell.row + 1))
+                        } else if delta.y < 0.0 && origin_cell.row > 0 {
+                            Some(CellPos::new(origin_cell.col, origin_cell.row - 1))
+                        } else {
+                            None
+                        };
+                        if let Some(nb) = nb {
+                            input_state.buffered_swap = Some((origin_cell, nb));
+                        }
+                        input_state.drag_origin_cell = None;
+                        input_state.drag_origin_screen = None;
+                    }
+                }
+                if buf_rel {
+                    input_state.drag_origin_cell = None;
+                    input_state.drag_origin_screen = None;
+                }
+            }
+        }
         return;
     }
     // A HUD button or HUD bar pressed this frame owns the click: never let it fall through to the board.
@@ -1781,12 +1963,15 @@ pub fn handle_board_pointer_input(
         .and_then(|sp| camera.viewport_to_world_2d(cam_transform, sp).ok())
         .and_then(|wp| world_to_cell(wp, cols, rows, &input_state));
     let hovered = if ctx.armed_tool.is_some() {
-        if input_state.last_input_was_kbd {
+        if let Some(tc) = input_state.touch_tool_cell {
+            Some(tc)
+        } else if input_state.last_input_was_kbd {
             input_state.kbd_cursor.or(pointer_hovered)
         } else {
             pointer_hovered.or(input_state.kbd_cursor)
         }
     } else {
+        input_state.touch_tool_cell = None;
         pointer_hovered
     };
     // A board rebuild leaves overlays behind even when the hovered cell did not change (or is
@@ -1843,15 +2028,22 @@ pub fn handle_board_pointer_input(
         }
     }
 
-    let swipe_threshold = ctx.data.balance.swipe_threshold_px;
+    let swipe_threshold = ctx
+        .data
+        .balance
+        .swipe_threshold_px
+        .max(input_state.cell_step * 0.36);
     let mut pressed_screen: Option<Vec2> = None;
     let mut current_screen: Option<Vec2> = None;
     let mut released = false;
+    let mut is_touch_event = false;
 
     if let Some(touch) = touches.iter_just_pressed().next() {
         input_state.active_touch_id = Some(touch.id());
         pressed_screen = Some(touch.position());
+        is_touch_event = true;
     } else if let Some(tid) = input_state.active_touch_id {
+        is_touch_event = true;
         if let Some(touch) = touches.get_pressed(tid) {
             current_screen = Some(touch.position());
         } else {
@@ -1860,7 +2052,7 @@ pub fn handle_board_pointer_input(
         }
     }
 
-    if pressed_screen.is_none() && input_state.active_touch_id.is_none() {
+    if pressed_screen.is_none() && input_state.active_touch_id.is_none() && !is_touch_event {
         if mouse.just_pressed(MouseButton::Left) {
             pressed_screen = window.cursor_position();
         } else if mouse.pressed(MouseButton::Left) {
@@ -1870,7 +2062,76 @@ pub fn handle_board_pointer_input(
         }
     }
 
+    // Touch tool targeting: preview AoE while finger drags, strike cleanly on release (or drag off-board to cancel).
+    if ctx.armed_tool.is_some() && is_touch_event {
+        if let Some(sp) = pressed_screen.or(current_screen) {
+            input_state.clear_hint();
+            if input_state.kbd_cursor.is_some() {
+                input_state.kbd_cursor = None;
+                update_kbd_cursor_marker(&mut commands, &input_state, &kbd_markers);
+            }
+            let cell = camera
+                .viewport_to_world_2d(cam_transform, sp)
+                .ok()
+                .and_then(|wp| world_to_cell(wp, cols, rows, &input_state));
+            input_state.touch_tool_cell = cell;
+        }
+        if released {
+            let target_cell = input_state.touch_tool_cell.take();
+            if let (Some(tool), Some(cell)) = (ctx.armed_tool, target_cell) {
+                if input_state.confirm_retreat
+                    || input_state.confirm_loki_shuffle
+                    || input_state.confirm_restart
+                {
+                    input_state.confirm_retreat = false;
+                    input_state.confirm_loki_shuffle = false;
+                    input_state.confirm_restart = false;
+                    input_state.dirty_hud = true;
+                }
+                match start_tool_turn(&mut ctx, tool, cell) {
+                    Ok((turn, preview)) => {
+                        ctx.armed_tool = None;
+                        ctx.persist();
+                        input_state.undo_snapshot = None;
+                        play_sfx(&mut commands, &sound_bank, SfxKind::ToolBlast);
+                        anim::spawn_tool_vfx(
+                            &mut commands,
+                            &vfx,
+                            tool,
+                            cell,
+                            &preview.prepared.cells,
+                            cols,
+                            rows,
+                            &input_state,
+                        );
+                        let clear_dur = ctx.anim_duration(ctx.data.balance.clear_anim_seconds);
+                        let cleared_set: HashSet<CellPos> =
+                            preview.prepared.cells.iter().copied().collect();
+                        input_state.selected = None;
+                        input_state.shake_secs = SHAKE_DURATION_SECS;
+                        input_state.dirty_hud = true;
+                        input_state.phase = BoardAnimPhase::Clearing {
+                            turn,
+                            preview,
+                            cleared_set,
+                            elapsed: 0.0,
+                            duration: clear_dur,
+                            particles_spawned: false,
+                        };
+                    }
+                    Err(ToolStartError::NoStock) => {}
+                    Err(ToolStartError::Invalid) => {
+                        spawn_invalid_cell_flash(&mut commands, cell, &input_state);
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    }
+                }
+            }
+        }
+        return;
+    }
+
     if let Some(screen_pos) = pressed_screen {
+        input_state.drag_cancelled = false;
         input_state.clear_hint();
         if input_state.kbd_cursor.is_some() {
             input_state.kbd_cursor = None;
@@ -1878,9 +2139,13 @@ pub fn handle_board_pointer_input(
         }
         if let Ok(world_pos) = camera.viewport_to_world_2d(cam_transform, screen_pos) {
             if let Some(cell) = world_to_cell(world_pos, cols, rows, &input_state) {
-                if input_state.confirm_retreat || input_state.confirm_loki_shuffle {
+                if input_state.confirm_retreat
+                    || input_state.confirm_loki_shuffle
+                    || input_state.confirm_restart
+                {
                     input_state.confirm_retreat = false;
                     input_state.confirm_loki_shuffle = false;
+                    input_state.confirm_restart = false;
                     input_state.dirty_hud = true;
                 }
                 if let Some(tool) = ctx.armed_tool {
@@ -1959,11 +2224,8 @@ pub fn handle_board_pointer_input(
                     }
                 }
 
-                let playable = ctx
-                    .active_session
-                    .as_ref()
-                    .and_then(|s| s.board.get(cell))
-                    .is_some_and(|c| !c.blocked && c.has_movable_piece());
+                let cell_state = ctx.active_session.as_ref().and_then(|s| s.board.get(cell));
+                let playable = cell_state.is_some_and(|c| !c.blocked && c.has_movable_piece());
                 if playable {
                     input_state.selected = Some(cell);
                     input_state.drag_origin_cell = Some(cell);
@@ -1974,6 +2236,16 @@ pub fn handle_board_pointer_input(
                         &input_state,
                         &selection_markers,
                     );
+                } else if cell_state.is_some_and(|c| !c.blocked) {
+                    input_state.selected = None;
+                    update_selection_marker(
+                        &mut commands,
+                        &textures,
+                        &input_state,
+                        &selection_markers,
+                    );
+                    spawn_invalid_cell_flash(&mut commands, cell, &input_state);
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                 }
             }
         }
@@ -1985,6 +2257,9 @@ pub fn handle_board_pointer_input(
         input_state.drag_origin_screen,
     ) {
         let delta = curr - origin_screen;
+        if delta.length() >= swipe_threshold * 0.4 {
+            input_state.drag_cancelled = true;
+        }
         let candidate_target = if delta.length() >= swipe_threshold * 0.4 {
             if delta.x.abs() >= delta.y.abs() {
                 if delta.x > 0.0 && origin_cell.col + 1 < cols {
@@ -2026,6 +2301,7 @@ pub fn handle_board_pointer_input(
         }
 
         if delta.length() >= swipe_threshold {
+            input_state.drag_cancelled = false;
             input_state.drag_origin_cell = None;
             input_state.drag_origin_screen = None;
             input_state.drag_highlight_cell = None;
@@ -2057,6 +2333,10 @@ pub fn handle_board_pointer_input(
     }
 
     if released {
+        if std::mem::take(&mut input_state.drag_cancelled) {
+            input_state.selected = None;
+            update_selection_marker(&mut commands, &textures, &input_state, &selection_markers);
+        }
         input_state.drag_origin_cell = None;
         input_state.drag_origin_screen = None;
         input_state.drag_highlight_cell = None;
@@ -2066,7 +2346,7 @@ pub fn handle_board_pointer_input(
     }
 }
 
-fn start_swap_animation(
+pub(super) fn start_swap_animation(
     a: CellPos,
     b: CellPos,
     ctx: &GameContext,
@@ -2161,7 +2441,10 @@ pub fn sync_match3_visuals(
 
     if input_state.dirty_hud_soft && !input_state.dirty_hud {
         input_state.dirty_hud_soft = false;
-        let new_shape = ctx.active_session.as_ref().map(hud::hud_shape);
+        let new_shape = ctx
+            .active_session
+            .as_ref()
+            .map(|s| hud::hud_shape(s, &ctx.data.balance.session));
         match new_shape {
             Some(shape) if hud::can_update_in_place(input_state.hud_shape.as_ref(), &shape) => {
                 hud_texts.refresh(&ctx, input_state.is_compact_hud);
@@ -2172,7 +2455,10 @@ pub fn sync_match3_visuals(
     input_state.dirty_hud_soft = false;
 
     if input_state.dirty_hud {
-        input_state.hud_shape = ctx.active_session.as_ref().map(hud::hud_shape);
+        input_state.hud_shape = ctx
+            .active_session
+            .as_ref()
+            .map(|s| hud::hud_shape(s, &ctx.data.balance.session));
         for e in &huds {
             commands.entity(e).despawn_recursive();
         }
@@ -2186,8 +2472,10 @@ pub fn sync_match3_visuals(
             scroll_mem.modal_offset_y,
             input_state.is_compact_hud,
             input_state.can_undo(&ctx),
+            input_state.undo_used,
             input_state.confirm_retreat,
             input_state.confirm_loki_shuffle,
+            input_state.confirm_restart,
             matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }),
         );
         input_state.dirty_hud = false;

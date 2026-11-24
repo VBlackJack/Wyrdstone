@@ -2405,3 +2405,47 @@ fn loki_fury_keeps_board_playable_and_bonus_blasts_report_awarded_score_and_stat
         assert!(blast.stats.runes_cleared > 0 || !blast.cleared.is_empty());
     }
 }
+
+#[test]
+fn find_hint_move_prioritizes_booster_combo_over_plain_match() {
+    let mut cells = vec![Cell::playable(RuneType::Stone); 36];
+    // Deterministic non-matching 6x6 checkerboard (all Stone/Water alternated)
+    for r in 0..6 {
+        for c in 0..6 {
+            cells[r * 6 + c].rune = Some(if (r + c) % 2 == 0 {
+                RuneType::Stone
+            } else {
+                RuneType::Water
+            });
+        }
+    }
+    // Top-left plain 3-match swap: (0,0)<->(1,0) makes vertical 3-match in col 1 (Fire)
+    cells[1].rune = Some(RuneType::Fire);
+    cells[0].rune = Some(RuneType::Fire);
+    cells[6 + 1].rune = Some(RuneType::Gold);
+    cells[2 * 6 + 1].rune = Some(RuneType::Fire);
+    cells[3 * 6 + 1].rune = Some(RuneType::Fire);
+    //Wait: (0,1) swapped with (1,1): put Fire at (0,1), and Fire at (1,0), (1,2), (1,3)? Swap (0,1)<->(1,1) puts Fire at (1,1) making vertical col 1? Even simpler:
+    // Horizontal swap (1,0) with (1,1) where (0,0),(2,0),(3,0) are... let's make clean (0,0) Gold swapped down with (0,1) Fire, where (1,0)=Gold,(2,0)=Gold!
+    // Reset cleanly:
+    for r in 0..6 {
+        for c in 0..6 {
+            cells[r * 6 + c].rune = Some(if (r + c) % 2 == 0 {
+                RuneType::Stone
+            } else {
+                RuneType::Water
+            });
+        }
+    }
+    // Plain 3-match at top-left: swap (0,0) with (0,1) makes row 1 all Fire at (0,1),(1,1),(2,1)
+    cells[0].rune = Some(RuneType::Fire);
+    cells[6 + 1].rune = Some(RuneType::Fire);
+    cells[6 + 2].rune = Some(RuneType::Fire);
+    // Booster+Booster super-combo further down at (4,4)<->(5,4)
+    cells[4 * 6 + 4].booster = Booster::LineHorizontal;
+    cells[4 * 6 + 5].booster = Booster::Bomb;
+
+    let board = Board::from_cells(6, 6, 6, cells);
+    let hint = board.find_best_hint_move().expect("board has valid hints");
+    assert_eq!(hint, (CellPos::new(4, 4), CellPos::new(5, 4)));
+}

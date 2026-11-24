@@ -445,7 +445,11 @@ fn build_line_booster_image(horizontal: bool) -> Image {
             for &((x0, y0), (x1, y1)) in segments {
                 min_d = min_d.min(dist_to_segment(fx, fy, x0, y0, x1, y1));
             }
-            let halo = (-min_d * min_d / 64.0).exp() * 0.72;
+            let outline = (-min_d * min_d / 34.0).exp() * 0.85;
+            if outline > 0.02 {
+                blend_overlay_px(&mut px, x, y, [12, 14, 22, (outline * 255.0) as u8]);
+            }
+            let halo = (-min_d * min_d / 64.0).exp() * 0.68;
             let core = (-min_d * min_d / 11.0).exp();
             let alpha = (halo + core).clamp(0.0, 1.0);
             if alpha > 0.01 {
@@ -469,8 +473,12 @@ fn build_bomb_booster_image() -> Image {
             let fy = y as f32 + 0.5;
             let dist = (fx - half).hypot(fy - half);
             let ring_d = (dist - 40.0).abs();
+            let outline = (-ring_d * ring_d / 42.0).exp() * 0.85;
+            if outline > 0.02 {
+                blend_overlay_px(&mut px, x, y, [12, 14, 22, (outline * 255.0) as u8]);
+            }
             let ring_core = (-ring_d * ring_d / 18.0).exp();
-            let ring_halo = (-ring_d * ring_d / 110.0).exp() * 0.65;
+            let ring_halo = (-ring_d * ring_d / 110.0).exp() * 0.62;
             let inner_ember = (-dist * dist / 950.0).exp() * 0.25;
             let alpha = (ring_core + ring_halo + inner_ember).clamp(0.0, 1.0);
             if alpha > 0.01 {
