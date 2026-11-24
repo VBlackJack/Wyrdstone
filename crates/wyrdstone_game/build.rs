@@ -25,6 +25,9 @@ fn main() {
             let mut res = winresource::WindowsResource::new();
             res.set_icon("../../assets/sprites/app_icon.ico");
             if let Err(err) = res.compile() {
+                if std::env::var("PROFILE").as_deref() == Ok("release") {
+                    panic!("Failed to embed Windows icon in release build: {err}");
+                }
                 println!("cargo:warning=Failed to embed Windows icon: {err}");
             }
         }

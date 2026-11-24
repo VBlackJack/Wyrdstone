@@ -10,38 +10,67 @@ permissions:
   contents: read
 
 env:
+  RUST_TOOLCHAIN: "1.97.1"
   ANDROID_NDK_VERSION: 27.2.12479018
   CARGO_APK_VERSION: 0.10.0
 
 jobs:
-  build-windows:
+  verify:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Verify tag matches Cargo workspace version
+        shell: bash
+        run: |
+          pkg_ver="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)"
+          tag_ver="${GITHUB_REF_NAME#v}"
+          if [ "$pkg_ver" != "$tag_ver" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match Cargo.toml workspace version ${pkg_ver}"
+            exit 1
+          fi
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
+
+  build-windows:
+    needs: [verify]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build Windows release binary
-        run: cargo build --release --bin wyrdstone
+        run: cargo build --release --locked --bin wyrdstone
       - name: Rename Windows binary
         shell: bash
         run: cp target/release/wyrdstone.exe "wyrdstone-${{ github.ref_name }}-windows-x64.exe"
       - name: Upload Windows binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wyrdstone-windows-x64
           path: wyrdstone-${{ github.ref_name }}-windows-x64.exe
 
   build-android:
+    needs: [verify]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-linux-android
-      - uses: Swatinem/rust-cache@v2
-      - uses: android-actions/setup-android@v3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
       - name: Install Android SDK 35, build-tools, and NDK
         run: |
           sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;${ANDROID_NDK_VERSION}"
@@ -67,9 +96,10 @@ jobs:
           echo "::add-mask::$KEYSTORE_PASSWORD"
           echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
       - name: Build Android ARM64 APK
-        run: cargo apk build --release -p wyrdstone_game --lib
+        run: cargo apk build --release --locked -p wyrdstone_game --lib
       - name: Rename Android APK
         run: |
+          shopt -s nullglob
           apk_files=(target/release/apk/*.apk)
           if [ "${#apk_files[@]}" -ne 1 ]; then
             echo "::error::Expected exactly one APK, found ${#apk_files[@]}"
@@ -77,7 +107,7 @@ jobs:
           fi
           cp "${apk_files[0]}" "wyrdstone-${{ github.ref_name }}-android-arm64.apk"
       - name: Upload Android APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wyrdstone-android-arm64
           path: wyrdstone-${{ github.ref_name }}-android-arm64.apk
@@ -88,13 +118,20 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
+      - name: Generate SHA-256 checksums
+        run: |
+          mkdir -p release-assets
+          cp artifacts/wyrdstone-windows-x64/*.exe release-assets/
+          cp artifacts/wyrdstone-android-arm64/*.apk release-assets/
+          (cd release-assets && sha256sum *.exe *.apk > SHA256SUMS.txt)
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           files: |
-            artifacts/wyrdstone-windows-x64/*.exe
-            artifacts/wyrdstone-android-arm64/*.apk
+            release-assets/*.exe
+            release-assets/*.apk
+            release-assets/SHA256SUMS.txt

@@ -23,6 +23,8 @@ GEMINI.md
 # Save files and runtime logs
 *.log
 wyrdstone_save.json
+wyrdstone_save.json.*
+wyrdstone_backup.json
 
 # OS / IDE
 .DS_Store

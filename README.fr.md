@@ -37,8 +37,8 @@ Prérequis : Android SDK + NDK (`ANDROID_HOME`, `ANDROID_NDK_HOME`), cible Rust 
 
 ```powershell
 rustup target add aarch64-linux-android
-cargo install cargo-apk
-cargo apk build -p wyrdstone_game --release
+cargo install cargo-apk --version 0.10.0 --locked
+cargo apk build -p wyrdstone_game --lib --release
 ```
 
 ### Signature de release (Android)
@@ -55,7 +55,7 @@ keytool -genkeypair -v -keystore release.keystore -alias wyrdstone -keyalg RSA -
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore")) | Set-Clipboard
 ```
 
-Coller le contenu du presse-papiers dans `ANDROID_KEYSTORE_BASE64`. Le job échoue avec un message clair si l'un des secrets est absent. En local, définir `CARGO_APK_RELEASE_KEYSTORE` et `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` avant `cargo apk build --release`.
+Coller le contenu du presse-papiers dans `ANDROID_KEYSTORE_BASE64`. Le job échoue avec un message clair si l'un des secrets est absent. En local, définir `CARGO_APK_RELEASE_KEYSTORE` et `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` avant `cargo apk build -p wyrdstone_game --lib --release`.
 
 ## Licence
 
