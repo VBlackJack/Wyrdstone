@@ -26,6 +26,7 @@ pub mod i18n;
 pub mod level;
 pub mod patron;
 pub mod save;
+pub mod turn;
 pub mod validate;
 
 pub use achievements::{achievement_progress, is_achievement_unlocked, AchievementDef, ClanRank};
@@ -47,3 +48,7 @@ pub use level::{
 };
 pub use patron::{PatronGod, FURY_CHARGE_MAX};
 pub use save::{GameDataBundle, SaveData};
+pub use turn::{
+    BonusBlast, BossHit, ClearPreview, ClearReport, ClearStatsDelta, FuryOutcome, RelicReport,
+    SwapRejected, ToolRejected, Turn, TurnEnd, TurnOrigin, TurnStep, VICTORY_SKIP_MAX_DETONATIONS,
+};

@@ -71,14 +71,15 @@ pub fn describe(event: &Event) -> String {
         Event::Rejected => "rejected".to_string(),
         Event::NoBooster => "no-booster".to_string(),
         Event::Pending(p) => format!(
-            "pending combo={} consumes_turn={} direct={} cells=[{}] spawned={:?} converted={:?} fired={:?}",
+            "pending combo={} consumes_turn={} direct={} cells=[{}] spawned={:?} converted={:?} fired={:?} | {}",
             p.combo,
             p.consumes_turn,
             p.direct_blast,
             cells_text(&p.cells),
             p.spawned,
             p.converted,
-            p.fired
+            p.fired,
+            snap_text(&p.snap)
         ),
         Event::Cleared(c) => format!(
             "cleared combo={} raw={} runes={} cleared=[{}] fall={}:{:016x} boss_hit={} phase2={:?} | {}",

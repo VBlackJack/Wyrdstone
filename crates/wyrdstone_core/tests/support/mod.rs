@@ -201,6 +201,7 @@ pub struct PendingEvent {
     pub converted: Vec<(CellPos, Booster)>,
     pub direct_blast: bool,
     pub fired: Vec<(CellPos, Booster)>,
+    pub snap: Snap,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -318,6 +319,7 @@ pub fn pending_event(
     combo: u32,
     consumes_turn: bool,
     fired: Vec<(CellPos, Booster)>,
+    snap: Snap,
 ) -> PendingEvent {
     let mut fired = fired;
     fired.sort_by_key(|(p, _)| (p.row, p.col));
@@ -329,6 +331,7 @@ pub fn pending_event(
         converted: prepared.converted_boosters.clone(),
         direct_blast: prepared.is_direct_blast,
         fired,
+        snap,
     }
 }
 
@@ -661,6 +664,7 @@ fn legacy_turn_events(w: &mut World, first: LegacyPending, events: &mut Vec<Even
             pending.combo,
             pending.consumes_turn,
             fired,
+            snap(w),
         )));
         let end = legacy_clear_end(w, &pending);
         events.push(Event::Cleared(ClearedEvent {

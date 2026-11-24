@@ -24,6 +24,7 @@ use crate::balance::{
 use crate::board::ActiveTool;
 use crate::boss::BossDef;
 use crate::patron::PatronGod;
+use crate::turn::ClearStatsDelta;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -302,6 +303,14 @@ pub struct ClanStats {
     pub win_streak: u32,
     #[serde(default)]
     pub best_win_streak: u32,
+}
+
+impl ClanStats {
+    /// Applies the lifetime statistics earned by one committed clear step.
+    pub fn record_clear(&mut self, delta: ClearStatsDelta) {
+        self.total_runes_cleared += delta.runes_cleared;
+        self.best_combo = self.best_combo.max(delta.combo);
+    }
 }
 
 /// Mutable player progression in the Wyrdstone Fjord.
