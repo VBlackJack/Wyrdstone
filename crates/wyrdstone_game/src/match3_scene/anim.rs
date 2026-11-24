@@ -826,7 +826,7 @@ pub(super) fn spawn_tool_vfx(
     }
 }
 
-fn spawn_floating_score(
+pub(super) fn spawn_floating_score(
     commands: &mut Commands,
     cells: &[CellPos],
     label: String,
@@ -1331,12 +1331,42 @@ pub fn tick_board_animation(
                                 .unwrap_or_default();
                             (bname, wname)
                         });
+                let boss_staggered_name = report
+                    .boss
+                    .as_ref()
+                    .filter(|hit| hit.staggered)
+                    .map(|hit| ctx.data.i18n.t(&hit.name_key).to_string());
                 let mut fall_map = HashMap::new();
                 for fm in &report.fall {
                     fall_map.insert(CellPos::new(fm.col, fm.to_row), fm.from_row);
                 }
                 if boss_damaged {
                     input_state.boss_hit_flash_secs = 0.38;
+                }
+                if report.overdrive_triggered {
+                    play_sfx(&mut commands, &sound_bank, SfxKind::FuryUnleash);
+                    input_state.shake_secs = SHAKE_DURATION_SECS * 1.35;
+                    spawn_floating_score(
+                        &mut commands,
+                        &report.cells,
+                        ctx.data.i18n.t("match3.callout.overdrive").to_string(),
+                        COLOR_ACCENT_GOLD,
+                        34.0,
+                        &input_state,
+                    );
+                }
+                if let Some(stagger_boss) = boss_staggered_name {
+                    play_sfx(&mut commands, &sound_bank, SfxKind::FuryReady);
+                    spawn_floating_score(
+                        &mut commands,
+                        &report.cells,
+                        ctx.data
+                            .i18n
+                            .t_fmt("match3.boss.staggered", &[("boss", stagger_boss)]),
+                        COLOR_ACCENT_TEAL_TEXT,
+                        30.0,
+                        &input_state,
+                    );
                 }
                 if let Some((bname, wname)) = boss_phase2_info {
                     play_sfx(&mut commands, &sound_bank, SfxKind::BossRiposte);

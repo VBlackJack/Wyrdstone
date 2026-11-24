@@ -109,6 +109,10 @@ pub struct Match3BossHpText;
 #[derive(Component)]
 pub struct Match3BossHpFill;
 
+/// Marker on the Ragnarok Overdrive gauge / banner text for in-place updates.
+#[derive(Component)]
+pub struct Match3OverdriveText;
+
 /// Marker on the bottom HUD tooltip/hint text so hovering tools/Fury updates in-place.
 #[derive(Component)]
 pub struct Match3TooltipText;
@@ -1246,6 +1250,20 @@ fn execute_patron_fury(
         };
     } else {
         // Loki (2 boosters) or Odin (+2 moves & bomb): refresh board immediately.
+        if ctx_ref.active_session.as_mut().is_some_and(|s| {
+            let triggered = s.just_triggered_overdrive;
+            s.just_triggered_overdrive = false;
+            triggered
+        }) {
+            anim::spawn_floating_score(
+                commands,
+                &[CellPos::new(cols / 2, rows / 2)],
+                ctx_ref.data.i18n.t("match3.callout.overdrive").to_string(),
+                COLOR_ACCENT_GOLD,
+                34.0,
+                input_state,
+            );
+        }
         input_state.dirty_board = true;
     }
 }

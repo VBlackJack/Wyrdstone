@@ -482,5 +482,12 @@
   "save.warning.newer_version": "Cette sauvegarde provient d'une version plus récente de Wyrdstone. Mettez le jeu à jour pour la continuer ; la progression actuelle ne sera pas enregistrée.",
   "save.warning.read_only": "Le fichier de sauvegarde est illisible. La progression ne sera pas enregistrée tant que le problème n'est pas corrigé. Le fichier d'origine a été conservé. Relancez le jeu pour charger votre progression.",
   "save.notice.unreadable_backed_up": "La sauvegarde est illisible. Une copie a été conservée à côté. Une nouvelle saga a démarré.",
-  "city.header.blessing_pill": "{name} : {desc}"
+  "city.header.blessing_pill": "{name} : {desc}",
+  "patron.favored_rune_hint": "Rune favorite : {rune} (+{pct}% Fureur)",
+  "match3.hud.overdrive_gauge": "Ragnarok : {pct}%",
+  "match3.hud.overdrive_active": "RAGNAROK x2 ({turns}t)",
+  "match3.callout.overdrive": "SURCHARGE RAGNAROK ! SCORE x2",
+  "match3.boss.exposed_tag": "[EXPOSÉ {turns}t]",
+  "match3.boss.stagger_hint": "Étourdir : {tiles}+ {rune} ou Combo x{combo} !",
+  "match3.boss.staggered": "{boss} ÉTOURDI ! EXPOSÉ !"
 }

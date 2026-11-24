@@ -19,8 +19,8 @@
 use super::{
     FuryReadyPulse, LowMovesPulse, Match3BossHpFill, Match3BossHpText, Match3Cleanup,
     Match3ComboText, Match3FuryText, Match3HudBar, Match3HudRoot, Match3MovesText,
-    Match3ObjectiveText, Match3ScoreText, Match3TimerText, Match3TooltipText, Match3UiAction,
-    LOW_MOVES_THRESHOLD,
+    Match3ObjectiveText, Match3OverdriveText, Match3ScoreText, Match3TimerText, Match3TooltipText,
+    Match3UiAction, LOW_MOVES_THRESHOLD,
 };
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
@@ -107,7 +107,7 @@ fn boss_hp_label(i18n: &I18nCatalog, boss: &BossState, weakness_mult: u32) -> St
     } else {
         "match3.boss.hp"
     };
-    i18n.t_fmt(
+    let mut base = i18n.t_fmt(
         boss_hp_key,
         &[
             ("boss", i18n.t(&boss.def.name_key).to_string()),
@@ -120,7 +120,28 @@ fn boss_hp_label(i18n: &I18nCatalog, boss: &BossState, weakness_mult: u32) -> St
             ),
             ("turns", boss.turns_until_riposte.to_string()),
         ],
-    )
+    );
+    if boss.exposed_turns > 0 {
+        base.push(' ');
+        base.push_str(&i18n.t_fmt(
+            "match3.boss.exposed_tag",
+            &[("turns", boss.exposed_turns.to_string())],
+        ));
+    }
+    base
+}
+
+fn overdrive_label(i18n: &I18nCatalog, session: &LevelSession) -> String {
+    if session.overdrive_turns_left > 0 {
+        i18n.t_fmt(
+            "match3.hud.overdrive_active",
+            &[("turns", session.overdrive_turns_left.to_string())],
+        )
+    } else {
+        let pct = ((session.overdrive_charge as f32 / session.overdrive_max.max(1) as f32) * 100.0)
+            .round() as u32;
+        i18n.t_fmt("match3.hud.overdrive_gauge", &[("pct", pct.to_string())])
+    }
 }
 
 /// Which optional top-bar banner is showing next to the Undo button.
@@ -143,9 +164,12 @@ pub struct HudShape {
     boss_phase2: bool,
     boss_hit_flash: bool,
     boss_riposte_imminent: bool,
+    boss_exposed_turns: u32,
     boss_weakness: Option<RuneType>,
     banner: HudBanner,
     fury_ready: bool,
+    overdrive_active: bool,
+    overdrive_turns_left: u32,
     objectives_complete: Vec<bool>,
 }
 
@@ -188,9 +212,12 @@ pub(super) fn hud_shape(
         boss_phase2: boss.is_some_and(|b| b.is_phase2()),
         boss_hit_flash: boss.is_some_and(|b| b.last_damage_dealt > 0),
         boss_riposte_imminent: boss.is_some_and(|b| b.turns_until_riposte <= 1),
+        boss_exposed_turns: boss.map_or(0, |b| b.exposed_turns),
         boss_weakness: boss.map(|b| b.active_weakness()),
         banner,
         fury_ready: session.can_trigger_fury(),
+        overdrive_active: session.overdrive_turns_left > 0,
+        overdrive_turns_left: session.overdrive_turns_left,
         objectives_complete: session.objectives.iter().map(|o| o.is_complete()).collect(),
     }
 }
@@ -208,6 +235,7 @@ type HudTextItems = (
     Option<&'static Match3ComboText>,
     Option<&'static Match3FuryText>,
     Option<&'static Match3BossHpText>,
+    Option<&'static Match3OverdriveText>,
 );
 
 type HudTextFilter = Or<(
@@ -217,6 +245,7 @@ type HudTextFilter = Or<(
     With<Match3ComboText>,
     With<Match3FuryText>,
     With<Match3BossHpText>,
+    With<Match3OverdriveText>,
 )>;
 
 /// Dynamic HUD texts and boss HP bar that cascade steps rewrite in place instead of rebuilding the whole HUD.
@@ -234,7 +263,8 @@ impl HudTextQueries<'_, '_> {
         };
         let i18n = &ctx.data.i18n;
         let weakness_mult = ctx.data.balance.boss.weakness_multiplier;
-        for (mut text, moves, score, objective, combo, fury, boss_hp) in &mut self.texts {
+        for (mut text, moves, score, objective, combo, fury, boss_hp, overdrive) in &mut self.texts
+        {
             let label = if moves.is_some() {
                 moves_label(i18n, session)
             } else if score.is_some() {
@@ -253,6 +283,8 @@ impl HudTextQueries<'_, '_> {
                     Some(boss) => boss_hp_label(i18n, boss, weakness_mult),
                     None => continue,
                 }
+            } else if overdrive.is_some() {
+                overdrive_label(i18n, session)
             } else {
                 continue;
             };
@@ -428,6 +460,43 @@ pub(super) fn spawn_match3_hud(
                         },
                         TextColor(COLOR_TEXT_PRIMARY),
                     ));
+                    if session.session_tuning.overdrive_turns > 0 {
+                        let od_active = session.overdrive_turns_left > 0;
+                        stats
+                            .spawn((
+                                Node {
+                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(2.0)),
+                                    border: UiRect::all(Val::Px(1.5)),
+                                    ..default()
+                                },
+                                BackgroundColor(if od_active {
+                                    Color::srgba(0.42, 0.22, 0.04, 0.95)
+                                } else {
+                                    COLOR_PANEL_CARD
+                                }),
+                                BorderColor(if od_active {
+                                    COLOR_ACCENT_GOLD
+                                } else {
+                                    COLOR_PANEL_BORDER
+                                }),
+                                BorderRadius::all(Val::Px(6.0)),
+                            ))
+                            .with_children(|od| {
+                                od.spawn((
+                                    Match3OverdriveText,
+                                    Text::new(overdrive_label(i18n, session)),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(if od_active {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_ACCENT_TEAL_TEXT
+                                    }),
+                                ));
+                            });
+                    }
                 });
 
                 top.spawn(Node {
@@ -563,6 +632,43 @@ pub(super) fn spawn_match3_hud(
                                         BackgroundColor(COLOR_ACCENT_GOLD),
                                     ));
                                 });
+                                if boss.turns_until_riposte <= 1 && !boss.is_defeated() {
+                                    bcol.spawn((
+                                        Text::new(
+                                            i18n.t_fmt(
+                                                "match3.boss.stagger_hint",
+                                                &[
+                                                    (
+                                                        "tiles",
+                                                        ctx.data
+                                                            .balance
+                                                            .boss
+                                                            .stagger_weakness_tiles
+                                                            .to_string(),
+                                                    ),
+                                                    (
+                                                        "rune",
+                                                        i18n.t(boss.active_weakness().i18n_key())
+                                                            .to_string(),
+                                                    ),
+                                                    (
+                                                        "combo",
+                                                        ctx.data
+                                                            .balance
+                                                            .boss
+                                                            .stagger_min_combo
+                                                            .to_string(),
+                                                    ),
+                                                ],
+                                            ),
+                                        ),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                    ));
+                                }
                             });
                         });
                     } else {
@@ -949,6 +1055,19 @@ pub(super) fn spawn_match3_hud(
                                         ..default()
                                     },
                                     BorderRadius::all(Val::Px(6.0)),
+                                ));
+                            }
+                            if let Some(fav_img) =
+                                textures.runes.get(&session.patron.favored_rune()).cloned()
+                            {
+                                let fav_px = if is_compact { 14.0 } else { 18.0 };
+                                btn.spawn((
+                                    ImageNode::new(fav_img),
+                                    Node {
+                                        width: Val::Px(fav_px),
+                                        height: Val::Px(fav_px),
+                                        ..default()
+                                    },
                                 ));
                             }
                             btn.spawn((
@@ -1448,9 +1567,12 @@ mod tests {
             boss_phase2: false,
             boss_hit_flash: false,
             boss_riposte_imminent: false,
+            boss_exposed_turns: 0,
             boss_weakness: None,
             banner: HudBanner::None,
             fury_ready: false,
+            overdrive_active: false,
+            overdrive_turns_left: 0,
             objectives_complete: vec![false, false],
         }
     }

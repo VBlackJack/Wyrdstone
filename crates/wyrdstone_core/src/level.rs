@@ -344,6 +344,12 @@ pub struct LevelSession {
     pub fury_charge_bonus_pct: u32,
     pub fury_resource_bonus_pct: u32,
     pub boss_damage_bonus_pct: u32,
+    pub overdrive_charge: u32,
+    pub overdrive_max: u32,
+    pub overdrive_turns_left: u32,
+    pub just_triggered_overdrive: bool,
+    pub overdrive_ignited_this_turn: bool,
+    pub session_tuning: SessionTuning,
     pub daily_blessing: Option<DailyBlessing>,
     pub boss: Option<BossState>,
 }
@@ -547,8 +553,56 @@ impl LevelSession {
             fury_charge_bonus_pct: city_bonuses.fury_charge_bonus_pct,
             fury_resource_bonus_pct: 0,
             boss_damage_bonus_pct: 0,
+            overdrive_charge: 0,
+            overdrive_max: SessionTuning::default().overdrive_charge_max.max(1),
+            overdrive_turns_left: 0,
+            just_triggered_overdrive: false,
+            overdrive_ignited_this_turn: false,
+            // Legacy/characterization sessions omit `apply_session_tuning`; live game sessions
+            // attach `&balance.session` explicitly on start.
+            session_tuning: SessionTuning {
+                patron_favored_rune_fury_pct: 0,
+                overdrive_turns: 0,
+                ..SessionTuning::default()
+            },
             daily_blessing: None,
             boss,
+        }
+    }
+
+    /// Captures runtime session tuning (from BalanceConfig) and aligns Overdrive / Stagger limits.
+    pub fn apply_session_tuning(&mut self, tuning: &SessionTuning) {
+        self.session_tuning = *tuning;
+        self.overdrive_max = tuning.overdrive_charge_max.max(1);
+        if let Some(boss) = self.boss.as_mut() {
+            boss.stagger_enabled = true;
+        }
+    }
+
+    /// Adds charge toward Ragnarok Overdrive, igniting Overdrive when reaching `overdrive_max`.
+    pub fn add_overdrive_charge(&mut self, amount: u32) {
+        if amount == 0
+            || self.session_tuning.overdrive_turns == 0
+            || self.overdrive_turns_left > 0
+            || self.outcome != LevelOutcome::InProgress
+        {
+            return;
+        }
+        self.overdrive_charge = self.overdrive_charge.saturating_add(amount);
+        if self.overdrive_charge >= self.overdrive_max {
+            self.overdrive_charge = 0;
+            self.overdrive_turns_left = self.session_tuning.overdrive_turns;
+            self.just_triggered_overdrive = true;
+            self.overdrive_ignited_this_turn = true;
+        }
+    }
+
+    /// Decrements Ragnarok Overdrive duration at the end of a move-consuming turn.
+    pub fn tick_overdrive_if_needed(&mut self) {
+        if self.overdrive_ignited_this_turn {
+            self.overdrive_ignited_this_turn = false;
+        } else if self.overdrive_turns_left > 0 {
+            self.overdrive_turns_left -= 1;
         }
     }
 
@@ -640,6 +694,7 @@ impl LevelSession {
             }
             PatronGod::Thor | PatronGod::Loki => {}
         }
+        self.add_overdrive_charge(self.session_tuning.overdrive_charge_on_fury);
         (prepared, spawned)
     }
 
@@ -721,11 +776,22 @@ impl LevelSession {
         self.moves_left = self.moves_left.saturating_sub(1);
         self.turn_ice_broken = 0;
         self.last_frost_spread = None;
+        self.just_triggered_overdrive = false;
+        self.overdrive_ignited_this_turn = false;
+        if let Some(boss) = self.boss.as_mut() {
+            boss.reset_turn_stagger_tracking();
+        }
     }
 
     /// Applies score and objective progress from a single animated clear step without ending the turn yet.
     pub fn apply_step_progress(&mut self, step: &MatchStepOutcome) {
-        let boosted_score = add_pct_u32(step.score_gained, self.score_bonus_pct);
+        let effective_score_pct = if self.overdrive_turns_left > 0 {
+            self.score_bonus_pct
+                .saturating_add(self.session_tuning.overdrive_score_bonus_pct)
+        } else {
+            self.score_bonus_pct
+        };
+        let boosted_score = add_pct_u32(step.score_gained, effective_score_pct);
         self.score = self.score.saturating_add(boosted_score);
         let is_relic_only_step = step.relics_dropped > 0
             && step.max_combo == 0
@@ -744,6 +810,15 @@ impl LevelSession {
             .values()
             .copied()
             .fold(0u32, u32::saturating_add);
+        let favored_tiles = step
+            .cleared_runes
+            .get(&self.patron.favored_rune())
+            .copied()
+            .unwrap_or(0);
+        let favored_fury_bonus = favored_tiles
+            .saturating_mul(FURY_PER_TILE)
+            .saturating_mul(self.session_tuning.patron_favored_rune_fury_pct)
+            / 100;
         let obstacles_broken = step
             .ice_broken
             .saturating_add(step.chains_broken)
@@ -754,17 +829,43 @@ impl LevelSession {
             .saturating_mul(FURY_PER_COMBO_STEP);
         let raw_fury = tiles_cleared
             .saturating_mul(FURY_PER_TILE)
+            .saturating_add(favored_fury_bonus)
             .saturating_add(obstacles_broken.saturating_mul(FURY_PER_OBSTACLE))
             .saturating_add(combo_bonus);
         let fury_gain = add_pct_u32(raw_fury, self.fury_charge_bonus_pct);
         self.fury = self.fury.saturating_add(fury_gain).min(self.fury_max);
 
+        let overdrive_boss_pct = if self.overdrive_turns_left > 0 {
+            self.session_tuning.overdrive_boss_damage_pct
+        } else {
+            0
+        };
+        if !is_relic_only_step && self.overdrive_turns_left == 0 {
+            let combo_charge = step
+                .max_combo
+                .saturating_sub(1)
+                .saturating_mul(self.session_tuning.overdrive_charge_per_combo);
+            let booster_charge = step
+                .boosters_used
+                .saturating_mul(self.session_tuning.overdrive_charge_per_booster);
+            self.add_overdrive_charge(combo_charge.saturating_add(booster_charge));
+        }
+
         if !is_relic_only_step {
             if let Some(boss) = self.boss.as_mut() {
+                if boss.stagger_enabled
+                    && step.boosters_used > 0
+                    && !boss.is_defeated()
+                    && boss.turns_until_riposte == 1
+                    && !boss.turn_stagger_triggered
+                {
+                    boss.trigger_stagger();
+                }
                 boss.apply_step_damage(
                     step,
                     self.score_bonus_pct
-                        .saturating_add(self.boss_damage_bonus_pct),
+                        .saturating_add(self.boss_damage_bonus_pct)
+                        .saturating_add(overdrive_boss_pct),
                 );
             }
         }
@@ -818,9 +919,11 @@ impl LevelSession {
         self.board.tick_cursed_runes()
     }
 
-    /// On frost-spread levels, freezes 1 adjacent cell if no ice was broken during this turn.
+    /// On frost-spread levels, freezes 1 adjacent cell if no ice was broken during this turn
+    /// and Ragnarok Overdrive is not burning off the frost.
     pub fn apply_frost_spread_if_needed<R: Rng>(&mut self, rng: &mut R) -> Option<CellPos> {
         if !self.level.frost_spread
+            || self.overdrive_turns_left > 0
             || self.turn_ice_broken > 0
             || self.objectives.iter().all(ObjectiveProgress::is_complete)
         {
@@ -833,6 +936,9 @@ impl LevelSession {
 
     /// Evaluates victory or defeat after all cascades of a turn have finished.
     pub fn finalize_turn(&mut self, balance: &BalanceConfig) {
+        if let Some(boss) = self.boss.as_mut() {
+            boss.just_staggered = false;
+        }
         if self.outcome != LevelOutcome::InProgress {
             return;
         }

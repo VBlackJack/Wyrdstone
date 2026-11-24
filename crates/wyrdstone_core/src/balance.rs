@@ -55,6 +55,14 @@ const DEFAULT_THREE_STAR_MOVES_RATIO: f32 = 0.30;
 const DEFAULT_TWO_STAR_MOVES_RATIO: f32 = 0.12;
 const DEFAULT_THOR_FURY_STRIKE_CELLS: usize = 4;
 const DEFAULT_LOKI_FURY_BOOSTERS: u32 = 2;
+const DEFAULT_PATRON_FAVORED_RUNE_FURY_PCT: u32 = 50;
+const DEFAULT_OVERDRIVE_CHARGE_MAX: u32 = 100;
+const DEFAULT_OVERDRIVE_TURNS: u32 = 3;
+const DEFAULT_OVERDRIVE_SCORE_BONUS_PCT: u32 = 100;
+const DEFAULT_OVERDRIVE_BOSS_DAMAGE_PCT: u32 = 50;
+const DEFAULT_OVERDRIVE_CHARGE_PER_COMBO: u32 = 22;
+const DEFAULT_OVERDRIVE_CHARGE_PER_BOOSTER: u32 = 25;
+const DEFAULT_OVERDRIVE_CHARGE_ON_FURY: u32 = 35;
 
 // Daily Trial tuning defaults.
 const DEFAULT_DAILY_GLACIAL_COLLECT_MIN: u32 = 20;
@@ -119,6 +127,10 @@ const DEFAULT_BOSS_WEAKNESS_MULTIPLIER: u32 = 2;
 const DEFAULT_BOSS_COMBO_DAMAGE_STEP: f32 = 0.35;
 const DEFAULT_BOSS_PHASE2_HP_PCT: u32 = 50;
 const DEFAULT_BOSS_CURSE_TURNS: u8 = 5;
+const DEFAULT_BOSS_STAGGER_WEAKNESS_TILES: u32 = 4;
+const DEFAULT_BOSS_STAGGER_MIN_COMBO: u32 = 3;
+const DEFAULT_BOSS_EXPOSED_TURNS: u32 = 2;
+const DEFAULT_BOSS_EXPOSED_DAMAGE_BONUS_PCT: u32 = 50;
 
 /// One day of the Fjord Login Tribute cycle: resources plus an optional Runic Tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,6 +179,14 @@ pub struct SessionTuning {
     pub two_star_moves_ratio: f32,
     pub thor_fury_strike_cells: usize,
     pub loki_fury_boosters: u32,
+    pub patron_favored_rune_fury_pct: u32,
+    pub overdrive_charge_max: u32,
+    pub overdrive_turns: u32,
+    pub overdrive_score_bonus_pct: u32,
+    pub overdrive_boss_damage_pct: u32,
+    pub overdrive_charge_per_combo: u32,
+    pub overdrive_charge_per_booster: u32,
+    pub overdrive_charge_on_fury: u32,
 }
 
 impl Default for SessionTuning {
@@ -182,6 +202,14 @@ impl Default for SessionTuning {
             two_star_moves_ratio: DEFAULT_TWO_STAR_MOVES_RATIO,
             thor_fury_strike_cells: DEFAULT_THOR_FURY_STRIKE_CELLS,
             loki_fury_boosters: DEFAULT_LOKI_FURY_BOOSTERS,
+            patron_favored_rune_fury_pct: DEFAULT_PATRON_FAVORED_RUNE_FURY_PCT,
+            overdrive_charge_max: DEFAULT_OVERDRIVE_CHARGE_MAX,
+            overdrive_turns: DEFAULT_OVERDRIVE_TURNS,
+            overdrive_score_bonus_pct: DEFAULT_OVERDRIVE_SCORE_BONUS_PCT,
+            overdrive_boss_damage_pct: DEFAULT_OVERDRIVE_BOSS_DAMAGE_PCT,
+            overdrive_charge_per_combo: DEFAULT_OVERDRIVE_CHARGE_PER_COMBO,
+            overdrive_charge_per_booster: DEFAULT_OVERDRIVE_CHARGE_PER_BOOSTER,
+            overdrive_charge_on_fury: DEFAULT_OVERDRIVE_CHARGE_ON_FURY,
         }
     }
 }
@@ -301,6 +329,10 @@ pub struct BossTuning {
     pub combo_damage_step: f32,
     pub phase2_hp_pct: u32,
     pub curse_turns: u8,
+    pub stagger_weakness_tiles: u32,
+    pub stagger_min_combo: u32,
+    pub exposed_turns: u32,
+    pub exposed_damage_bonus_pct: u32,
 }
 
 impl Default for BossTuning {
@@ -312,6 +344,10 @@ impl Default for BossTuning {
             combo_damage_step: DEFAULT_BOSS_COMBO_DAMAGE_STEP,
             phase2_hp_pct: DEFAULT_BOSS_PHASE2_HP_PCT,
             curse_turns: DEFAULT_BOSS_CURSE_TURNS,
+            stagger_weakness_tiles: DEFAULT_BOSS_STAGGER_WEAKNESS_TILES,
+            stagger_min_combo: DEFAULT_BOSS_STAGGER_MIN_COMBO,
+            exposed_turns: DEFAULT_BOSS_EXPOSED_TURNS,
+            exposed_damage_bonus_pct: DEFAULT_BOSS_EXPOSED_DAMAGE_BONUS_PCT,
         }
     }
 }

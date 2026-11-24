@@ -482,5 +482,12 @@
   "save.warning.newer_version": "This save was made by a newer version of Wyrdstone. Update the game to continue it; progress made now will not be saved.",
   "save.warning.read_only": "The save file could not be read. Progress will not be saved until the problem is fixed. The original file was kept. Restart the game to load your progress.",
   "save.notice.unreadable_backed_up": "The save could not be read. A copy of it was kept next to it. A new saga was started.",
-  "city.header.blessing_pill": "{name}: {desc}"
+  "city.header.blessing_pill": "{name}: {desc}",
+  "patron.favored_rune_hint": "Attuned Rune: {rune} (+{pct}% Fury)",
+  "match3.hud.overdrive_gauge": "Ragnarok: {pct}%",
+  "match3.hud.overdrive_active": "RAGNAROK x2 ({turns}t)",
+  "match3.callout.overdrive": "RAGNAROK OVERDRIVE! 2x SCORE",
+  "match3.boss.exposed_tag": "[EXPOSED {turns}t]",
+  "match3.boss.stagger_hint": "Stagger: {tiles}+ {rune} or {combo}x Combo!",
+  "match3.boss.staggered": "{boss} STAGGERED! EXPOSED!"
 }

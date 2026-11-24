@@ -86,6 +86,8 @@ pub struct BossHit {
     pub damage: u32,
     /// True when this step pushed the boss into phase 2 (the one-shot flag is consumed here).
     pub entered_phase2: bool,
+    /// True when this step staggered the boss, cancelling an imminent riposte.
+    pub staggered: bool,
     /// Localization key of the boss name.
     pub name_key: String,
 }
@@ -112,6 +114,8 @@ pub struct ClearReport {
     pub fall: Vec<FallMove>,
     pub boss: Option<BossHit>,
     pub stats: ClearStatsDelta,
+    /// True when this step ignited Ragnarok Overdrive.
+    pub overdrive_triggered: bool,
 }
 
 /// Relics that reached the bottom of their column after a fall.
@@ -455,17 +459,23 @@ impl Turn {
         if let Some(boss) = session.boss.as_mut() {
             let damage = boss.last_damage_dealt;
             let entered_phase2 = boss.just_entered_phase2;
+            let staggered = boss.just_staggered;
             if entered_phase2 {
                 boss.just_entered_phase2 = false;
             }
-            if damage > 0 || entered_phase2 {
+            if staggered {
+                boss.just_staggered = false;
+            }
+            if damage > 0 || entered_phase2 || staggered {
                 boss_hit = Some(BossHit {
                     damage,
                     entered_phase2,
+                    staggered,
                     name_key: boss.def.name_key.clone(),
                 });
             }
         }
+        let overdrive_triggered = std::mem::take(&mut session.just_triggered_overdrive);
         let fall = session.board.apply_gravity_and_refill_tracked(rng);
         ClearReport {
             combo,
@@ -479,6 +489,7 @@ impl Turn {
                 runes_cleared,
                 combo,
             },
+            overdrive_triggered,
         }
     }
 
@@ -537,6 +548,7 @@ impl Turn {
                     .as_ref()
                     .map(|boss| (hits, boss.def.name_key.clone()));
             }
+            session.tick_overdrive_if_needed();
         }
         // The shuffle check is unconditional, even for tool and fury turns.
         let mut shuffled = false;

@@ -1471,6 +1471,33 @@ pub(super) fn spawn_patrons_modal(
                                     },
                                     TextColor(COLOR_TEXT_PRIMARY),
                                 ));
+                                info.spawn((
+                                    Text::new(
+                                        i18n.t_fmt(
+                                            "patron.favored_rune_hint",
+                                            &[
+                                                (
+                                                    "rune",
+                                                    i18n.t(god.favored_rune().i18n_key())
+                                                        .to_string(),
+                                                ),
+                                                (
+                                                    "pct",
+                                                    ctx.data
+                                                        .balance
+                                                        .session
+                                                        .patron_favored_rune_fury_pct
+                                                        .to_string(),
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                ));
                             });
                         });
                         spawn_small_button_colored(

@@ -141,6 +141,16 @@ pub struct BossState {
     pub last_riposte_cells: Vec<CellPos>,
     pub phase2_triggered: bool,
     pub just_entered_phase2: bool,
+    /// Remaining turns during which the boss suffers Exposed bonus damage after being staggered.
+    pub exposed_turns: u32,
+    /// Weakness rune tiles cleared during the current player turn.
+    pub turn_weakness_tiles: u32,
+    /// True once the imminent riposte was staggered/interrupted this turn.
+    pub turn_stagger_triggered: bool,
+    /// One-shot flag consumed by Turn reporting when the boss is staggered.
+    pub just_staggered: bool,
+    /// True when the Stagger & Exposed tactical mechanic is enabled on this encounter.
+    pub stagger_enabled: bool,
     /// Combat tuning captured when the encounter started.
     pub tuning: BossTuning,
 }
@@ -163,6 +173,11 @@ impl BossState {
             last_riposte_cells: Vec::new(),
             phase2_triggered: false,
             just_entered_phase2: false,
+            exposed_turns: 0,
+            turn_weakness_tiles: 0,
+            turn_stagger_triggered: false,
+            just_staggered: false,
+            stagger_enabled: false,
         }
     }
 
@@ -220,9 +235,25 @@ impl BossState {
         let combo_mult =
             1.0 + step.max_combo.saturating_sub(1) as f32 * self.tuning.combo_damage_step;
         let boosted = (raw_dmg as f32 * combo_mult).round() as u32;
-        let total = add_pct_u32(boosted, score_bonus_pct);
+        let effective_bonus = if self.exposed_turns > 0 {
+            score_bonus_pct.saturating_add(self.tuning.exposed_damage_bonus_pct)
+        } else {
+            score_bonus_pct
+        };
+        let total = add_pct_u32(boosted, effective_bonus);
         self.hp = self.hp.saturating_sub(total);
         self.last_damage_dealt = total;
+        let weak_count = step.cleared_runes.get(&weakness).copied().unwrap_or(0);
+        self.turn_weakness_tiles = self.turn_weakness_tiles.saturating_add(weak_count);
+        if self.stagger_enabled
+            && !self.is_defeated()
+            && self.turns_until_riposte == 1
+            && !self.turn_stagger_triggered
+            && (self.turn_weakness_tiles >= self.tuning.stagger_weakness_tiles
+                || step.max_combo >= self.tuning.stagger_min_combo)
+        {
+            self.trigger_stagger();
+        }
         if !self.phase2_triggered && self.is_phase2() {
             self.phase2_triggered = true;
             self.just_entered_phase2 = true;
@@ -232,6 +263,21 @@ impl BossState {
         total
     }
 
+    /// Interrupts an imminent riposte (at countdown 1) and applies Exposed vulnerability.
+    pub fn trigger_stagger(&mut self) {
+        self.turn_stagger_triggered = true;
+        self.just_staggered = true;
+        self.turns_until_riposte = self.def.riposte_interval.max(1);
+        self.exposed_turns = self.exposed_turns.max(self.tuning.exposed_turns);
+    }
+
+    /// Resets per-turn stagger tracking at the start of a new move.
+    pub fn reset_turn_stagger_tracking(&mut self) {
+        self.turn_weakness_tiles = 0;
+        self.turn_stagger_triggered = false;
+        self.just_staggered = false;
+    }
+
     /// Ticks the riposte countdown after a player move; triggers boss counter-attack at 0.
     pub fn tick_turn_and_riposte<R: Rng>(
         &mut self,
@@ -239,8 +285,16 @@ impl BossState {
         rng: &mut R,
     ) -> Vec<CellPos> {
         self.last_riposte_cells.clear();
+        self.turn_weakness_tiles = 0;
         if self.is_defeated() {
             return Vec::new();
+        }
+        if self.turn_stagger_triggered {
+            self.turn_stagger_triggered = false;
+            return Vec::new();
+        }
+        if self.exposed_turns > 0 {
+            self.exposed_turns -= 1;
         }
         self.turns_until_riposte = self.turns_until_riposte.saturating_sub(1);
         if self.turns_until_riposte > 0 {

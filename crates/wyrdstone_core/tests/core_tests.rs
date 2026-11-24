@@ -2449,3 +2449,158 @@ fn find_hint_move_prioritizes_booster_combo_over_plain_match() {
     let hint = board.find_best_hint_move().expect("board has valid hints");
     assert_eq!(hint, (CellPos::new(4, 4), CellPos::new(5, 4)));
 }
+
+#[test]
+fn patron_favored_rune_grants_bonus_fury() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let level = data.level_by_id("forge_1").expect("forge_1").clone();
+    let mut rng = StdRng::seed_from_u64(401);
+    let mut thor_session = LevelSession::start_full(
+        level.clone(),
+        None,
+        CityBonuses::default(),
+        PatronGod::Thor,
+        None,
+        &mut rng,
+    );
+    thor_session.apply_session_tuning(&data.balance.session);
+    let mut freya_session = LevelSession::start_full(
+        level,
+        None,
+        CityBonuses::default(),
+        PatronGod::Freya,
+        None,
+        &mut rng,
+    );
+    freya_session.apply_session_tuning(&data.balance.session);
+
+    let mut step = wyrdstone_core::MatchStepOutcome {
+        valid: true,
+        max_combo: 1,
+        ..Default::default()
+    };
+    step.cleared_runes.insert(RuneType::Fire, 4);
+    thor_session.apply_step_progress(&step);
+    freya_session.apply_step_progress(&step);
+
+    // 4 tiles * 5 base = 20 Fury; Thor favors Fire (+50%) -> 30 Fury.
+    assert_eq!(freya_session.fury, 20);
+    assert_eq!(thor_session.fury, 30);
+}
+
+#[test]
+fn ragnarok_overdrive_ignites_doubles_score_blocks_frost_and_decays() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut level = data.level_by_id("forge_1").expect("forge_1").clone();
+    level.frost_spread = true;
+    let mut rng = StdRng::seed_from_u64(402);
+    let mut session = LevelSession::start_full(
+        level,
+        None,
+        CityBonuses::default(),
+        PatronGod::Thor,
+        None,
+        &mut rng,
+    );
+    session.apply_session_tuning(&data.balance.session);
+
+    // High combo + boosters charge Overdrive past 100 and ignite it.
+    let mut step = wyrdstone_core::MatchStepOutcome {
+        valid: true,
+        score_gained: 200,
+        max_combo: 4,
+        boosters_used: 2,
+        ..Default::default()
+    };
+    step.cleared_runes.insert(RuneType::Stone, 3);
+    session.apply_step_progress(&step);
+    assert!(session.just_triggered_overdrive);
+    assert_eq!(
+        session.overdrive_turns_left,
+        data.balance.session.overdrive_turns
+    );
+
+    // While Overdrive is active, frost spread is suppressed and score gets +100% bonus.
+    assert_eq!(session.apply_frost_spread_if_needed(&mut rng), None);
+    let score_before = session.score;
+    let mut step2 = wyrdstone_core::MatchStepOutcome {
+        valid: true,
+        score_gained: 100,
+        max_combo: 1,
+        ..Default::default()
+    };
+    step2.cleared_runes.insert(RuneType::Water, 3);
+    session.apply_step_progress(&step2);
+    assert_eq!(session.score - score_before, 200);
+
+    // Decays across subsequent move-consuming turns cleanly back to 0.
+    session.consume_move();
+    for _ in 0..data.balance.session.overdrive_turns {
+        session.tick_overdrive_if_needed();
+    }
+    assert_eq!(session.overdrive_turns_left, 0);
+}
+
+#[test]
+fn boss_stagger_cancels_imminent_riposte_and_applies_exposed_damage_bonus() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let boss_def = data.boss_by_id("boss_fenrir").expect("boss_fenrir").clone();
+    let mut rng = StdRng::seed_from_u64(403);
+    let mut session = LevelSession::start_boss_with(
+        boss_def,
+        None,
+        CityBonuses::default(),
+        PatronGod::Thor,
+        &data.balance,
+        &mut rng,
+    );
+    session.apply_session_tuning(&data.balance.session);
+
+    let boss = session.boss.as_mut().expect("boss present");
+    boss.turns_until_riposte = 1;
+    let weakness = boss.active_weakness();
+
+    // Clearing stagger_weakness_tiles weakness tiles at countdown 1 interrupts the riposte.
+    let mut stagger_step = wyrdstone_core::MatchStepOutcome {
+        valid: true,
+        max_combo: 1,
+        ..Default::default()
+    };
+    stagger_step
+        .cleared_runes
+        .insert(weakness, data.balance.boss.stagger_weakness_tiles);
+    session.apply_step_progress(&stagger_step);
+
+    let boss_after = session.boss.as_ref().expect("boss");
+    assert!(boss_after.just_staggered);
+    assert_eq!(boss_after.exposed_turns, data.balance.boss.exposed_turns);
+    assert_eq!(
+        boss_after.turns_until_riposte,
+        boss_after.def.riposte_interval
+    );
+
+    // End-of-turn riposte tick returns no hits and leaves Exposed intact on the stagger turn.
+    let hits = session.tick_boss_riposte_if_needed(&mut rng);
+    assert!(hits.is_empty());
+    let boss_after_tick = session.boss.as_ref().expect("boss");
+    assert_eq!(
+        boss_after_tick.exposed_turns,
+        data.balance.boss.exposed_turns
+    );
+
+    // Next hit deals +50% Exposed bonus damage.
+    session.consume_move();
+    let dmg_step = wyrdstone_core::MatchStepOutcome {
+        valid: true,
+        max_combo: 1,
+        cleared_runes: std::collections::HashMap::from([(RuneType::Stone, 3)]),
+        ..Default::default()
+    };
+    session.apply_step_progress(&dmg_step);
+    let exposed_dmg = session.boss.as_ref().expect("boss").last_damage_dealt;
+    let base_expected = 3 * data.balance.boss.damage_per_tile;
+    assert!(
+        exposed_dmg > base_expected,
+        "Exposed boss damage {exposed_dmg} must exceed base {base_expected}"
+    );
+}

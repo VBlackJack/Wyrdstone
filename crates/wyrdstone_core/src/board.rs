@@ -202,6 +202,7 @@ pub struct MatchStepOutcome {
     pub cleared_runes: HashMap<RuneType, u32>,
     pub cleared_positions: Vec<CellPos>,
     pub shuffled: bool,
+    pub boosters_used: u32,
 }
 
 impl MatchStepOutcome {
@@ -215,6 +216,7 @@ impl MatchStepOutcome {
         self.crates_broken += step.crates_broken;
         self.fog_cleared += step.fog_cleared;
         self.relics_dropped += step.relics_dropped;
+        self.boosters_used += step.boosters_used;
         for (&rune, &count) in &step.cleared_runes {
             *self.cleared_runes.entry(rune).or_insert(0) += count;
         }
@@ -1281,6 +1283,7 @@ impl Board {
             let booster = self.cells[idx].booster;
             if booster != Booster::None {
                 self.cells[idx].booster = Booster::None;
+                outcome.boosters_used += 1;
                 outcome.score_gained +=
                     (balance.booster_activation_bonus as f32 * mult).round() as u32;
                 match booster {

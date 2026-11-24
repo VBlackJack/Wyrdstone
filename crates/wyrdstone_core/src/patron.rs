@@ -66,4 +66,14 @@ impl PatronGod {
             PatronGod::Odin => "patron.odin.desc",
         }
     }
+
+    /// Elemental rune attuned to this Patron God, granting +50% bonus Divine Fury charge when cleared.
+    pub const fn favored_rune(self) -> crate::board::RuneType {
+        match self {
+            PatronGod::Thor => crate::board::RuneType::Fire,
+            PatronGod::Freya => crate::board::RuneType::Gold,
+            PatronGod::Loki => crate::board::RuneType::Water,
+            PatronGod::Odin => crate::board::RuneType::Stone,
+        }
+    }
 }
