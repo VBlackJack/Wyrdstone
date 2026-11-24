@@ -40,7 +40,7 @@ const DEFAULT_CLAN_RANK_HUSCARL_STARTING_FURY: u32 = 10;
 const DEFAULT_CLAN_RANK_JARL_STARTING_FURY: u32 = 20;
 const DEFAULT_CLAN_RANK_HIGH_KING_STARTING_FURY: u32 = 30;
 /// Default Daily Trial streak reward bonus (percent) per consecutive day beyond the first.
-const DEFAULT_DAILY_STREAK_BONUS_PCT_PER_DAY: u32 = 10;
+pub(crate) const DEFAULT_DAILY_STREAK_BONUS_PCT_PER_DAY: u32 = 10;
 /// Default Glory granted per expedition wave reached.
 const DEFAULT_EXPEDITION_GLORY_PER_WAVE: u32 = 5;
 
@@ -317,7 +317,7 @@ impl Default for BossTuning {
 }
 
 /// Default Fjord Login Tribute table: one entry per day of the 7-day cycle.
-fn default_login_tribute_rewards() -> Vec<LoginTributeDay> {
+pub(crate) fn default_login_tribute_rewards() -> Vec<LoginTributeDay> {
     let day = |wood, stone, gold, mead, tool| LoginTributeDay {
         resources: ResourceBundle {
             wood,
@@ -578,83 +578,6 @@ pub struct BalanceConfig {
     pub expedition: ExpeditionTuning,
     #[serde(default)]
     pub boss: BossTuning,
-}
-
-impl Default for BalanceConfig {
-    /// Built-in defaults: every field with a serde default holds that default, and the required
-    /// fields (board, scoring, energy, starting stock, animation) are zeroed, exactly like a
-    /// minimal document that only lists them.
-    fn default() -> Self {
-        Self {
-            default_board_cols: 0,
-            default_board_rows: 0,
-            points_per_tile: 0,
-            combo_multiplier_step: 0.0,
-            booster_activation_bonus: 0,
-            ice_break_bonus: 0,
-            chain_break_bonus: 0,
-            crate_break_bonus: 0,
-            relic_drop_bonus: 0,
-            remaining_move_bonus: 0,
-            max_energy: 0,
-            energy_cost_per_level: 0,
-            energy_regen_seconds: 0,
-            mead_refill_cost: 0,
-            mead_refill_energy: 0,
-            starting_wood: 0,
-            starting_stone: 0,
-            starting_gold: 0,
-            starting_mead: 0,
-            starting_mjolnir: 0,
-            starting_surtr_ember: 0,
-            starting_loki_shuffle: 0,
-            starting_thor_bolt: 0,
-            starting_bifrost_prism: 0,
-            starting_drakkar_charge: 0,
-            swap_anim_seconds: 0.0,
-            clear_anim_seconds: 0.0,
-            fall_anim_seconds: 0.0,
-            swipe_threshold_px: 0.0,
-            great_hall_energy_per_tier: default_great_hall_energy_per_tier(),
-            forge_score_pct_per_tier: default_forge_score_pct_per_tier(),
-            dock_resource_pct_per_tier: default_dock_resource_pct_per_tier(),
-            shrine_moves_per_tier: default_shrine_moves_per_tier(),
-            meadery_regen_pct_per_tier: default_meadery_regen_pct_per_tier(),
-            move_reward_bonus_pct_per_move: default_move_reward_bonus_pct_per_move(),
-            move_reward_bonus_cap_pct: default_move_reward_bonus_cap_pct(),
-            victory_glory: default_victory_glory(),
-            quest_glory: default_quest_glory(),
-            amulet_glory: default_amulet_glory(),
-            daily_glory: default_daily_glory(),
-            collection_glory: default_collection_glory(),
-            harvest_interval_seconds: default_harvest_interval_seconds(),
-            watchtower_fury_pct_per_tier: default_watchtower_fury_pct_per_tier(),
-            clan_rank_huscarl_glory: default_clan_rank_huscarl_glory(),
-            clan_rank_jarl_glory: default_clan_rank_jarl_glory(),
-            clan_rank_high_king_glory: default_clan_rank_high_king_glory(),
-            login_tribute_rewards: default_login_tribute_rewards(),
-            building_bonuses: default_building_bonuses(),
-            win_streak_booster_threshold: default_win_streak_booster_threshold(),
-            win_streak_starting_boosters: default_win_streak_starting_boosters(),
-            clan_rank_scout_resource_bonus_pct: default_clan_rank_scout_resource_bonus_pct(),
-            clan_rank_huscarl_resource_bonus_pct: default_clan_rank_huscarl_resource_bonus_pct(),
-            clan_rank_jarl_resource_bonus_pct: default_clan_rank_jarl_resource_bonus_pct(),
-            clan_rank_high_king_resource_bonus_pct: default_clan_rank_high_king_resource_bonus_pct(
-            ),
-            clan_rank_scout_starting_fury: default_clan_rank_scout_starting_fury(),
-            clan_rank_huscarl_starting_fury: default_clan_rank_huscarl_starting_fury(),
-            clan_rank_jarl_starting_fury: default_clan_rank_jarl_starting_fury(),
-            clan_rank_high_king_starting_fury: default_clan_rank_high_king_starting_fury(),
-            mastery_star_tools: default_mastery_star_tools(),
-            daily_streak_bonus_pct_per_day: default_daily_streak_bonus_pct_per_day(),
-            daily_streak_tool_rewards: default_daily_streak_tool_rewards(),
-            expedition_glory_per_wave: default_expedition_glory_per_wave(),
-            session: SessionTuning::default(),
-            daily: DailyTuning::default(),
-            expedition: ExpeditionTuning::default(),
-            boss: BossTuning::default(),
-        }
-    }
 }
 
 impl BalanceConfig {

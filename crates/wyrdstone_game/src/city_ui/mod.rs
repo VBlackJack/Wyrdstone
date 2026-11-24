@@ -1456,7 +1456,10 @@ fn spawn_map_building_pin(
                                 PickingBehavior::IGNORE,
                             ));
                         }
-                        if matches!(b.id.as_str(), "forge" | "meadery" | "great_hall") {
+                        if matches!(
+                            b.id.as_str(),
+                            "forge" | "meadery" | wyrdstone_core::HUB_BUILDING_ID
+                        ) {
                             for s in 0..3usize {
                                 let sx = 46.0 + (s as f32 - 1.0) * 6.0;
                                 let sy = 14.0 - s as f32 * 10.0;
@@ -2735,7 +2738,7 @@ pub fn handle_city_buttons(
 
 fn chapter_dialogue_for_building(building_id: &str) -> Option<ChapterDialogue> {
     let speaker = match building_id {
-        "great_hall" | "watchtower" => "jarl",
+        wyrdstone_core::HUB_BUILDING_ID | "watchtower" => "jarl",
         "forge" => "smith",
         "longship_dock" => "navigator",
         "odin_shrine" => "seer",

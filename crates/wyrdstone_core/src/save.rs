@@ -178,12 +178,8 @@ impl GameDataBundle {
             achievements,
             i18n,
         };
-        crate::validate::validate_bundle(&bundle).map_err(|problems| {
-            format!(
-                "Invalid bundled game data:
-{problems}"
-            )
-        })?;
+        crate::validate::validate_bundle(&bundle)
+            .map_err(|problems| format!("Invalid bundled game data:\n{problems}"))?;
         Ok(bundle)
     }
 

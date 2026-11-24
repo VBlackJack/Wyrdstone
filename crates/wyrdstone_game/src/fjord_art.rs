@@ -188,7 +188,7 @@ pub fn init_fjord_textures(
 
     let mut buildings = HashMap::new();
     buildings.insert(
-        "great_hall".to_string(),
+        wyrdstone_core::HUB_BUILDING_ID.to_string(),
         images.add(decode_png(BLDG_GREAT_HALL_PNG)),
     );
     buildings.insert("forge".to_string(), images.add(decode_png(BLDG_FORGE_PNG)));
@@ -211,7 +211,7 @@ pub fn init_fjord_textures(
 
     let mut map_buildings = HashMap::new();
     map_buildings.insert(
-        "great_hall".to_string(),
+        wyrdstone_core::HUB_BUILDING_ID.to_string(),
         images.add(decode_png(MAP_BLDG_GREAT_HALL_PNG)),
     );
     map_buildings.insert(

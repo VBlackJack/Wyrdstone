@@ -17,7 +17,10 @@
 //! Fjord city-builder progression: resources, buildings, passive harvests, mastery, amulets, quests, and tools.
 
 use crate::achievements::{is_achievement_unlocked, AchievementDef, ClanRank};
-use crate::balance::{BalanceConfig, BuildingBonusKind};
+use crate::balance::{
+    default_login_tribute_rewards, BalanceConfig, BuildingBonusKind, LoginTributeDay,
+    DEFAULT_DAILY_STREAK_BONUS_PCT_PER_DAY,
+};
 use crate::board::ActiveTool;
 use crate::boss::BossDef;
 use crate::patron::PatronGod;
@@ -424,7 +427,7 @@ impl CityState {
 
     /// Returns the escalating reward bundle and optional Runic Tool for a given login day (1..=7).
     pub fn login_tribute_reward(day: u8) -> (ResourceBundle, Option<ActiveTool>) {
-        Self::login_tribute_reward_with(day, &BalanceConfig::default())
+        Self::tribute_from(day, &default_login_tribute_rewards())
     }
 
     /// Returns the login tribute reward of a day (1..=7) from the balance table; days outside the
@@ -433,7 +436,11 @@ impl CityState {
         day: u8,
         balance: &BalanceConfig,
     ) -> (ResourceBundle, Option<ActiveTool>) {
-        let table = &balance.login_tribute_rewards;
+        Self::tribute_from(day, &balance.login_tribute_rewards)
+    }
+
+    /// Picks the table entry of a day (1..=7); days outside the table use its last entry.
+    fn tribute_from(day: u8, table: &[LoginTributeDay]) -> (ResourceBundle, Option<ActiveTool>) {
         let entry = usize::from(day)
             .checked_sub(1)
             .and_then(|idx| table.get(idx))
@@ -446,7 +453,7 @@ impl CityState {
         &mut self,
         today_day_index: u64,
     ) -> Option<(u8, ResourceBundle, Option<ActiveTool>)> {
-        self.try_claim_login_tribute_with(today_day_index, &BalanceConfig::default())
+        self.claim_login_tribute_from(today_day_index, &default_login_tribute_rewards())
     }
 
     /// Claims today's Fjord Login Tribute using the balance reward table.
@@ -455,11 +462,20 @@ impl CityState {
         today_day_index: u64,
         balance: &BalanceConfig,
     ) -> Option<(u8, ResourceBundle, Option<ActiveTool>)> {
+        self.claim_login_tribute_from(today_day_index, &balance.login_tribute_rewards)
+    }
+
+    /// Claims today's Fjord Login Tribute from an explicit reward table.
+    fn claim_login_tribute_from(
+        &mut self,
+        today_day_index: u64,
+        table: &[LoginTributeDay],
+    ) -> Option<(u8, ResourceBundle, Option<ActiveTool>)> {
         if !self.is_login_tribute_available(today_day_index) {
             return None;
         }
         let day = self.next_login_tribute_day(today_day_index);
-        let (res, tool) = Self::login_tribute_reward_with(day, balance);
+        let (res, tool) = Self::tribute_from(day, table);
         self.resources.add(&res);
         if let Some(t) = tool {
             self.tools.grant_one(t);
@@ -880,7 +896,7 @@ impl CityState {
 
     /// Applies the default Daily Trial streak multiplier (`+10%` per consecutive day beyond day 1).
     pub fn scale_daily_rewards(rewards: &ResourceBundle, streak: u32) -> ResourceBundle {
-        Self::scale_daily_rewards_with(rewards, streak, &BalanceConfig::default())
+        Self::scale_by_pct(rewards, streak, DEFAULT_DAILY_STREAK_BONUS_PCT_PER_DAY)
     }
 
     /// Applies the Daily Trial streak multiplier using the balance percent per extra streak day.
@@ -889,8 +905,12 @@ impl CityState {
         streak: u32,
         balance: &BalanceConfig,
     ) -> ResourceBundle {
-        let streak_bonus_pct = u128::from(streak.saturating_sub(1))
-            * u128::from(balance.daily_streak_bonus_pct_per_day);
+        Self::scale_by_pct(rewards, streak, balance.daily_streak_bonus_pct_per_day)
+    }
+
+    /// Scales a reward bundle by `pct_per_day` percent for each streak day beyond the first.
+    fn scale_by_pct(rewards: &ResourceBundle, streak: u32, pct_per_day: u32) -> ResourceBundle {
+        let streak_bonus_pct = u128::from(streak.saturating_sub(1)) * u128::from(pct_per_day);
         let scale = |base: u32| -> u32 {
             let bonus = u128::from(base) * streak_bonus_pct / 100;
             u32::try_from(u128::from(base) + bonus).unwrap_or(u32::MAX)

@@ -255,6 +255,12 @@ fn check_balance(bal: &BalanceConfig, b: &GameDataBundle, problems: &mut Vec<Str
         problems,
     );
     check_range("daily.relic_count_range", d.relic_count_range, problems);
+    if d.relic_count_range.0 < 1 {
+        problems.push(format!(
+            "balance.daily.relic_count_range: lower bound {} must be at least 1",
+            d.relic_count_range.0
+        ));
+    }
     check_range("daily.blitz_time_range", d.blitz_time_range, problems);
     check_range("daily.blitz_score_range", d.blitz_score_range, problems);
     check_range("daily.blitz_collect_range", d.blitz_collect_range, problems);
@@ -273,6 +279,12 @@ fn check_balance(bal: &BalanceConfig, b: &GameDataBundle, problems: &mut Vec<Str
             "balance.expedition.wave_one_rune_types: {} outside {MIN_RUNE_TYPES}..={}",
             e.wave_one_rune_types,
             RuneType::ALL.len()
+        ));
+    }
+    if e.score_wave_interval < 1 {
+        problems.push(format!(
+            "balance.expedition.score_wave_interval: {} must be at least 1",
+            e.score_wave_interval
         ));
     }
     if e.boon_choices < 1 || e.boon_choices > e.boons.len() {

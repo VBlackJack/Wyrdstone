@@ -221,11 +221,34 @@ starting_bifrost_prism: 0, starting_drakkar_charge: 0, swap_anim_seconds: 0.0, \
 clear_anim_seconds: 0.0, fall_anim_seconds: 0.0, swipe_threshold_px: 0.0)";
 
 #[test]
-fn balance_default_equals_serde_defaults() {
+fn minimal_balance_document_yields_tuning_and_serde_defaults() {
+    use wyrdstone_core::balance::{BossTuning, DailyTuning, ExpeditionTuning, SessionTuning};
     use wyrdstone_core::BalanceConfig;
     let parsed = BalanceConfig::from_ron_str(MINIMAL_BALANCE_RON).expect("minimal document parses");
-    assert_eq!(
-        ron::to_string(&BalanceConfig::default()).expect("serialize default"),
-        ron::to_string(&parsed).expect("serialize parsed"),
-    );
+    assert_eq!(parsed.session, SessionTuning::default());
+    assert_eq!(parsed.daily, DailyTuning::default());
+    assert_eq!(parsed.expedition, ExpeditionTuning::default());
+    assert_eq!(parsed.boss, BossTuning::default());
+    // Top-level serde defaults are the shipped values, not zero.
+    assert!(!parsed.login_tribute_rewards.is_empty());
+    assert!(!parsed.mastery_star_tools.is_empty());
+    assert!(!parsed.building_bonuses.is_empty());
+    assert!(parsed.victory_glory > 0);
+    assert!(parsed.harvest_interval_seconds > 0);
+}
+
+#[test]
+fn zero_relic_count_lower_bound_is_reported() {
+    let mut b = bundle();
+    b.balance.daily.relic_count_range.0 = 0;
+    let err = validate_bundle(&b).expect_err("a zero relic lower bound must fail");
+    assert!(err.contains("daily.relic_count_range"), "{err}");
+}
+
+#[test]
+fn zero_expedition_score_wave_interval_is_reported() {
+    let mut b = bundle();
+    b.balance.expedition.score_wave_interval = 0;
+    let err = validate_bundle(&b).expect_err("a zero score wave interval must fail");
+    assert!(err.contains("expedition.score_wave_interval"), "{err}");
 }
