@@ -30,8 +30,8 @@ use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use wyrdstone_core::{
-    last_stand_cost, LevelOutcome, Objective, LAST_STAND_EXTRA_MOVES, LAST_STAND_EXTRA_SECS,
-    MAX_DAILY_STREAK_CYCLE, SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
+    last_stand_cost, weekly_medal_name_key, LevelOutcome, Objective, LAST_STAND_EXTRA_MOVES,
+    LAST_STAND_EXTRA_SECS, MAX_DAILY_STREAK_CYCLE, SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
 };
 
 #[derive(Component)]
@@ -117,6 +117,7 @@ fn find_next_level_id(ctx: &GameContext) -> Option<String> {
             .next();
     }
     if cur_id.starts_with("daily_")
+        || cur_id.starts_with("weekly_")
         || cur_id.starts_with("boss_")
         || cur_id.starts_with("expedition_")
         || cur_id.starts_with("gauntlet_")
@@ -392,6 +393,34 @@ fn spawn_result_ui(
                                             if ctx.last_blitz_new_best {
                                                 card.spawn((
                                                     Text::new(i18n.t("result.blitz.new_best")),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_ACCENT_GREEN_TEXT),
+                                                ));
+                                            }
+                                        } else if let Some(medal) = ctx.last_weekly_medal {
+                                            card.spawn((
+                                                Text::new(
+                                                    i18n.t_fmt(
+                                                        "result.weekly.medal",
+                                                        &[(
+                                                            "medal",
+                                                            i18n.t(weekly_medal_name_key(medal))
+                                                                .to_string(),
+                                                        )],
+                                                    ),
+                                                ),
+                                                TextFont {
+                                                    font_size: FONT_BODY,
+                                                    ..default()
+                                                },
+                                                TextColor(COLOR_ACCENT_GOLD),
+                                            ));
+                                            if ctx.last_weekly_new_best {
+                                                card.spawn((
+                                                    Text::new(i18n.t("result.weekly.new_best")),
                                                     TextFont {
                                                         font_size: FONT_SMALL,
                                                         ..default()
@@ -1488,6 +1517,8 @@ fn try_replay_active_level(ctx: &mut GameContext) -> Result<(), &'static str> {
         } else {
             Err("city.panel.daily.done")
         }
+    } else if level_id.starts_with("weekly_") {
+        ctx.start_weekly_challenge()
     } else if level_id.starts_with("trial_") {
         ctx.start_trial(&level_id)
     } else if level_id.starts_with("gauntlet_") {

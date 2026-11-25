@@ -31,8 +31,10 @@ use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use wyrdstone_core::{
     achievement_progress, format_achievement_desc, format_boon_desc, format_boss_desc,
-    format_patron_desc, skald_pass_tier_reward, AmuletEffect, CityState, ClanRank, I18nCatalog,
-    PatronGod, ResourceBundle, MAX_DAILY_STREAK_CYCLE, SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
+    format_patron_desc, patron_devotion_upgrade_cost, skald_pass_tier_reward, AmuletEffect,
+    CityState, ClanRank, I18nCatalog, PatronGod, ResourceBundle, MAX_DAILY_STREAK_CYCLE,
+    MAX_PATRON_DEVOTION_TIER, PATRON_DEVOTION_FURY_PCT_PER_TIER,
+    PATRON_DEVOTION_SCORE_PCT_PER_TIER, SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
 };
 
 pub(super) fn format_reward_summary(i18n: &I18nCatalog, res: ResourceBundle, glory: u32) -> String {
@@ -1202,6 +1204,27 @@ pub(super) fn spawn_stats_modal(
                     },
                     TextColor(COLOR_ACCENT_GOLD),
                 ));
+                if rank == ClanRank::HighKing {
+                    let legend = ctx.city.legend_level(bal);
+                    let pct = ctx.city.legend_spoils_bonus_pct(bal);
+                    let next = ctx.city.glory_for_next_legend(bal);
+                    rbox.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.panel.stats.legend_progress",
+                            &[
+                                ("level", legend.to_string()),
+                                ("pct", pct.to_string()),
+                                ("glory", ctx.city.glory.to_string()),
+                                ("next", next.to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_TEAL_TEXT),
+                    ));
+                }
             });
 
             let rows = [
@@ -1579,6 +1602,19 @@ pub(super) fn spawn_patrons_modal(
         |modal| {
             for god in PatronGod::ALL {
                 let active = ctx.city.selected_patron == god;
+                let dev_tier = ctx.city.patron_devotion_tier(god);
+                let dev_fury = u32::from(dev_tier) * PATRON_DEVOTION_FURY_PCT_PER_TIER;
+                let dev_score = u32::from(dev_tier) * PATRON_DEVOTION_SCORE_PCT_PER_TIER;
+                let next_dev = (dev_tier < MAX_PATRON_DEVOTION_TIER).then(|| {
+                    let next_t = dev_tier + 1;
+                    let (cost, req_glory) = patron_devotion_upgrade_cost(next_t);
+                    (
+                        next_t,
+                        cost,
+                        req_glory,
+                        ctx.city.glory >= req_glory && ctx.city.resources.can_afford(&cost),
+                    )
+                });
                 modal
                     .spawn((
                         Node {
@@ -1679,28 +1715,108 @@ pub(super) fn spawn_patrons_modal(
                                     },
                                     TextColor(COLOR_ACCENT_TEAL_TEXT),
                                 ));
+                                info.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "patron.devotion.status",
+                                        &[
+                                            ("tier", dev_tier.to_string()),
+                                            ("max", MAX_PATRON_DEVOTION_TIER.to_string()),
+                                            ("fury", dev_fury.to_string()),
+                                            ("score", dev_score.to_string()),
+                                        ],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                                info.spawn((
+                                    Text::new(i18n.t("patron.devotion.milestones")),
+                                    TextFont {
+                                        font_size: FONT_SMALL - 1.0,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_MUTED),
+                                ));
+                                if let Some((_, cost, req_glory, _)) = next_dev {
+                                    spawn_cost_pills(info, i18n, ctx.city.resources, cost);
+                                    info.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            "patron.devotion.req_glory",
+                                            &[("glory", req_glory.to_string())],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_SMALL - 1.0,
+                                            ..default()
+                                        },
+                                        TextColor(if ctx.city.glory >= req_glory {
+                                            COLOR_ACCENT_GREEN_TEXT
+                                        } else {
+                                            COLOR_ACCENT_CRIMSON_TEXT
+                                        }),
+                                    ));
+                                }
                             });
                         });
-                        spawn_small_button_colored(
-                            row,
-                            if active {
-                                i18n.t("city.panel.patrons.active")
+                        row.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::FlexEnd,
+                            row_gap: Val::Px(6.0),
+                            ..default()
+                        })
+                        .with_children(|acts| {
+                            spawn_small_button_colored(
+                                acts,
+                                if active {
+                                    i18n.t("city.panel.patrons.active")
+                                } else {
+                                    i18n.t("city.panel.patrons.select")
+                                },
+                                CityAction::SelectPatron(god),
+                                if active {
+                                    COLOR_ACCENT_GOLD
+                                } else {
+                                    COLOR_ACCENT_TEAL
+                                },
+                                if active {
+                                    COLOR_TEXT_DARK
+                                } else {
+                                    COLOR_TEXT_ON_ACCENT
+                                },
+                                true,
+                            );
+                            if let Some((next_t, _, _, can_upgrade)) = next_dev {
+                                spawn_small_button_colored(
+                                    acts,
+                                    &i18n.t_fmt(
+                                        "patron.devotion.upgrade",
+                                        &[("tier", next_t.to_string())],
+                                    ),
+                                    CityAction::UpgradePatronDevotion(god),
+                                    if can_upgrade {
+                                        COLOR_ACCENT_GREEN
+                                    } else {
+                                        COLOR_BUTTON_DISABLED
+                                    },
+                                    if can_upgrade {
+                                        COLOR_TEXT_ON_ACCENT
+                                    } else {
+                                        COLOR_TEXT_MUTED
+                                    },
+                                    can_upgrade,
+                                );
                             } else {
-                                i18n.t("city.panel.patrons.select")
-                            },
-                            CityAction::SelectPatron(god),
-                            if active {
-                                COLOR_ACCENT_GOLD
-                            } else {
-                                COLOR_ACCENT_TEAL
-                            },
-                            if active {
-                                COLOR_TEXT_DARK
-                            } else {
-                                COLOR_TEXT_ON_ACCENT
-                            },
-                            true,
-                        );
+                                acts.spawn((
+                                    Text::new(i18n.t("patron.devotion.maxed")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            }
+                        });
                     });
             }
         },

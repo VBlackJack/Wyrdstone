@@ -128,6 +128,8 @@ pub struct GameContext {
     pub last_glory_reward: u32,
     pub last_blitz_medal: Option<wyrdstone_core::BlitzMedal>,
     pub last_blitz_new_best: bool,
+    pub last_weekly_medal: Option<u8>,
+    pub last_weekly_new_best: bool,
     pub last_trial_par: Option<bool>,
     pub last_trial_first_clear: bool,
     pub last_gauntlet_stages: Option<(u32, u32)>,
@@ -338,6 +340,8 @@ impl GameContext {
             last_glory_reward: 0,
             last_blitz_medal: None,
             last_blitz_new_best: false,
+            last_weekly_medal: None,
+            last_weekly_new_best: false,
             last_trial_par: None,
             last_trial_first_clear: false,
             last_gauntlet_stages: None,
@@ -603,6 +607,8 @@ impl GameContext {
         self.last_glory_reward = 0;
         self.last_blitz_medal = None;
         self.last_blitz_new_best = false;
+        self.last_weekly_medal = None;
+        self.last_weekly_new_best = false;
         self.last_trial_par = None;
         self.last_trial_first_clear = false;
         self.last_gauntlet_stages = None;
@@ -664,6 +670,8 @@ impl GameContext {
         self.last_glory_reward = 0;
         self.last_blitz_medal = None;
         self.last_blitz_new_best = false;
+        self.last_weekly_medal = None;
+        self.last_weekly_new_best = false;
         self.last_trial_par = None;
         self.last_trial_first_clear = false;
         self.last_gauntlet_stages = None;
@@ -686,6 +694,10 @@ impl GameContext {
     fn apply_loadout_extras(&mut self, session: &mut LevelSession) -> bool {
         let flame = self.city.valhalla_flame_tier();
         session.apply_valhalla_flame(flame, &mut self.rng);
+        let devotion_tier = self.city.patron_devotion_tier(session.patron);
+        session.apply_patron_devotion(devotion_tier);
+        let legend_pct = self.city.legend_spoils_bonus_pct(&self.data.balance);
+        session.apply_legend_bonus(legend_pct);
         if let Some(extra) = self.city.secondary_amulet_effect(&self.data.amulets) {
             session.apply_extra_amulet_effect(extra, &mut self.rng);
         }
@@ -778,6 +790,39 @@ impl GameContext {
         self.apply_loadout_extras(&mut session);
         self.active_gauntlet = None;
         self.active_level_id = Some(wyrdstone_core::BLITZ_BUILDING_ID.to_string());
+        self.active_session = Some(session);
+        self.active_modal = ActiveModal::None;
+        self.armed_tool = None;
+        self.status_notice_key = None;
+        self.persist();
+        Ok(())
+    }
+
+    /// Launches this week's deterministic Weekly Seeded Challenge 8x8 board.
+    pub fn start_weekly_challenge(&mut self) -> Result<(), &'static str> {
+        if !self.city.try_spend_energy(&self.data.balance) {
+            return Err("city.error.not_enough_energy");
+        }
+        let day_idx = today_day_index();
+        let week_idx = wyrdstone_core::weekly_challenge_week_index(day_idx);
+        self.city.weekly_challenge.ensure_for_week(week_idx);
+        let level_def = wyrdstone_core::LevelDef::weekly_challenge(week_idx);
+        let amulet = self.city.active_amulet_effect(&self.data.amulets);
+        let city_bonuses = self.city.compute_bonuses(&self.data.balance);
+        let mut session = LevelSession::start_full(
+            level_def,
+            amulet,
+            city_bonuses,
+            self.city.selected_patron,
+            None,
+            &mut self.rng,
+        );
+        session.apply_session_tuning(&self.data.balance.session);
+        session
+            .apply_daily_blessing_with(DailyBlessing::for_day(day_idx), &self.data.balance.session);
+        self.apply_loadout_extras(&mut session);
+        self.active_gauntlet = None;
+        self.active_level_id = Some(format!("weekly_{week_idx}"));
         self.active_session = Some(session);
         self.active_modal = ActiveModal::None;
         self.armed_tool = None;
@@ -1327,6 +1372,8 @@ mod read_only_notice_tests {
             last_glory_reward: 0,
             last_blitz_medal: None,
             last_blitz_new_best: false,
+            last_weekly_medal: None,
+            last_weekly_new_best: false,
             last_trial_par: None,
             last_trial_first_clear: false,
             last_gauntlet_stages: None,

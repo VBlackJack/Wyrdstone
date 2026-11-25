@@ -3114,3 +3114,117 @@ fn progressive_mode_unlocks_gate_early_modes_and_open_for_veterans() {
         wyrdstone_core::PlayMode::ALL.len()
     );
 }
+
+#[test]
+fn endgame_patron_devotion_weekly_challenge_and_legend_ranks_work() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    let mut rng = StdRng::seed_from_u64(9001);
+
+    // 1. Patron Devotion Altar gates on Glory & resources and scales session bonuses (not Trials).
+    assert_eq!(city.patron_devotion_tier(PatronGod::Thor), 0);
+    assert_eq!(
+        city.try_upgrade_patron_devotion(PatronGod::Thor),
+        Err("patron.devotion.need_glory")
+    );
+    city.glory = 1_500;
+    city.resources = ResourceBundle {
+        wood: 5_000,
+        stone: 5_000,
+        gold: 5_000,
+        mead: 1_000,
+    };
+    for expected in 1..=wyrdstone_core::MAX_PATRON_DEVOTION_TIER {
+        assert_eq!(
+            city.try_upgrade_patron_devotion(PatronGod::Thor),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        city.try_upgrade_patron_devotion(PatronGod::Thor),
+        Err("patron.devotion.maxed")
+    );
+
+    let lvl = data.level_by_id("great_hall_1").expect("level").clone();
+    let mut session = LevelSession::start_full(
+        lvl,
+        None,
+        city.compute_bonuses(&data.balance),
+        PatronGod::Thor,
+        None,
+        &mut rng,
+    );
+    let fury_pct_before = session.fury_charge_bonus_pct;
+    let score_pct_before = session.score_bonus_pct;
+    let start_fury_before = session.fury;
+    session.apply_patron_devotion(city.patron_devotion_tier(PatronGod::Thor));
+    assert_eq!(
+        session.fury_charge_bonus_pct,
+        fury_pct_before + 5 * wyrdstone_core::PATRON_DEVOTION_FURY_PCT_PER_TIER
+    );
+    assert_eq!(
+        session.score_bonus_pct,
+        score_pct_before + 5 * wyrdstone_core::PATRON_DEVOTION_SCORE_PCT_PER_TIER
+    );
+    assert_eq!(
+        session.fury,
+        start_fury_before + wyrdstone_core::PATRON_DEVOTION_START_FURY_AT_TIER3
+    );
+    assert_eq!(
+        session.boss_damage_bonus_pct,
+        wyrdstone_core::PATRON_DEVOTION_BOSS_DMG_PCT_AT_TIER5
+    );
+
+    let mut trial = LevelSession::start_trial(&data.trials[0], &data.balance).expect("trial");
+    trial.apply_patron_devotion(5);
+    assert_eq!(trial.score_bonus_pct, 0);
+
+    // 2. Weekly Seeded Challenge spawns playable boards for 52 weeks and grants cumulative medals once per week.
+    for week in 2_900..2_952 {
+        let def = wyrdstone_core::LevelDef::weekly_challenge(week);
+        let board = Board::new_for_level(&def, &mut rng);
+        assert!(
+            board.has_valid_moves(),
+            "Weekly challenge week {week} must be playable"
+        );
+    }
+    let week_def = wyrdstone_core::LevelDef::weekly_challenge(2_917);
+    let (medal1, best1, _res1, gl1) =
+        city.record_weekly_challenge_run(2_917, 15_000, &week_def.base_reward);
+    assert_eq!(medal1, 2); // Silver
+    assert!(best1);
+    assert_eq!(gl1, 65); // Bronze 25 + Silver 40
+    let (medal2, best2, _res2, gl2) =
+        city.record_weekly_challenge_run(2_917, 12_000, &week_def.base_reward);
+    assert_eq!(medal2, 1);
+    assert!(!best2);
+    assert_eq!(gl2, 0); // Already claimed up to Silver
+    let (medal_next_week, best_next, _, _) =
+        city.record_weekly_challenge_run(2_918, 8_500, &week_def.base_reward);
+    assert_eq!(medal_next_week, 1);
+    assert!(best_next);
+
+    // 3. Legend Ranks compute beyond High King with capped spoils & backward-compatible save load.
+    city.glory =
+        data.balance.clan_rank_high_king_glory + 2 * wyrdstone_core::LEGEND_RANK_GLORY_STEP;
+    assert_eq!(city.legend_level(&data.balance), 2);
+    assert_eq!(
+        city.legend_spoils_bonus_pct(&data.balance),
+        2 * wyrdstone_core::LEGEND_SPOILS_PCT_PER_LEVEL
+    );
+    city.glory = 99_999;
+    assert_eq!(
+        city.legend_spoils_bonus_pct(&data.balance),
+        wyrdstone_core::LEGEND_SPOILS_MAX_BONUS_PCT
+    );
+
+    let base = SaveData::new_game(&data.balance, Language::En);
+    let mut val = serde_json::to_value(&base).expect("serialize");
+    let city_obj = val["city"].as_object_mut().expect("city map");
+    city_obj.remove("patron_devotion");
+    city_obj.remove("weekly_challenge");
+    let json = serde_json::to_string(&val).expect("to string");
+    let loaded: SaveData = serde_json::from_str(&json).expect("backward-compat load");
+    assert!(loaded.city.patron_devotion.is_empty());
+    assert_eq!(loaded.city.weekly_challenge.best_score, 0);
+}

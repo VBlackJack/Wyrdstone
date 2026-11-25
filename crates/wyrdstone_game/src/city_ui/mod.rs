@@ -245,6 +245,7 @@ pub enum CityAction {
     PlayDailyTrial,
     StartExpedition,
     StartValhallaBlitz,
+    StartWeeklyChallenge,
     StartTrial(String),
     StartGauntlet,
     PickExpeditionBoon(usize),
@@ -252,6 +253,7 @@ pub enum CityAction {
     EndExpedition,
     FightBoss(String),
     SelectPatron(PatronGod),
+    UpgradePatronDevotion(PatronGod),
     ClaimAchievement(String),
     ClaimAllAchievements,
     UpgradeBuilding(String),
@@ -303,7 +305,11 @@ pub fn setup_city_ui(
         .map(|w| (w.width(), w.height()))
         .unwrap_or((WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT));
     let is_portrait = win_w < win_h;
-    ctx.city.daily_bounties.ensure_for_day(today_day_index());
+    let today = today_day_index();
+    ctx.city.daily_bounties.ensure_for_day(today);
+    ctx.city
+        .weekly_challenge
+        .ensure_for_week(wyrdstone_core::weekly_challenge_week_index(today));
     if ctx.active_modal == ActiveModal::None {
         if ctx.pending_offline_vault.is_some() {
             ctx.active_modal = ActiveModal::WelcomeBack;
@@ -790,7 +796,18 @@ fn spawn_city_tree(
                                     TextColor(COLOR_ACCENT_GOLD),
                                 ));
                                 let rank = ctx.city.clan_rank_with_balance(&ctx.data.balance);
-                                let rank_label = i18n.t(rank.i18n_key());
+                                let legend = ctx.city.legend_level(&ctx.data.balance);
+                                let rank_label = if legend > 0 {
+                                    i18n.t_fmt(
+                                        "city.header.legend_rank",
+                                        &[
+                                            ("rank", i18n.t(rank.i18n_key()).to_string()),
+                                            ("level", legend.to_string()),
+                                        ],
+                                    )
+                                } else {
+                                    i18n.t(rank.i18n_key()).to_string()
+                                };
                                 let mastery_label = i18n.t_fmt(
                                     "city.header.mastery",
                                     &[("glory", ctx.city.glory.to_string())],
@@ -798,10 +815,7 @@ fn spawn_city_tree(
                                 let subtitle_line = if is_portrait {
                                     i18n.t_fmt(
                                         "city.header.subtitle_compact",
-                                        &[
-                                            ("rank", rank_label.to_string()),
-                                            ("mastery", mastery_label),
-                                        ],
+                                        &[("rank", rank_label), ("mastery", mastery_label)],
                                     )
                                 } else {
                                     let perk_label =
@@ -809,7 +823,7 @@ fn spawn_city_tree(
                                     i18n.t_fmt(
                                         "city.header.subtitle_full",
                                         &[
-                                            ("rank", rank_label.to_string()),
+                                            ("rank", rank_label),
                                             ("mastery", mastery_label),
                                             ("perk", perk_label),
                                         ],
@@ -2925,6 +2939,26 @@ pub fn handle_city_buttons(
                     }
                 }
             }
+            CityAction::StartWeeklyChallenge => {
+                if !ctx.city.is_mode_unlocked(PlayMode::WeeklyChallenge) {
+                    ctx.status_notice_key =
+                        Some(PlayMode::WeeklyChallenge.unlock_hint_key().to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                    continue;
+                }
+                match ctx.start_weekly_challenge() {
+                    Ok(()) => {
+                        next_state.set(AppState::Match3);
+                        return;
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        rebuild = true;
+                    }
+                }
+            }
             CityAction::StartTrial(trial_id) => {
                 if !ctx.city.is_mode_unlocked(PlayMode::YggdrasilTrials) {
                     ctx.status_notice_key =
@@ -3024,6 +3058,28 @@ pub fn handle_city_buttons(
                 ctx.city.selected_patron = *god;
                 ctx.persist();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                rebuild = true;
+            }
+            CityAction::UpgradePatronDevotion(god) => {
+                match ctx.city.try_upgrade_patron_devotion(*god) {
+                    Ok(tier) => {
+                        let pname = ctx.data.i18n.t(god.name_key()).to_string();
+                        ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                            "patron.devotion.upgraded",
+                            &[("patron", pname), ("tier", tier.to_string())],
+                        ));
+                        ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                        ctx.status_notice_key = None;
+                        ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                        haptics.send(HapticEvent(HapticKind::Victory));
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        haptics.send(HapticEvent(HapticKind::Error));
+                    }
+                }
                 rebuild = true;
             }
             CityAction::ClaimAchievement(ach_id) => {

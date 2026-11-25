@@ -28,7 +28,7 @@ use crate::theme::*;
 use crate::ui_style::display_font;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
-use wyrdstone_core::{format_blessing_desc, PlayMode};
+use wyrdstone_core::{format_blessing_desc, weekly_medal_name_key, PlayMode};
 
 fn spawn_drawer_shell<F>(
     drawer: &mut ChildBuilder,
@@ -411,6 +411,60 @@ pub(super) fn spawn_modes_drawer(
                     COLOR_PANEL_BORDER
                 },
                 blitz_unlocked,
+            );
+
+            let weekly_unlocked = ctx.city.is_mode_unlocked(PlayMode::WeeklyChallenge);
+            let weekly_btn = if weekly_unlocked {
+                i18n.t_fmt(
+                    "city.button.play_cost",
+                    &[
+                        ("label", i18n.t("city.panel.weekly.button").to_string()),
+                        ("cost", energy_cost.to_string()),
+                    ],
+                )
+            } else {
+                i18n.t("mode.locked.button").to_string()
+            };
+            let weekly_desc = if weekly_unlocked {
+                i18n.t_fmt(
+                    "city.drawer.modes.weekly_desc",
+                    &[
+                        ("best", ctx.city.weekly_challenge.best_score.to_string()),
+                        (
+                            "medal",
+                            i18n.t(weekly_medal_name_key(
+                                ctx.city.weekly_challenge.claimed_medal,
+                            ))
+                            .to_string(),
+                        ),
+                    ],
+                )
+            } else {
+                i18n.t(PlayMode::WeeklyChallenge.unlock_hint_key())
+                    .to_string()
+            };
+            spawn_drawer_action_card(
+                body,
+                i18n.t("city.panel.weekly.button"),
+                &weekly_desc,
+                &weekly_btn,
+                CityAction::StartWeeklyChallenge,
+                if weekly_unlocked {
+                    COLOR_ACCENT_TEAL
+                } else {
+                    COLOR_BUTTON_DISABLED
+                },
+                if weekly_unlocked {
+                    COLOR_TEXT_ON_ACCENT
+                } else {
+                    COLOR_TEXT_MUTED
+                },
+                if weekly_unlocked {
+                    COLOR_ACCENT_GOLD
+                } else {
+                    COLOR_PANEL_BORDER
+                },
+                weekly_unlocked,
             );
 
             let trials_unlocked = ctx.city.is_mode_unlocked(PlayMode::YggdrasilTrials);

@@ -2184,6 +2184,8 @@ fn finalize_level_transition(
         ctx.last_glory_reward = 0;
         ctx.last_blitz_medal = None;
         ctx.last_blitz_new_best = false;
+        ctx.last_weekly_medal = None;
+        ctx.last_weekly_new_best = false;
         ctx.last_trial_par = None;
         ctx.last_trial_first_clear = false;
         ctx.last_gauntlet_stages = None;
@@ -2290,6 +2292,16 @@ fn finalize_level_transition(
                 ctx.last_blitz_medal = Some(medal);
                 ctx.last_blitz_new_best = is_new_best;
                 ctx.last_glory_reward = glory;
+            } else if building_id == wyrdstone_core::WEEKLY_CHALLENGE_BUILDING_ID {
+                let week_idx =
+                    wyrdstone_core::weekly_challenge_week_index(crate::state::today_day_index());
+                let (medal, is_new_best, total_res, bonus_glory) = ctx
+                    .city
+                    .record_weekly_challenge_run(week_idx, score, &rewards);
+                ctx.last_weekly_medal = Some(medal);
+                ctx.last_weekly_new_best = is_new_best;
+                ctx.last_rewards = total_res;
+                ctx.last_glory_reward = bonus_glory;
             } else if building_id == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID {
                 let streak = ctx.city.record_daily_victory(
                     crate::state::today_day_index(),
@@ -2324,7 +2336,9 @@ fn finalize_level_transition(
                 || building_id == wyrdstone_core::BOSS_RAID_BUILDING_ID
             {
                 SKALD_XP_BOSS_WIN
-            } else if building_id == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID {
+            } else if building_id == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID
+                || building_id == wyrdstone_core::WEEKLY_CHALLENGE_BUILDING_ID
+            {
                 SKALD_XP_DAILY_WIN
             } else {
                 SKALD_XP_BOARD_WIN

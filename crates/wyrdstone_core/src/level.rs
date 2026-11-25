@@ -29,7 +29,12 @@ use crate::expedition::{ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITI
 use crate::patron::{
     PatronGod, FURY_CHARGE_MAX, FURY_PER_COMBO_STEP, FURY_PER_OBSTACLE, FURY_PER_TILE,
 };
-use crate::retention::{ValhallaFlameTier, LAST_STAND_EXTRA_MOVES, LAST_STAND_EXTRA_SECS};
+use crate::retention::{
+    ValhallaFlameTier, LAST_STAND_EXTRA_MOVES, LAST_STAND_EXTRA_SECS, MAX_PATRON_DEVOTION_TIER,
+    PATRON_DEVOTION_BOSS_DMG_PCT_AT_TIER5, PATRON_DEVOTION_FURY_PCT_PER_TIER,
+    PATRON_DEVOTION_SCORE_PCT_PER_TIER, PATRON_DEVOTION_START_FURY_AT_TIER3,
+    WEEKLY_CHALLENGE_BUILDING_ID, WEEKLY_MEDAL_THRESHOLDS,
+};
 use crate::trials::TrialDef;
 use crate::turn::{Turn, TurnStep};
 use rand::rngs::StdRng;
@@ -411,6 +416,72 @@ impl LevelDef {
             cursed_cells: vec![],
             blocked_cells: vec![(0, 0), (7, 0), (0, 7), (7, 7)],
             base_reward: tuning.base_reward,
+        }
+    }
+
+    /// Deterministically generates the Weekly Seeded Challenge 8x8 board for a UTC week index.
+    pub fn weekly_challenge(week_index: u64) -> Self {
+        let mut rng = StdRng::seed_from_u64(week_index ^ 0x5759_5244_5745_454B);
+        let layout = rng.gen_range(0..3usize);
+        let mut ice_cells = Vec::new();
+        let mut chained_cells = Vec::new();
+        let mut crate_cells = Vec::new();
+        let mut portals = Vec::new();
+        let blocked_cells = match layout {
+            0 => {
+                for r in 2..=5 {
+                    ice_cells.push((r, r, if r == 3 || r == 4 { 2 } else { 1 }));
+                    ice_cells.push((7 - r, r, 1));
+                }
+                chained_cells.extend([(3, 2), (4, 5)]);
+                vec![(0, 0), (7, 0), (0, 7), (7, 7)]
+            }
+            1 => {
+                for c in 2..=5 {
+                    ice_cells.push((c, 2, 1));
+                    ice_cells.push((c, 5, 2));
+                }
+                crate_cells.extend([(2, 3, 1), (5, 3, 1), (2, 4, 1), (5, 4, 1)]);
+                chained_cells.extend([(3, 3), (4, 4)]);
+                vec![(0, 3), (0, 4), (7, 3), (7, 4)]
+            }
+            _ => {
+                portals.push(((1, 7), (6, 0)));
+                portals.push(((6, 7), (1, 0)));
+                for c in 2..=5 {
+                    ice_cells.push((c, 3, 1));
+                    ice_cells.push((c, 4, 1));
+                }
+                crate_cells.extend([(3, 2, 1), (4, 5, 1)]);
+                vec![(3, 0), (4, 0), (3, 7), (4, 7)]
+            }
+        };
+        Self {
+            id: format!("weekly_{week_index}"),
+            building_id: WEEKLY_CHALLENGE_BUILDING_ID.to_string(),
+            cols: 8,
+            rows: 8,
+            max_moves: 28,
+            time_limit_seconds: None,
+            rune_types_count: 6,
+            objectives: vec![Objective::ReachScore {
+                target: WEEKLY_MEDAL_THRESHOLDS[0],
+            }],
+            ice_cells,
+            chained_cells,
+            crate_cells,
+            relic_cells: vec![],
+            portals,
+            frost_spread: false,
+            fog_cells: vec![],
+            cursed_cells: vec![],
+            blocked_cells,
+            base_reward: ResourceBundle {
+                wood: 110,
+                stone: 110,
+                gold: 150,
+                mead: 25,
+            },
         }
     }
 }
@@ -894,6 +965,38 @@ impl LevelSession {
         let fury_bonus = tier.starting_fury_bonus();
         if fury_bonus > 0 {
             self.fury = self.fury.saturating_add(fury_bonus).min(self.fury_max);
+        }
+    }
+
+    /// Applies permanent Patron Devotion Altar bonuses (`tier` 1..=5) to a non-trial session.
+    pub fn apply_patron_devotion(&mut self, tier: u8) {
+        if self.is_trial || tier == 0 {
+            return;
+        }
+        let t = u32::from(tier.min(MAX_PATRON_DEVOTION_TIER));
+        self.fury_charge_bonus_pct = self
+            .fury_charge_bonus_pct
+            .saturating_add(t.saturating_mul(PATRON_DEVOTION_FURY_PCT_PER_TIER));
+        self.score_bonus_pct = self
+            .score_bonus_pct
+            .saturating_add(t.saturating_mul(PATRON_DEVOTION_SCORE_PCT_PER_TIER));
+        if tier >= 3 {
+            self.fury = self
+                .fury
+                .saturating_add(PATRON_DEVOTION_START_FURY_AT_TIER3)
+                .min(self.fury_max);
+        }
+        if tier >= 5 {
+            self.boss_damage_bonus_pct = self
+                .boss_damage_bonus_pct
+                .saturating_add(PATRON_DEVOTION_BOSS_DMG_PCT_AT_TIER5);
+        }
+    }
+
+    /// Applies endgame Legend Rank spoils bonus percentage to a non-trial session.
+    pub fn apply_legend_bonus(&mut self, extra_resource_pct: u32) {
+        if !self.is_trial && extra_resource_pct > 0 {
+            self.resource_bonus_pct = self.resource_bonus_pct.saturating_add(extra_resource_pct);
         }
     }
 

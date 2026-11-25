@@ -49,6 +49,29 @@ pub const SKALD_XP_DAILY_WIN: u32 = 30;
 /// Skald XP awarded on a Boss Raid or Gauntlet victory.
 pub const SKALD_XP_BOSS_WIN: u32 = 35;
 
+/// Maximum Devotion upgrade tier per Norse Patron deity.
+pub const MAX_PATRON_DEVOTION_TIER: u8 = 5;
+/// Fury charge speed bonus per Patron Devotion tier (+6% per tier, +30% at Tier 5).
+pub const PATRON_DEVOTION_FURY_PCT_PER_TIER: u32 = 6;
+/// Score multiplier bonus per Patron Devotion tier (+4% per tier, +20% at Tier 5).
+pub const PATRON_DEVOTION_SCORE_PCT_PER_TIER: u32 = 4;
+/// Starting Divine Fury bonus unlocked at Patron Devotion Tier 3+.
+pub const PATRON_DEVOTION_START_FURY_AT_TIER3: u32 = 10;
+/// Bonus Boss damage percentage unlocked at Patron Devotion Tier 5.
+pub const PATRON_DEVOTION_BOSS_DMG_PCT_AT_TIER5: u32 = 15;
+
+/// Building identifier carried by Weekly Seeded Challenge runs.
+pub const WEEKLY_CHALLENGE_BUILDING_ID: &str = "weekly_challenge";
+/// Score medal thresholds for Bronze, Silver, Gold, and Legend on Weekly Seeded Challenges.
+pub const WEEKLY_MEDAL_THRESHOLDS: [u32; 4] = [8_000, 14_000, 22_000, 32_000];
+
+/// Glory increment per Legend Rank beyond High King.
+pub const LEGEND_RANK_GLORY_STEP: u32 = 250;
+/// Bonus spoils percentage granted per Legend Rank.
+pub const LEGEND_SPOILS_PCT_PER_LEVEL: u32 = 2;
+/// Maximum spoils bonus percentage attainable from Legend Ranks.
+pub const LEGEND_SPOILS_MAX_BONUS_PCT: u32 = 40;
+
 /// Returns the resource cost required to invoke Last Stand once on defeat.
 pub const fn last_stand_cost() -> ResourceBundle {
     ResourceBundle {
@@ -478,15 +501,17 @@ pub enum PlayMode {
     DailyTrial,
     YggdrasilTrials,
     ValhallaBlitz,
+    WeeklyChallenge,
     BossRaids,
     Expedition,
 }
 
 impl PlayMode {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::DailyTrial,
         Self::YggdrasilTrials,
         Self::ValhallaBlitz,
+        Self::WeeklyChallenge,
         Self::BossRaids,
         Self::Expedition,
     ];
@@ -496,6 +521,7 @@ impl PlayMode {
             Self::DailyTrial => "city.panel.daily.button",
             Self::YggdrasilTrials => "city.panel.trials.title",
             Self::ValhallaBlitz => "city.panel.blitz.button",
+            Self::WeeklyChallenge => "city.panel.weekly.button",
             Self::BossRaids => "city.panel.raids.button",
             Self::Expedition => "city.panel.expedition.button",
         }
@@ -506,9 +532,204 @@ impl PlayMode {
             Self::DailyTrial => "mode.unlock.daily",
             Self::YggdrasilTrials => "mode.unlock.trials",
             Self::ValhallaBlitz => "mode.unlock.blitz",
+            Self::WeeklyChallenge => "mode.unlock.weekly",
             Self::BossRaids => "mode.unlock.raids",
             Self::Expedition => "mode.unlock.expedition",
         }
+    }
+}
+
+/// Returns `(resources, required_glory)` to upgrade Patron Devotion to `next_tier` (`1..=5`).
+pub const fn patron_devotion_upgrade_cost(next_tier: u8) -> (ResourceBundle, u32) {
+    match next_tier {
+        1 => (
+            ResourceBundle {
+                wood: 120,
+                stone: 120,
+                gold: 160,
+                mead: 25,
+            },
+            50,
+        ),
+        2 => (
+            ResourceBundle {
+                wood: 200,
+                stone: 200,
+                gold: 260,
+                mead: 45,
+            },
+            150,
+        ),
+        3 => (
+            ResourceBundle {
+                wood: 320,
+                stone: 320,
+                gold: 400,
+                mead: 70,
+            },
+            300,
+        ),
+        4 => (
+            ResourceBundle {
+                wood: 460,
+                stone: 460,
+                gold: 580,
+                mead: 100,
+            },
+            500,
+        ),
+        _ => (
+            ResourceBundle {
+                wood: 650,
+                stone: 650,
+                gold: 800,
+                mead: 140,
+            },
+            750,
+        ),
+    }
+}
+
+/// Maps a UTC day index to its deterministic UTC week index.
+pub const fn weekly_challenge_week_index(day_index: u64) -> u64 {
+    day_index / 7
+}
+
+/// Maps a Weekly Seeded Challenge score to medal tier `0..=4` (None/Bronze/Silver/Gold/Legend).
+pub const fn weekly_medal_for_score(score: u32) -> u8 {
+    if score >= WEEKLY_MEDAL_THRESHOLDS[3] {
+        4
+    } else if score >= WEEKLY_MEDAL_THRESHOLDS[2] {
+        3
+    } else if score >= WEEKLY_MEDAL_THRESHOLDS[1] {
+        2
+    } else if score >= WEEKLY_MEDAL_THRESHOLDS[0] {
+        1
+    } else {
+        0
+    }
+}
+
+/// Returns the localization key for Weekly Seeded Challenge medal tier `0..=4`.
+pub const fn weekly_medal_name_key(medal: u8) -> &'static str {
+    match medal {
+        1 => "weekly.medal.bronze",
+        2 => "weekly.medal.silver",
+        3 => "weekly.medal.gold",
+        4 => "weekly.medal.legend",
+        _ => "weekly.medal.none",
+    }
+}
+
+/// Returns `(resources, optional_tool, glory)` awarded when first reaching Weekly medal `1..=4`.
+pub const fn weekly_medal_reward(medal: u8) -> (ResourceBundle, Option<ActiveTool>, u32) {
+    match medal {
+        1 => (
+            ResourceBundle {
+                wood: 90,
+                stone: 90,
+                gold: 120,
+                mead: 20,
+            },
+            None,
+            25,
+        ),
+        2 => (
+            ResourceBundle {
+                wood: 140,
+                stone: 140,
+                gold: 190,
+                mead: 35,
+            },
+            Some(ActiveTool::ThorBolt),
+            40,
+        ),
+        3 => (
+            ResourceBundle {
+                wood: 210,
+                stone: 210,
+                gold: 290,
+                mead: 55,
+            },
+            Some(ActiveTool::DrakkarCharge),
+            65,
+        ),
+        4 => (
+            ResourceBundle {
+                wood: 320,
+                stone: 320,
+                gold: 450,
+                mead: 85,
+            },
+            Some(ActiveTool::BifrostPrism),
+            100,
+        ),
+        _ => (
+            ResourceBundle {
+                wood: 0,
+                stone: 0,
+                gold: 0,
+                mead: 0,
+            },
+            None,
+            0,
+        ),
+    }
+}
+
+/// Persistent score record and claimed medal tier for the current Weekly Seeded Challenge.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeeklyChallengeState {
+    pub week_index: u64,
+    pub best_score: u32,
+    pub claimed_medal: u8,
+}
+
+impl WeeklyChallengeState {
+    /// Resets weekly record and medal progression when a new UTC week starts.
+    pub fn ensure_for_week(&mut self, week_index: u64) {
+        if self.week_index != week_index {
+            self.week_index = week_index;
+            self.best_score = 0;
+            self.claimed_medal = 0;
+        }
+    }
+
+    /// Records a Weekly Challenge run, granting any newly reached medal tier rewards once per week.
+    pub fn record_run(
+        &mut self,
+        week_index: u64,
+        score: u32,
+        resources: &mut ResourceBundle,
+        tools: &mut ToolInventory,
+        glory: &mut u32,
+    ) -> (u8, bool, ResourceBundle, u32) {
+        self.ensure_for_week(week_index);
+        let is_new_best = score > self.best_score;
+        if is_new_best {
+            self.best_score = score;
+        }
+        let reached = weekly_medal_for_score(score);
+        let mut bonus_res = ResourceBundle::default();
+        let mut bonus_glory = 0u32;
+        if reached > self.claimed_medal {
+            for medal in (self.claimed_medal + 1)..=reached {
+                let (res, tool, gl) = weekly_medal_reward(medal);
+                resources.add(&res);
+                if let Some(t) = tool {
+                    tools.grant_one(t);
+                }
+                *glory = glory.saturating_add(gl);
+                bonus_res.add(&res);
+                bonus_glory = bonus_glory.saturating_add(gl);
+            }
+            self.claimed_medal = reached;
+        }
+        (reached, is_new_best, bonus_res, bonus_glory)
+    }
+
+    pub fn sanitize(&mut self) {
+        self.claimed_medal = self.claimed_medal.min(4);
     }
 }
 

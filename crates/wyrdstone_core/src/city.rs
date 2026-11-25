@@ -25,9 +25,11 @@ use crate::board::ActiveTool;
 use crate::boss::{BossDef, GAUNTLET_CLEAR_GLORY, GAUNTLET_STAGE_PARTIAL_GLORY};
 use crate::patron::PatronGod;
 use crate::retention::{
-    DailyBountyBoard, OfflineVaultSummary, PlayMode, SkaldPassState, ValhallaFlameTier,
-    OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
-    OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS,
+    patron_devotion_upgrade_cost, DailyBountyBoard, OfflineVaultSummary, PlayMode, SkaldPassState,
+    ValhallaFlameTier, WeeklyChallengeState, LEGEND_RANK_GLORY_STEP, LEGEND_SPOILS_MAX_BONUS_PCT,
+    LEGEND_SPOILS_PCT_PER_LEVEL, MAX_PATRON_DEVOTION_TIER, OFFLINE_VAULT_BASE_MAX_HOURS,
+    OFFLINE_VAULT_CYCLE_SECS, OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER,
+    OFFLINE_VAULT_MIN_ABSENCE_SECS,
 };
 use crate::trials::{TrialDef, TRIAL_PAR_BONUS_GLORY};
 use crate::turn::ClearStatsDelta;
@@ -463,6 +465,10 @@ pub struct CityState {
     pub daily_bounties: DailyBountyBoard,
     #[serde(default)]
     pub skald_pass: SkaldPassState,
+    #[serde(default)]
+    pub patron_devotion: HashMap<PatronGod, u8>,
+    #[serde(default)]
+    pub weekly_challenge: WeeklyChallengeState,
 }
 
 impl CityState {
@@ -509,6 +515,8 @@ impl CityState {
             par_trials: HashSet::new(),
             daily_bounties: DailyBountyBoard::default(),
             skald_pass: SkaldPassState::default(),
+            patron_devotion: HashMap::new(),
+            weekly_challenge: WeeklyChallengeState::default(),
         }
     }
 
@@ -554,6 +562,10 @@ impl CityState {
         self.energy = self.energy.min(self.max_energy(balance));
         self.daily_bounties.sanitize();
         self.skald_pass.sanitize();
+        for tier in self.patron_devotion.values_mut() {
+            *tier = (*tier).min(MAX_PATRON_DEVOTION_TIER);
+        }
+        self.weekly_challenge.sanitize();
     }
 
     /// Returns true if the 7-day Fjord Login Tribute has not yet been claimed today.
@@ -759,6 +771,11 @@ impl CityState {
                     || self.stats.total_victories >= 3
                     || self.stats.blitz_runs_completed > 0
             }
+            PlayMode::WeeklyChallenge => {
+                hall_tier >= 1
+                    || self.stats.total_victories >= 3
+                    || self.weekly_challenge.best_score > 0
+            }
             PlayMode::BossRaids => {
                 (hall_tier >= 1 && self.stats.total_victories >= 3)
                     || self.glory >= 50
@@ -778,6 +795,78 @@ impl CityState {
             .iter()
             .filter(|&&m| self.is_mode_unlocked(m))
             .count()
+    }
+
+    /// Returns the Devotion Altar tier (`0..=5`) unlocked for a Patron God.
+    pub fn patron_devotion_tier(&self, god: PatronGod) -> u8 {
+        self.patron_devotion
+            .get(&god)
+            .copied()
+            .unwrap_or(0)
+            .min(MAX_PATRON_DEVOTION_TIER)
+    }
+
+    /// Upgrades a Patron God's Devotion Altar by one tier using Glory prerequisite and resources.
+    pub fn try_upgrade_patron_devotion(&mut self, god: PatronGod) -> Result<u8, &'static str> {
+        let cur = self.patron_devotion_tier(god);
+        if cur >= MAX_PATRON_DEVOTION_TIER {
+            return Err("patron.devotion.maxed");
+        }
+        let next = cur + 1;
+        let (cost, req_glory) = patron_devotion_upgrade_cost(next);
+        if self.glory < req_glory {
+            return Err("patron.devotion.need_glory");
+        }
+        if !self.resources.can_afford(&cost) {
+            return Err("city.error.not_enough_resources");
+        }
+        self.resources.subtract(&cost);
+        self.patron_devotion.insert(god, next);
+        Ok(next)
+    }
+
+    /// Records a Weekly Seeded Challenge victory and grants first-time weekly medal rewards.
+    pub fn record_weekly_challenge_run(
+        &mut self,
+        week_index: u64,
+        score: u32,
+        base_rewards: &ResourceBundle,
+    ) -> (u8, bool, ResourceBundle, u32) {
+        self.resources.add(base_rewards);
+        let (medal, is_new_best, bonus_res, bonus_glory) = self.weekly_challenge.record_run(
+            week_index,
+            score,
+            &mut self.resources,
+            &mut self.tools,
+            &mut self.glory,
+        );
+        self.stats.best_score = self.stats.best_score.max(score);
+        self.stats.total_victories = self.stats.total_victories.saturating_add(1);
+        self.bump_win_streak();
+        let mut total_res = *base_rewards;
+        total_res.add(&bonus_res);
+        (medal, is_new_best, total_res, bonus_glory)
+    }
+
+    /// Returns prestige Legend Rank level earned beyond High King (`250` Glory per level).
+    pub fn legend_level(&self, balance: &BalanceConfig) -> u32 {
+        self.glory.saturating_sub(balance.clan_rank_high_king_glory) / LEGEND_RANK_GLORY_STEP
+    }
+
+    /// Returns bonus spoils percentage (`+2%` per Legend level, capped at `+40%`).
+    pub fn legend_spoils_bonus_pct(&self, balance: &BalanceConfig) -> u32 {
+        self.legend_level(balance)
+            .saturating_mul(LEGEND_SPOILS_PCT_PER_LEVEL)
+            .min(LEGEND_SPOILS_MAX_BONUS_PCT)
+    }
+
+    /// Returns total Clan Glory threshold required for the next Legend Rank level.
+    pub fn glory_for_next_legend(&self, balance: &BalanceConfig) -> u32 {
+        balance.clan_rank_high_king_glory.saturating_add(
+            self.legend_level(balance)
+                .saturating_add(1)
+                .saturating_mul(LEGEND_RANK_GLORY_STEP),
+        )
     }
 
     /// Returns the Offline Harvest Vault cap in hours (base 8h + 2h per Great Hall tier).
