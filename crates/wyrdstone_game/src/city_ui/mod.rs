@@ -55,6 +55,20 @@ const FJORD_MAP_ASPECT: f32 = 1280.0 / 720.0;
 #[derive(Component)]
 pub struct CityRoot;
 
+/// Marker on transient Fjord hub VFX nodes (flying harvest orbs) so exit cleanup clears them cleanly.
+#[derive(Component)]
+pub struct CityTransientVfx;
+
+/// Quadratic-Bezier resource orb flying from a harvested building up to the top Fjord resource bar.
+#[derive(Component)]
+pub struct FjordHarvestOrb {
+    pub start_px: Vec2,
+    pub control_px: Vec2,
+    pub target_px: Vec2,
+    pub elapsed: f32,
+    pub duration: f32,
+}
+
 /// Full-viewport dimmed cover copy of `fjord_map.png` behind the 16:9 interactive canvas
 /// so ultrawide or tall windows never display harsh flat letterbox bars.
 #[derive(Component)]
@@ -338,8 +352,15 @@ pub fn setup_city_ui(
 }
 
 /// Cleans up the Fjord City UI on state exit.
-pub fn cleanup_city_ui(mut commands: Commands, roots: Query<Entity, With<CityRoot>>) {
+pub fn cleanup_city_ui(
+    mut commands: Commands,
+    roots: Query<Entity, With<CityRoot>>,
+    vfx_nodes: Query<Entity, With<CityTransientVfx>>,
+) {
     for entity in &roots {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in &vfx_nodes {
         commands.entity(entity).despawn_recursive();
     }
     commands.remove_resource::<CityLayoutMode>();
@@ -2349,7 +2370,16 @@ pub fn handle_city_buttons(
             play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
             rebuild = true;
         } else if ctx.active_modal == ActiveModal::WelcomeBack {
-            if claim_offline_vault_action(&mut commands, &mut ctx, &sound_bank) {
+            if let Some(rewards) = claim_offline_vault_action(&mut commands, &mut ctx, &sound_bank)
+            {
+                if !ctx.reduced_motion {
+                    let origin = Vec2::new(
+                        layout_mode.window_size.x * 0.50,
+                        layout_mode.window_size.y * 0.52,
+                    );
+                    let target = Vec2::new(layout_mode.window_size.x * 0.42, 26.0);
+                    spawn_fjord_harvest_orbs(&mut commands, &vfx, origin, target, rewards);
+                }
                 haptics.send(HapticEvent(HapticKind::Victory));
             }
             rebuild = true;
@@ -2791,11 +2821,9 @@ pub fn handle_city_buttons(
                     let now = now_unix_secs();
                     let harvested = {
                         let s = &mut *ctx;
-                        s.city
-                            .try_collect_harvest(&def, now, &s.data.balance)
-                            .is_some()
+                        s.city.try_collect_harvest(&def, now, &s.data.balance)
                     };
-                    if harvested {
+                    if let Some(rewards) = harvested {
                         let bname = ctx.data.i18n.t(&def.name_key).to_string();
                         ctx.celebration_message = Some(
                             ctx.data
@@ -2804,6 +2832,14 @@ pub fn handle_city_buttons(
                         );
                         ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                         layout_mode.last_ready_harvests = count_ready_harvests(&ctx, now);
+                        if !ctx.reduced_motion {
+                            let origin = Vec2::new(
+                                def.map_x_pct / 100.0 * layout_mode.window_size.x,
+                                def.map_y_pct / 100.0 * layout_mode.window_size.y,
+                            );
+                            let target = Vec2::new(layout_mode.window_size.x * 0.42, 26.0);
+                            spawn_fjord_harvest_orbs(&mut commands, &vfx, origin, target, rewards);
+                        }
                         ctx.persist();
                         play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
                         haptics.send(HapticEvent(HapticKind::LightTap));
@@ -2813,7 +2849,7 @@ pub fn handle_city_buttons(
             }
             CityAction::CollectAllHarvests => {
                 let now = now_unix_secs();
-                let (count, _) = {
+                let (count, total_rewards) = {
                     let s = &mut *ctx;
                     s.city
                         .collect_all_harvests(&s.data.buildings, now, &s.data.balance)
@@ -2825,6 +2861,20 @@ pub fn handle_city_buttons(
                     ));
                     ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                     layout_mode.last_ready_harvests = 0;
+                    if !ctx.reduced_motion {
+                        let origin = Vec2::new(
+                            layout_mode.window_size.x * 0.50,
+                            layout_mode.window_size.y * 0.55,
+                        );
+                        let target = Vec2::new(layout_mode.window_size.x * 0.42, 26.0);
+                        spawn_fjord_harvest_orbs(
+                            &mut commands,
+                            &vfx,
+                            origin,
+                            target,
+                            total_rewards,
+                        );
+                    }
                     ctx.persist();
                     play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
                     haptics.send(HapticEvent(HapticKind::Victory));
@@ -3497,8 +3547,18 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::ClaimOfflineVault => {
-                if claim_offline_vault_action(&mut commands, &mut ctx, &sound_bank) {
+                if let Some(rewards) =
+                    claim_offline_vault_action(&mut commands, &mut ctx, &sound_bank)
+                {
                     layout_mode.last_ready_harvests = 0;
+                    if !ctx.reduced_motion {
+                        let origin = Vec2::new(
+                            layout_mode.window_size.x * 0.50,
+                            layout_mode.window_size.y * 0.52,
+                        );
+                        let target = Vec2::new(layout_mode.window_size.x * 0.42, 26.0);
+                        spawn_fjord_harvest_orbs(&mut commands, &vfx, origin, target, rewards);
+                    }
                     haptics.send(HapticEvent(HapticKind::Victory));
                 }
                 rebuild = true;
@@ -3759,15 +3819,92 @@ pub fn update_city_hover_tooltip(
     }
 }
 
+fn spawn_fjord_harvest_orbs(
+    commands: &mut Commands,
+    vfx: &VfxTextures,
+    origin_px: Vec2,
+    target_px: Vec2,
+    rewards: wyrdstone_core::ResourceBundle,
+) {
+    let icons = [
+        (rewards.wood, vfx.icon_wood.clone()),
+        (rewards.stone, vfx.icon_stone.clone()),
+        (rewards.gold, vfx.icon_gold.clone()),
+        (rewards.mead, vfx.icon_mead.clone()),
+    ];
+    let mut idx = 0usize;
+    for (amt, icon) in icons {
+        if amt == 0 {
+            continue;
+        }
+        let spread = (idx as f32 - 1.5) * 38.0;
+        let start = origin_px + Vec2::new(spread * 0.45, (idx % 2) as f32 * 10.0 - 5.0);
+        let mid = start.lerp(target_px, 0.45);
+        let control = mid + Vec2::new(spread * 1.4, -46.0 - (idx as f32 * 12.0));
+        let duration = 0.50 + idx as f32 * 0.05;
+        commands.spawn((
+            CityTransientVfx,
+            FjordHarvestOrb {
+                start_px: start,
+                control_px: control,
+                target_px: target_px + Vec2::new(spread * 0.3, 0.0),
+                elapsed: 0.0,
+                duration,
+            },
+            ImageNode::new(icon),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(start.x - 12.0),
+                top: Val::Px(start.y - 12.0),
+                width: Val::Px(24.0),
+                height: Val::Px(24.0),
+                ..default()
+            },
+            PickingBehavior::IGNORE,
+            GlobalZIndex(60),
+        ));
+        idx += 1;
+    }
+}
+
+/// Animates Fjord passive harvest resource orbs arcing cleanly to the top HUD bar.
+pub fn animate_fjord_harvest_orbs(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut orbs: Query<(Entity, &mut FjordHarvestOrb, &mut Node, &mut ImageNode)>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut orb, mut node, mut img) in &mut orbs {
+        orb.elapsed += dt;
+        let u = (orb.elapsed / orb.duration).clamp(0.0, 1.0);
+        if u >= 1.0 {
+            commands.entity(entity).despawn_recursive();
+            continue;
+        }
+        let t = u * u * (3.0 - 2.0 * u);
+        let inv = 1.0 - t;
+        let pos =
+            orb.start_px * (inv * inv) + orb.control_px * (2.0 * inv * t) + orb.target_px * (t * t);
+        let size = 24.0 + (u * std::f32::consts::PI).sin() * 6.0;
+        node.left = Val::Px(pos.x - size * 0.5);
+        node.top = Val::Px(pos.y - size * 0.5);
+        node.width = Val::Px(size);
+        node.height = Val::Px(size);
+        let alpha = if u < 0.78 {
+            1.0
+        } else {
+            (1.0 - (u - 0.78) / 0.22).max(0.0)
+        };
+        img.color = Color::WHITE.with_alpha(alpha);
+    }
+}
+
 fn claim_offline_vault_action(
     commands: &mut Commands,
     ctx: &mut GameContext,
     sound_bank: &SoundBank,
-) -> bool {
-    let Some(summary) = ctx.pending_offline_vault.take() else {
-        ctx.active_modal = ActiveModal::None;
-        return false;
-    };
+) -> Option<wyrdstone_core::ResourceBundle> {
+    let summary = ctx.pending_offline_vault.take()?;
     let now = now_unix_secs();
     {
         let s = &mut *ctx;
@@ -3784,7 +3921,7 @@ fn claim_offline_vault_action(
     ctx.status_notice_key = None;
     ctx.persist();
     play_sfx(commands, sound_bank, SfxKind::Victory);
-    true
+    Some(summary.rewards)
 }
 
 fn claim_login_tribute(

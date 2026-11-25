@@ -111,6 +111,28 @@ pub enum Booster {
     BifrostShard,
 }
 
+/// Classification of a two-booster fusion swap for live HUD and blast footprint previews.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoosterFusionKind {
+    LineCross,
+    MegaBomb,
+    GiantCross,
+    BifrostStorm,
+    DoubleBifrost,
+}
+
+impl BoosterFusionKind {
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            Self::LineCross => "match3.combo_preview.cross",
+            Self::MegaBomb => "match3.combo_preview.mega_bomb",
+            Self::GiantCross => "match3.combo_preview.giant_cross",
+            Self::BifrostStorm => "match3.combo_preview.bifrost_storm",
+            Self::DoubleBifrost => "match3.combo_preview.double_bifrost",
+        }
+    }
+}
+
 /// All six player-triggered tools from the bottom action bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ActiveTool {
@@ -457,6 +479,77 @@ impl Board {
             return false;
         }
         self.cells[self.idx(a)].can_be_swapped() && self.cells[self.idx(b)].can_be_swapped()
+    }
+
+    /// Previews a two-booster fusion blast footprint before committing the swap (`a` dragged to `b`).
+    pub fn preview_booster_fusion(
+        &self,
+        a: CellPos,
+        b: CellPos,
+    ) -> Option<(BoosterFusionKind, Vec<CellPos>)> {
+        if !self.can_initiate_swap(a, b) {
+            return None;
+        }
+        let ca = self.cells[self.idx(a)];
+        let cb = self.cells[self.idx(b)];
+        let mut affected = HashSet::new();
+        let kind = match (ca.booster, cb.booster) {
+            (Booster::BifrostShard, Booster::BifrostShard) => {
+                for row in 0..self.rows {
+                    for col in 0..self.cols {
+                        let p = CellPos::new(col, row);
+                        if !self.cells[self.idx(p)].blocked {
+                            affected.insert(p);
+                        }
+                    }
+                }
+                BoosterFusionKind::DoubleBifrost
+            }
+            (Booster::BifrostShard, _) => {
+                let target_rune = cb.rune?;
+                affected.insert(a);
+                affected.insert(b);
+                self.collect_all_of_rune(target_rune, &mut affected);
+                BoosterFusionKind::BifrostStorm
+            }
+            (_, Booster::BifrostShard) => {
+                let target_rune = ca.rune?;
+                affected.insert(a);
+                affected.insert(b);
+                self.collect_all_of_rune(target_rune, &mut affected);
+                BoosterFusionKind::BifrostStorm
+            }
+            (Booster::Bomb, Booster::Bomb) => {
+                affected.extend(self.area_positions(b, BOMB_COMBO_RADIUS));
+                BoosterFusionKind::MegaBomb
+            }
+            (
+                Booster::LineHorizontal | Booster::LineVertical,
+                Booster::LineHorizontal | Booster::LineVertical,
+            ) => {
+                affected.extend(self.row_positions(b.row));
+                affected.extend(self.col_positions(b.col));
+                BoosterFusionKind::LineCross
+            }
+            (Booster::Bomb, Booster::LineHorizontal | Booster::LineVertical)
+            | (Booster::LineHorizontal | Booster::LineVertical, Booster::Bomb) => {
+                for dr in -1i32..=1 {
+                    let r = b.row as i32 + dr;
+                    if r >= 0 && (r as usize) < self.rows {
+                        affected.extend(self.row_positions(r as usize));
+                    }
+                }
+                for dc in -1i32..=1 {
+                    let c = b.col as i32 + dc;
+                    if c >= 0 && (c as usize) < self.cols {
+                        affected.extend(self.col_positions(c as usize));
+                    }
+                }
+                BoosterFusionKind::GiantCross
+            }
+            _ => return None,
+        };
+        Some((kind, sorted_positions(affected)))
     }
 
     /// Performs the raw swap and returns a `PreparedClear` if valid; reverts and returns `None` if invalid.
@@ -2045,5 +2138,52 @@ impl MatchGroup {
         } else {
             Booster::None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_booster_fusion_matches_all_five_combo_types() {
+        let mut cells = vec![Cell::playable(RuneType::Fire); 64];
+        cells[0].rune = Some(RuneType::Ice);
+        let a = CellPos::new(2, 2);
+        let b = CellPos::new(3, 2);
+
+        let mut board = Board::from_cells(8, 8, 6, cells.clone());
+        assert!(board.preview_booster_fusion(a, b).is_none());
+
+        board.get_mut(a).unwrap().booster = Booster::LineHorizontal;
+        board.get_mut(b).unwrap().booster = Booster::LineVertical;
+        let (kind, hit) = board.preview_booster_fusion(a, b).expect("line cross");
+        assert_eq!(kind, BoosterFusionKind::LineCross);
+        assert_eq!(hit.len(), 15);
+
+        board.get_mut(a).unwrap().booster = Booster::Bomb;
+        board.get_mut(b).unwrap().booster = Booster::Bomb;
+        let (kind, hit) = board.preview_booster_fusion(a, b).expect("mega bomb");
+        assert_eq!(kind, BoosterFusionKind::MegaBomb);
+        assert_eq!(hit.len(), 25);
+
+        board.get_mut(a).unwrap().booster = Booster::Bomb;
+        board.get_mut(b).unwrap().booster = Booster::LineHorizontal;
+        let (kind, hit) = board.preview_booster_fusion(a, b).expect("giant cross");
+        assert_eq!(kind, BoosterFusionKind::GiantCross);
+        assert_eq!(hit.len(), 39);
+
+        board.get_mut(a).unwrap().booster = Booster::BifrostShard;
+        board.get_mut(b).unwrap().booster = Booster::None;
+        board.get_mut(b).unwrap().rune = Some(RuneType::Ice);
+        let (kind, hit) = board.preview_booster_fusion(a, b).expect("bifrost storm");
+        assert_eq!(kind, BoosterFusionKind::BifrostStorm);
+        assert!(hit.contains(&CellPos::new(0, 0)));
+        assert!(hit.contains(&a) && hit.contains(&b));
+
+        board.get_mut(b).unwrap().booster = Booster::BifrostShard;
+        let (kind, hit) = board.preview_booster_fusion(a, b).expect("double bifrost");
+        assert_eq!(kind, BoosterFusionKind::DoubleBifrost);
+        assert_eq!(hit.len(), 64);
     }
 }

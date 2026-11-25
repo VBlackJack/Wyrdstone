@@ -670,5 +670,11 @@
   "match3.ftue.first_swap": "Tip: Drag or click two glowing runes to match 3 or more!",
   "match3.ftue.booster_trigger": "Tip: Match or swap a glowing Booster rune to unleash a blast!",
   "match3.ftue.booster_combo": "Tip: Swap two adjacent Boosters together for a Super-Combo!",
-  "match3.ftue.fury_ready": "Tip: Divine Fury is full! Tap your Patron or press Space / F!"
+  "match3.ftue.fury_ready": "Tip: Divine Fury is full! Tap your Patron or press Space / F!",
+  "match3.combo_preview.cross": "Super-Combo: Lightning Cross (Full Row + Column)",
+  "match3.combo_preview.mega_bomb": "Super-Combo: Surtr Mega-Blast (5x5 Area)",
+  "match3.combo_preview.giant_cross": "Super-Combo: Bifrost Giant Cross (3 Rows + 3 Columns)",
+  "match3.combo_preview.bifrost_storm": "Super-Combo: Bifrost Storm (All Matching Runes)",
+  "match3.combo_preview.double_bifrost": "Super-Combo: Ragnarok Cataclysm (Entire Board!)",
+  "result.skald.progress": "Skald's Path - Tier {tier}/{max} (+{xp} XP)"
 }

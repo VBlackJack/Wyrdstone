@@ -1884,9 +1884,13 @@ pub fn handle_match3_hud_buttons(
     }
 }
 
+type TooltipTextQuery<'w, 's> =
+    Query<'w, 's, (&'static mut Text, &'static mut Node), With<Match3TooltipText>>;
+
 type HudBlockerQueries<'w, 's> = (
     Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<Button>)>,
     Query<'w, 's, &'static Interaction, (With<Match3HudBar>, Without<Button>)>,
+    TooltipTextQuery<'w, 's>,
 );
 
 /// Handles both desktop mouse (click + drag) and Android touch (tap + swipe) when the board is idle.
@@ -1906,7 +1910,7 @@ pub fn handle_board_pointer_input(
     drag_highlights: Query<Entity, With<DragTargetHighlight>>,
     selection_markers: Query<Entity, With<SelectionMarker>>,
     kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
-    (ui_buttons, hud_bars): HudBlockerQueries,
+    (ui_buttons, hud_bars, mut tooltip_q): HudBlockerQueries,
 ) {
     if matches!(
         input_state.phase,
@@ -2379,17 +2383,53 @@ pub fn handle_board_pointer_input(
                 commands.entity(e).despawn();
             }
             if let Some(hl) = candidate_target {
-                let w = cell_to_world(hl, &input_state);
-                commands.spawn((
-                    Match3Cleanup,
-                    DragTargetHighlight,
-                    Sprite {
-                        color: Color::srgba(0.45, 0.90, 1.0, 0.32),
-                        custom_size: Some(Vec2::splat(input_state.cell_step * 0.94)),
-                        ..default()
-                    },
-                    Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.15),
-                ));
+                let fusion = ctx
+                    .active_session
+                    .as_ref()
+                    .and_then(|s| s.board.preview_booster_fusion(origin_cell, hl));
+                if let Some((fusion_kind, cells)) = fusion {
+                    for p in cells {
+                        let w = cell_to_world(p, &input_state);
+                        commands.spawn((
+                            Match3Cleanup,
+                            DragTargetHighlight,
+                            Sprite {
+                                color: Color::srgba(1.0, 0.84, 0.24, 0.42),
+                                custom_size: Some(Vec2::splat(input_state.cell_step * 0.94)),
+                                ..default()
+                            },
+                            Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.15),
+                        ));
+                    }
+                    let tip = ctx.data.i18n.t(fusion_kind.name_key()).to_string();
+                    for (mut t, mut node) in &mut tooltip_q {
+                        t.0 = tip.clone();
+                        node.display = Display::Flex;
+                    }
+                } else {
+                    let w = cell_to_world(hl, &input_state);
+                    commands.spawn((
+                        Match3Cleanup,
+                        DragTargetHighlight,
+                        Sprite {
+                            color: Color::srgba(0.45, 0.90, 1.0, 0.32),
+                            custom_size: Some(Vec2::splat(input_state.cell_step * 0.94)),
+                            ..default()
+                        },
+                        Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.15),
+                    ));
+                    if ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
+                        for (mut t, mut node) in &mut tooltip_q {
+                            t.0.clear();
+                            node.display = Display::None;
+                        }
+                    }
+                }
+            } else if ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
+                for (mut t, mut node) in &mut tooltip_q {
+                    t.0.clear();
+                    node.display = Display::None;
+                }
             }
         }
 
@@ -2400,6 +2440,12 @@ pub fn handle_board_pointer_input(
             input_state.drag_highlight_cell = None;
             for e in &drag_highlights {
                 commands.entity(e).despawn();
+            }
+            if ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
+                for (mut t, mut node) in &mut tooltip_q {
+                    t.0.clear();
+                    node.display = Display::None;
+                }
             }
             if let Some(nb) = candidate_target {
                 if start_swap_animation(origin_cell, nb, &ctx, &mut input_state) {
@@ -2437,6 +2483,12 @@ pub fn handle_board_pointer_input(
         input_state.drag_highlight_cell = None;
         for e in &drag_highlights {
             commands.entity(e).despawn();
+        }
+        if ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
+            for (mut t, mut node) in &mut tooltip_q {
+                t.0.clear();
+                node.display = Display::None;
+            }
         }
     }
 }

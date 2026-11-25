@@ -2330,7 +2330,9 @@ fn finalize_level_transition(
                 SKALD_XP_BOARD_WIN
             };
             ctx.city.skald_pass.add_xp(skald_xp);
+            ctx.last_skald_xp_gained = skald_xp;
         } else {
+            ctx.last_skald_xp_gained = 0;
             if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 ctx.active_expedition = None;
             }

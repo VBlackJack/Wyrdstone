@@ -31,7 +31,7 @@ use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use wyrdstone_core::{
     last_stand_cost, LevelOutcome, Objective, LAST_STAND_EXTRA_MOVES, LAST_STAND_EXTRA_SECS,
-    MAX_DAILY_STREAK_CYCLE,
+    MAX_DAILY_STREAK_CYCLE, SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
 };
 
 #[derive(Component)]
@@ -713,6 +713,91 @@ fn spawn_result_ui(
                                                 },
                                                 TextColor(COLOR_ACCENT_TEAL_TEXT),
                                             ));
+                                        }
+                                        if ctx.last_skald_xp_gained > 0 {
+                                            let pass = &ctx.city.skald_pass;
+                                            let tier = pass.current_tier();
+                                            let fill_pct = if tier >= SKALD_PASS_TIERS {
+                                                100.0
+                                            } else {
+                                                ((pass.xp % SKALD_PASS_XP_PER_TIER) as f32
+                                                    / SKALD_PASS_XP_PER_TIER as f32
+                                                    * 100.0)
+                                                    .clamp(0.0, 100.0)
+                                            };
+                                            let has_claim = pass.claimable_count() > 0;
+                                            card.spawn((
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    flex_direction: FlexDirection::Column,
+                                                    row_gap: Val::Px(5.0),
+                                                    padding: UiRect::axes(
+                                                        Val::Px(12.0),
+                                                        Val::Px(8.0),
+                                                    ),
+                                                    border: UiRect::all(Val::Px(1.5)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(COLOR_PANEL_CARD),
+                                                BorderColor(if has_claim {
+                                                    COLOR_ACCENT_GOLD
+                                                } else {
+                                                    COLOR_PANEL_BORDER
+                                                }),
+                                                BorderRadius::all(Val::Px(8.0)),
+                                            ))
+                                            .with_children(|sp| {
+                                                sp.spawn((
+                                                    Text::new(
+                                                        i18n.t_fmt(
+                                                            "result.skald.progress",
+                                                            &[
+                                                                ("tier", tier.to_string()),
+                                                                (
+                                                                    "max",
+                                                                    SKALD_PASS_TIERS.to_string(),
+                                                                ),
+                                                                (
+                                                                    "xp",
+                                                                    ctx.last_skald_xp_gained
+                                                                        .to_string(),
+                                                                ),
+                                                            ],
+                                                        ),
+                                                    ),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(if has_claim {
+                                                        COLOR_ACCENT_GOLD
+                                                    } else {
+                                                        COLOR_TEXT_PRIMARY
+                                                    }),
+                                                ));
+                                                sp.spawn((
+                                                    Node {
+                                                        width: Val::Percent(100.0),
+                                                        height: Val::Px(8.0),
+                                                        overflow: Overflow::clip(),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(
+                                                        0.08, 0.11, 0.18, 0.90,
+                                                    )),
+                                                    BorderRadius::all(Val::Px(4.0)),
+                                                ))
+                                                .with_children(|bar| {
+                                                    bar.spawn((
+                                                        Node {
+                                                            width: Val::Percent(fill_pct),
+                                                            height: Val::Percent(100.0),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(COLOR_ACCENT_GOLD),
+                                                    ));
+                                                });
+                                            });
                                         }
                                         // Highlight any newly claimable Fjord progression (Quest, Feats, Building Upgrade).
                                         let quest_ready = ctx

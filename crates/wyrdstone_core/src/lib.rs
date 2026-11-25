@@ -37,7 +37,8 @@ pub use balance::{
     BalanceConfig, BlitzTuning, BossTuning, DailyTuning, ExpeditionTuning, SessionTuning,
 };
 pub use board::{
-    ActiveTool, Board, Booster, Cell, CellPos, FallMove, MatchStepOutcome, PreparedClear, RuneType,
+    ActiveTool, Board, Booster, BoosterFusionKind, Cell, CellPos, FallMove, MatchStepOutcome,
+    PreparedClear, RuneType,
 };
 pub use boss::{
     BossDef, BossRiposteKind, BossState, GauntletRun, BOSS_RAID_BUILDING_ID, GAUNTLET_BUILDING_ID,

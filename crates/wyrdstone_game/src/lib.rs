@@ -123,6 +123,7 @@ pub fn run_app() {
                 city_ui::handle_city_buttons,
                 city_ui::update_city_hover_tooltip,
                 city_ui::sync_map_building_layout,
+                city_ui::animate_fjord_harvest_orbs,
             )
                 .chain()
                 .run_if(in_state(AppState::FjordCity)),

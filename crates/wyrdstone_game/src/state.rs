@@ -140,6 +140,7 @@ pub struct GameContext {
     pub pending_dialogue: Option<ChapterDialogue>,
     pub pending_offline_vault: Option<OfflineVaultSummary>,
     pub last_stand_pre_defeat_streak: u32,
+    pub last_skald_xp_gained: u32,
     pub energy_regen_timer: Timer,
     /// Wall-clock instant from which the next endurance point is being earned.
     pub energy_regen_anchor_unix_secs: u64,
@@ -349,6 +350,7 @@ impl GameContext {
             pending_dialogue: None,
             pending_offline_vault,
             last_stand_pre_defeat_streak: 0,
+            last_skald_xp_gained: 0,
             energy_regen_timer: Timer::from_seconds(regen_secs, TimerMode::Repeating),
             energy_regen_anchor_unix_secs: regen_anchor,
             save_path,
@@ -1337,6 +1339,7 @@ mod read_only_notice_tests {
             pending_dialogue: None,
             pending_offline_vault: None,
             last_stand_pre_defeat_streak: 0,
+            last_skald_xp_gained: 0,
             energy_regen_timer: Timer::from_seconds(60.0, TimerMode::Repeating),
             energy_regen_anchor_unix_secs: 0,
             save_path: Some(save_file.clone()),

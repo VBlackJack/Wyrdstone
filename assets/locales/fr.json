@@ -670,5 +670,11 @@
   "match3.ftue.first_swap": "Astuce : Glissez ou cliquez deux runes lumineuses pour en aligner 3+ !",
   "match3.ftue.booster_trigger": "Astuce : Alignez ou échangez une rune Bonus pour déclencher une explosion !",
   "match3.ftue.booster_combo": "Astuce : Échangez deux Bonus adjacents pour un Super-Combo !",
-  "match3.ftue.fury_ready": "Astuce : Fureur Divine prête ! Cliquez votre Dieu ou appuyez sur Espace / F !"
+  "match3.ftue.fury_ready": "Astuce : Fureur Divine prête ! Cliquez votre Dieu ou appuyez sur Espace / F !",
+  "match3.combo_preview.cross": "Super-Combo : Croix de Foudre (Ligne + Colonne)",
+  "match3.combo_preview.mega_bomb": "Super-Combo : Méga-Explosion de Surtr (Zone 5x5)",
+  "match3.combo_preview.giant_cross": "Super-Combo : Croix Géante (3 Lignes + 3 Colonnes)",
+  "match3.combo_preview.bifrost_storm": "Super-Combo : Tempête du Bifrost (Toutes les Runes liées)",
+  "match3.combo_preview.double_bifrost": "Super-Combo : Cataclysme du Ragnarok (Tout le Plateau !)",
+  "result.skald.progress": "Voie du Scalde - Palier {tier}/{max} (+{xp} XP)"
 }
