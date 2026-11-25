@@ -2991,3 +2991,95 @@ fn save_data_deserializes_without_trials_or_gauntlet_fields() {
     assert_eq!(loaded.city.stats.best_gauntlet_stage, 0);
     assert_eq!(loaded.city.stats.gauntlets_cleared, 0);
 }
+
+#[test]
+fn retention_valhalla_flame_last_stand_offline_vault_and_bounties_work() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    let mut rng = StdRng::seed_from_u64(42);
+
+    // 1. Valhalla Flame escalating tiers + Trial immunity.
+    assert_eq!(
+        city.valhalla_flame_tier(),
+        wyrdstone_core::ValhallaFlameTier::None
+    );
+    city.stats.win_streak = 5;
+    assert_eq!(
+        city.valhalla_flame_tier(),
+        wyrdstone_core::ValhallaFlameTier::Inferno
+    );
+
+    let lvl = data.level_by_id("great_hall_1").expect("level").clone();
+    let mut session = LevelSession::start_full(
+        lvl,
+        None,
+        city.compute_bonuses(&data.balance),
+        PatronGod::Thor,
+        None,
+        &mut rng,
+    );
+    let bonuses_before = (0..session.board.rows())
+        .flat_map(|r| (0..session.board.cols()).map(move |c| CellPos::new(c, r)))
+        .filter(|&p| session.board.get(p).unwrap().booster == Booster::BifrostShard)
+        .count();
+    session.apply_valhalla_flame(city.valhalla_flame_tier(), &mut rng);
+    let bonuses_after = (0..session.board.rows())
+        .flat_map(|r| (0..session.board.cols()).map(move |c| CellPos::new(c, r)))
+        .filter(|&p| session.board.get(p).unwrap().booster == Booster::BifrostShard)
+        .count();
+    assert_eq!(bonuses_after, bonuses_before + 1);
+    assert_eq!(session.fury, 25);
+
+    // 2. Last Stand revives once on defeat and excludes trials/blitz.
+    session.outcome = LevelOutcome::Defeat;
+    session.moves_left = 0;
+    assert!(session.can_use_last_stand());
+    assert!(session.apply_last_stand(false));
+    assert_eq!(session.outcome, LevelOutcome::InProgress);
+    assert_eq!(session.moves_left, wyrdstone_core::LAST_STAND_EXTRA_MOVES);
+    session.outcome = LevelOutcome::Defeat;
+    assert!(!session.can_use_last_stand(), "Last Stand is 1x per run");
+
+    let mut trial_session =
+        LevelSession::start_trial(&data.trials[0], &data.balance).expect("trial");
+    trial_session.apply_valhalla_flame(wyrdstone_core::ValhallaFlameTier::Inferno, &mut rng);
+    assert_eq!(trial_session.fury, 0);
+    trial_session.outcome = LevelOutcome::Defeat;
+    assert!(!trial_session.can_use_last_stand());
+
+    // 3. Offline Harvest Vault scales cap by Great Hall tier and ignores <30 min absences.
+    city.building_tiers.insert("great_hall".to_string(), 2);
+    assert_eq!(city.offline_vault_max_hours(), 12);
+    assert!(city
+        .compute_offline_vault(&data.buildings, 1_000, 2_000)
+        .is_none());
+    let vault = city
+        .compute_offline_vault(&data.buildings, 10_000, 10_000 + 20 * 3_600)
+        .expect("vault available");
+    assert_eq!(vault.cycles, 24, "capped at 12h = 24 cycles of 30m");
+    let gold_before = city.resources.gold;
+    city.claim_offline_vault(&vault, &data.buildings, 10_000 + 20 * 3_600);
+    assert!(city.resources.gold > gold_before);
+
+    // 4. Daily Bounties + Skald's Path + backward-compatible SaveData.
+    city.daily_bounties.ensure_for_day(20_417);
+    assert_eq!(city.daily_bounties.bounties.len(), 3);
+    let kind0 = city.daily_bounties.bounties[0].kind;
+    let target0 = city.daily_bounties.bounties[0].target;
+    city.daily_bounties.record_progress(kind0, target0);
+    assert_eq!(city.claimable_bounties_and_pass_count(), 1);
+    assert!(city.try_claim_bounty(0).is_some());
+    city.skald_pass.add_xp(100);
+    assert_eq!(city.skald_pass.current_tier(), 1);
+    assert!(city.try_claim_skald_tier(1).is_some());
+
+    let base = SaveData::new_game(&data.balance, Language::En);
+    let mut val = serde_json::to_value(&base).expect("serialize");
+    let city_obj = val["city"].as_object_mut().expect("city map");
+    city_obj.remove("daily_bounties");
+    city_obj.remove("skald_pass");
+    let json = serde_json::to_string(&val).expect("to string");
+    let loaded: SaveData = serde_json::from_str(&json).expect("backward-compat load");
+    assert!(loaded.city.daily_bounties.bounties.is_empty());
+    assert_eq!(loaded.city.skald_pass.xp, 0);
+}

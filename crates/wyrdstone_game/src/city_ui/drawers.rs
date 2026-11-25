@@ -383,6 +383,7 @@ pub(super) fn spawn_clan_drawer(
         ctx.data.bosses.len(),
     );
     let claimable_cols = ctx.city.claimable_collection_count(&ctx.data.collections);
+    let claimable_bounties = ctx.city.claimable_bounties_and_pass_count();
     spawn_drawer_shell(
         drawer,
         ctx,
@@ -390,6 +391,32 @@ pub(super) fn spawn_clan_drawer(
         i18n.t("city.drawer.clan.title"),
         scroll_offset_y,
         |body| {
+            let bounties_lbl = badged_label(i18n, "city.panel.bounties.button", claimable_bounties);
+            spawn_drawer_action_card(
+                body,
+                &bounties_lbl,
+                &i18n.t_fmt(
+                    "city.drawer.clan.bounties_desc",
+                    &[
+                        ("tier", ctx.city.skald_pass.current_tier().to_string()),
+                        ("max", wyrdstone_core::SKALD_PASS_TIERS.to_string()),
+                    ],
+                ),
+                &bounties_lbl,
+                CityAction::ToggleModal(ActiveModal::Bounties),
+                if claimable_bounties > 0 {
+                    COLOR_ACCENT_GREEN
+                } else {
+                    COLOR_ACCENT_GOLD
+                },
+                COLOR_TEXT_DARK,
+                if claimable_bounties > 0 {
+                    COLOR_ACCENT_GREEN
+                } else {
+                    COLOR_ACCENT_GOLD
+                },
+                true,
+            );
             let am1 = ctx
                 .city
                 .equipped_amulet

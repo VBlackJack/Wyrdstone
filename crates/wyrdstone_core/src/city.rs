@@ -24,6 +24,11 @@ use crate::balance::{
 use crate::board::ActiveTool;
 use crate::boss::{BossDef, GAUNTLET_CLEAR_GLORY, GAUNTLET_STAGE_PARTIAL_GLORY};
 use crate::patron::PatronGod;
+use crate::retention::{
+    DailyBountyBoard, OfflineVaultSummary, SkaldPassState, ValhallaFlameTier,
+    OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
+    OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS,
+};
 use crate::trials::{TrialDef, TRIAL_PAR_BONUS_GLORY};
 use crate::turn::ClearStatsDelta;
 use serde::{Deserialize, Serialize};
@@ -454,6 +459,10 @@ pub struct CityState {
     pub completed_trials: HashSet<String>,
     #[serde(default)]
     pub par_trials: HashSet<String>,
+    #[serde(default)]
+    pub daily_bounties: DailyBountyBoard,
+    #[serde(default)]
+    pub skald_pass: SkaldPassState,
 }
 
 impl CityState {
@@ -498,6 +507,8 @@ impl CityState {
             seen_chapters: HashSet::new(),
             completed_trials: HashSet::new(),
             par_trials: HashSet::new(),
+            daily_bounties: DailyBountyBoard::default(),
+            skald_pass: SkaldPassState::default(),
         }
     }
 
@@ -541,6 +552,8 @@ impl CityState {
         self.stats.daily_streak = self.stats.daily_streak.min(MAX_DAILY_STREAK_CYCLE);
         self.stats.best_daily_streak = self.stats.best_daily_streak.max(self.stats.daily_streak);
         self.energy = self.energy.min(self.max_energy(balance));
+        self.daily_bounties.sanitize();
+        self.skald_pass.sanitize();
     }
 
     /// Returns true if the 7-day Fjord Login Tribute has not yet been claimed today.
@@ -720,6 +733,106 @@ impl CityState {
     /// Resets the active win streak on defeat or retreat.
     pub fn reset_win_streak(&mut self) {
         self.stats.win_streak = 0;
+    }
+
+    /// Returns the active Valhalla Flame win-streak tier.
+    pub fn valhalla_flame_tier(&self) -> ValhallaFlameTier {
+        ValhallaFlameTier::from_streak(self.stats.win_streak)
+    }
+
+    /// Returns the Offline Harvest Vault cap in hours (base 8h + 2h per Great Hall tier).
+    pub fn offline_vault_max_hours(&self) -> u64 {
+        OFFLINE_VAULT_BASE_MAX_HOURS.saturating_add(
+            u64::from(self.building_tier(HUB_BUILDING_ID))
+                .saturating_mul(OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER),
+        )
+    }
+
+    /// Computes accumulated passive harvests earned while offline (`None` if < 30 min or no rebuilt buildings).
+    pub fn compute_offline_vault(
+        &self,
+        buildings: &[BuildingDef],
+        last_saved_unix_secs: u64,
+        now_secs: u64,
+    ) -> Option<OfflineVaultSummary> {
+        if last_saved_unix_secs == 0 || now_secs <= last_saved_unix_secs {
+            return None;
+        }
+        let elapsed_secs = now_secs.saturating_sub(last_saved_unix_secs);
+        if elapsed_secs < OFFLINE_VAULT_MIN_ABSENCE_SECS {
+            return None;
+        }
+        let max_hours = self.offline_vault_max_hours();
+        let capped_secs = elapsed_secs.min(max_hours.saturating_mul(3_600));
+        let cycles = (capped_secs / OFFLINE_VAULT_CYCLE_SECS) as u32;
+        if cycles == 0 {
+            return None;
+        }
+        let mut per_cycle = ResourceBundle::default();
+        for def in buildings {
+            per_cycle.add(&self.harvest_reward(def));
+        }
+        let rewards = ResourceBundle {
+            wood: per_cycle.wood.saturating_mul(cycles),
+            stone: per_cycle.stone.saturating_mul(cycles),
+            gold: per_cycle.gold.saturating_mul(cycles),
+            mead: per_cycle.mead.saturating_mul(cycles),
+        };
+        if rewards.is_zero() {
+            return None;
+        }
+        Some(OfflineVaultSummary {
+            elapsed_secs,
+            capped_secs,
+            max_hours,
+            cycles,
+            rewards,
+        })
+    }
+
+    /// Grants the offline vault spoils and resets active harvest timers to `now_secs`.
+    pub fn claim_offline_vault(
+        &mut self,
+        summary: &OfflineVaultSummary,
+        buildings: &[BuildingDef],
+        now_secs: u64,
+    ) {
+        self.resources.add(&summary.rewards);
+        for def in buildings {
+            if self.building_tier(&def.id) > 0 {
+                self.last_harvest_unix_secs.insert(def.id.clone(), now_secs);
+            }
+        }
+    }
+
+    /// Claims one completed daily bounty, granting its resources and Skald XP.
+    pub fn try_claim_bounty(&mut self, idx: usize) -> Option<(ResourceBundle, u32)> {
+        let bounty = self.daily_bounties.bounties.get_mut(idx)?;
+        if !bounty.is_claimable() {
+            return None;
+        }
+        bounty.claimed = true;
+        let reward = bounty.reward;
+        let xp = bounty.skald_xp;
+        self.resources.add(&reward);
+        self.skald_pass.add_xp(xp);
+        Some((reward, xp))
+    }
+
+    /// Claims one unlocked tier (`1..=10`) on the free Skald's Path reward track.
+    pub fn try_claim_skald_tier(
+        &mut self,
+        tier: u8,
+    ) -> Option<(ResourceBundle, Option<ActiveTool>, u32)> {
+        self.skald_pass
+            .try_claim_tier(tier, &mut self.resources, &mut self.tools, &mut self.glory)
+    }
+
+    /// Total claimable Daily Bounties and Skald's Path tiers.
+    pub fn claimable_bounties_and_pass_count(&self) -> usize {
+        self.daily_bounties
+            .claimable_count()
+            .saturating_add(self.skald_pass.claimable_count())
     }
 
     /// Returns effective max endurance including Great Hall bonus.

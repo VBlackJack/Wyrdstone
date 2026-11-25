@@ -31,8 +31,8 @@ use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use wyrdstone_core::{
     achievement_progress, format_achievement_desc, format_boon_desc, format_boss_desc,
-    format_patron_desc, AmuletEffect, CityState, ClanRank, I18nCatalog, PatronGod, ResourceBundle,
-    MAX_DAILY_STREAK_CYCLE,
+    format_patron_desc, skald_pass_tier_reward, AmuletEffect, CityState, ClanRank, I18nCatalog,
+    PatronGod, ResourceBundle, MAX_DAILY_STREAK_CYCLE, SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
 };
 
 pub(super) fn format_reward_summary(i18n: &I18nCatalog, res: ResourceBundle, glory: u32) -> String {
@@ -2935,6 +2935,361 @@ pub(super) fn spawn_chapter_dialogue_modal(
                         true,
                     );
                 });
+        },
+    );
+}
+
+pub(super) fn spawn_welcome_back_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    scroll_offset_y: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    let Some(summary) = &ctx.pending_offline_vault else {
+        return;
+    };
+    let mins = (summary.capped_secs / 60).max(1);
+    let hours = mins / 60;
+    let rem_mins = mins % 60;
+    let away_text = if hours > 0 {
+        i18n.t_fmt(
+            "city.vault.away_hours",
+            &[
+                ("hours", hours.to_string()),
+                ("mins", format!("{rem_mins:02}")),
+                ("cap", summary.max_hours.to_string()),
+            ],
+        )
+    } else {
+        i18n.t_fmt(
+            "city.vault.away_mins",
+            &[
+                ("mins", mins.to_string()),
+                ("cap", summary.max_hours.to_string()),
+            ],
+        )
+    };
+
+    spawn_modal_shell_ex(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        540.0,
+        i18n.t("city.vault.title"),
+        i18n.t("city.panel.amulets.close"),
+        CityAction::CloseModal,
+        scroll_offset_y,
+        false,
+        false,
+        |modal| {
+            modal.spawn((
+                Text::new(away_text),
+                TextFont {
+                    font_size: FONT_BODY,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_TEAL_TEXT),
+            ));
+            modal.spawn((
+                Text::new(i18n.t("city.vault.subtitle")),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_PRIMARY),
+            ));
+            modal
+                .spawn(Node {
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(6.0),
+                    margin: UiRect::vertical(Val::Px(6.0)),
+                    ..default()
+                })
+                .with_children(|row| {
+                    for (icon, amount, col) in [
+                        (vfx.icon_wood.clone(), summary.rewards.wood, COLOR_RES_WOOD),
+                        (
+                            vfx.icon_stone.clone(),
+                            summary.rewards.stone,
+                            COLOR_RES_STONE,
+                        ),
+                        (
+                            vfx.icon_gold.clone(),
+                            summary.rewards.gold,
+                            COLOR_ACCENT_GOLD,
+                        ),
+                        (vfx.icon_mead.clone(), summary.rewards.mead, COLOR_RES_MEAD),
+                    ] {
+                        if amount > 0 {
+                            spawn_resource_pill_with_icon(row, icon, &format!("+{amount}"), col);
+                        }
+                    }
+                });
+            modal
+                .spawn(Node {
+                    justify_content: JustifyContent::Center,
+                    margin: UiRect::top(Val::Px(6.0)),
+                    ..default()
+                })
+                .with_children(|row| {
+                    spawn_small_button_colored(
+                        row,
+                        i18n.t("city.vault.claim"),
+                        CityAction::ClaimOfflineVault,
+                        COLOR_ACCENT_GOLD,
+                        COLOR_TEXT_DARK,
+                        true,
+                    );
+                });
+        },
+    );
+}
+
+pub(super) fn spawn_bounties_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    scroll_offset_y: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    spawn_modal_shell(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        720.0,
+        i18n.t("city.panel.bounties.title"),
+        i18n.t("city.panel.amulets.close"),
+        CityAction::CloseModal,
+        scroll_offset_y,
+        |modal| {
+            let claimable_bounties = ctx.city.daily_bounties.claimable_count();
+            modal
+                .spawn(Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                })
+                .with_children(|hdr| {
+                    hdr.spawn((
+                        Text::new(i18n.t("city.bounties.section_daily")),
+                        display_font(fjord_art, FONT_HEADING),
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    if claimable_bounties > 1 {
+                        spawn_small_button_colored(
+                            hdr,
+                            i18n.t("city.bounties.claim_all"),
+                            CityAction::ClaimAllBounties,
+                            COLOR_ACCENT_GREEN,
+                            COLOR_TEXT_ON_ACCENT,
+                            true,
+                        );
+                    }
+                });
+
+            for (idx, bounty) in ctx.city.daily_bounties.bounties.iter().enumerate() {
+                let claimable = bounty.is_claimable();
+                let summary = format_reward_summary(i18n, bounty.reward, 0);
+                modal
+                    .spawn((
+                        Node {
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: Val::Px(10.0),
+                            row_gap: Val::Px(6.0),
+                            padding: UiRect::all(Val::Px(10.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_CARD),
+                        BorderColor(if claimable {
+                            COLOR_ACCENT_GREEN
+                        } else {
+                            COLOR_PANEL_BORDER
+                        }),
+                        BorderRadius::all(Val::Px(RADIUS_MD)),
+                    ))
+                    .with_children(|row| {
+                        row.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(3.0),
+                            flex_shrink: 1.0,
+                            ..default()
+                        })
+                        .with_children(|col| {
+                            col.spawn((
+                                Text::new(i18n.t_fmt(
+                                    bounty.kind.desc_key(),
+                                    &[("target", bounty.target.to_string())],
+                                )),
+                                TextFont {
+                                    font_size: FONT_BODY,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                            col.spawn((
+                                Text::new(i18n.t_fmt(
+                                    "city.bounties.progress_reward",
+                                    &[
+                                        ("done", bounty.progress.to_string()),
+                                        ("target", bounty.target.to_string()),
+                                        ("reward", summary),
+                                        ("xp", bounty.skald_xp.to_string()),
+                                    ],
+                                )),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(if bounty.is_complete() {
+                                    COLOR_ACCENT_GREEN_TEXT
+                                } else {
+                                    COLOR_ACCENT_TEAL_TEXT
+                                }),
+                            ));
+                        });
+                        let (lbl, bg, fg, enabled) = if bounty.claimed {
+                            (
+                                i18n.t("city.bounties.claimed"),
+                                COLOR_BUTTON_DISABLED,
+                                COLOR_TEXT_MUTED,
+                                false,
+                            )
+                        } else if claimable {
+                            (
+                                i18n.t("city.bounties.claim"),
+                                COLOR_ACCENT_GREEN,
+                                COLOR_TEXT_ON_ACCENT,
+                                true,
+                            )
+                        } else {
+                            (
+                                i18n.t("city.bounties.in_progress"),
+                                COLOR_BUTTON_DISABLED,
+                                COLOR_TEXT_MUTED,
+                                false,
+                            )
+                        };
+                        spawn_small_button_colored(
+                            row,
+                            lbl,
+                            CityAction::ClaimBounty(idx),
+                            bg,
+                            fg,
+                            enabled,
+                        );
+                    });
+            }
+
+            let cur_tier = ctx.city.skald_pass.current_tier();
+            let xp_cap = u32::from(SKALD_PASS_TIERS) * SKALD_PASS_XP_PER_TIER;
+            modal.spawn((
+                Text::new(i18n.t_fmt(
+                    "city.skald_pass.header",
+                    &[
+                        ("tier", cur_tier.to_string()),
+                        ("max", SKALD_PASS_TIERS.to_string()),
+                        ("xp", ctx.city.skald_pass.xp.to_string()),
+                        ("xp_cap", xp_cap.to_string()),
+                    ],
+                )),
+                display_font(fjord_art, FONT_HEADING),
+                TextColor(COLOR_ACCENT_GOLD),
+            ));
+
+            for tier in 1..=SKALD_PASS_TIERS {
+                let unlocked = cur_tier >= tier;
+                let claimed = ctx.city.skald_pass.is_tier_claimed(tier);
+                let claimable = unlocked && !claimed;
+                let (res, tool_opt, glory) = skald_pass_tier_reward(tier);
+                let mut reward_text = format_reward_summary(i18n, res, glory);
+                if let Some(tool) = tool_opt {
+                    if let Some(recipe) = ctx.data.tool_shop.iter().find(|r| r.tool == tool) {
+                        let tool_label =
+                            i18n.t_fmt(&recipe.name_key, &[("count", "+1".to_string())]);
+                        reward_text.push_str(&format!(" + {tool_label}"));
+                    }
+                }
+                modal
+                    .spawn((
+                        Node {
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: Val::Px(10.0),
+                            row_gap: Val::Px(6.0),
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_CARD),
+                        BorderColor(if claimable {
+                            COLOR_ACCENT_GOLD
+                        } else {
+                            COLOR_PANEL_BORDER
+                        }),
+                        BorderRadius::all(Val::Px(RADIUS_SM)),
+                    ))
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new(i18n.t_fmt(
+                                "city.skald_pass.tier_line",
+                                &[("tier", tier.to_string()), ("reward", reward_text)],
+                            )),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(if unlocked {
+                                COLOR_TEXT_PRIMARY
+                            } else {
+                                COLOR_TEXT_MUTED
+                            }),
+                        ));
+                        let (lbl, bg, fg, enabled) = if claimed {
+                            (
+                                i18n.t("city.bounties.claimed"),
+                                COLOR_BUTTON_DISABLED,
+                                COLOR_TEXT_MUTED,
+                                false,
+                            )
+                        } else if claimable {
+                            (
+                                i18n.t("city.bounties.claim"),
+                                COLOR_ACCENT_GOLD,
+                                COLOR_TEXT_DARK,
+                                true,
+                            )
+                        } else {
+                            (
+                                i18n.t("city.panel.building.badge.locked"),
+                                COLOR_BUTTON_DISABLED,
+                                COLOR_TEXT_MUTED,
+                                false,
+                            )
+                        };
+                        spawn_small_button_colored(
+                            row,
+                            lbl,
+                            CityAction::ClaimSkaldTier(tier),
+                            bg,
+                            fg,
+                            enabled,
+                        );
+                    });
+            }
         },
     );
 }

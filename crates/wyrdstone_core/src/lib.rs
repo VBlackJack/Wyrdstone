@@ -25,6 +25,7 @@ pub mod expedition;
 pub mod i18n;
 pub mod level;
 pub mod patron;
+pub mod retention;
 pub mod save;
 pub mod text;
 pub mod trials;
@@ -57,6 +58,14 @@ pub use level::{
     BLITZ_BUILDING_ID, DAILY_TRIAL_BUILDING_ID,
 };
 pub use patron::{PatronGod, FURY_CHARGE_MAX};
+pub use retention::{
+    last_stand_cost, skald_pass_tier_reward, DailyBounty, DailyBountyBoard, DailyBountyKind,
+    OfflineVaultSummary, SkaldPassState, ValhallaFlameTier, LAST_STAND_EXTRA_MOVES,
+    LAST_STAND_EXTRA_SECS, LAST_STAND_GOLD_COST, LAST_STAND_MEAD_COST,
+    OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
+    OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS, SKALD_PASS_TIERS,
+    SKALD_PASS_XP_PER_TIER, SKALD_XP_BOARD_WIN, SKALD_XP_BOSS_WIN, SKALD_XP_DAILY_WIN,
+};
 pub use save::{GameDataBundle, SaveData};
 pub use text::{
     format_achievement_desc, format_blessing_desc, format_boon_desc, format_boss_desc,

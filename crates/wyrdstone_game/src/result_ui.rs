@@ -29,7 +29,10 @@ use crate::ui_style::{
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
-use wyrdstone_core::{LevelOutcome, Objective, MAX_DAILY_STREAK_CYCLE};
+use wyrdstone_core::{
+    last_stand_cost, LevelOutcome, Objective, LAST_STAND_EXTRA_MOVES, LAST_STAND_EXTRA_SECS,
+    MAX_DAILY_STREAK_CYCLE,
+};
 
 #[derive(Component)]
 pub struct ResultRoot;
@@ -69,6 +72,7 @@ pub enum ResultAction {
     ReturnToFjord,
     NextLevel(String),
     Replay,
+    UseLastStand,
     OpenFjordModal(ActiveModal),
     OpenUpgradeBuilding(String),
     DrinkMead,
@@ -469,6 +473,29 @@ fn spawn_result_ui(
                                                 ));
                                             }
                                         }
+                                        if ctx.city.stats.win_streak >= 1 {
+                                            let flame = ctx.city.valhalla_flame_tier();
+                                            card.spawn((
+                                                Text::new(i18n.t_fmt(
+                                                    "result.flame.active",
+                                                    &[
+                                                        (
+                                                            "tier",
+                                                            i18n.t(flame.name_key()).to_string(),
+                                                        ),
+                                                        (
+                                                            "streak",
+                                                            ctx.city.stats.win_streak.to_string(),
+                                                        ),
+                                                    ],
+                                                )),
+                                                TextFont {
+                                                    font_size: FONT_SMALL,
+                                                    ..default()
+                                                },
+                                                TextColor(COLOR_ACCENT_GOLD),
+                                            ));
+                                        }
                                         if let Some(streak) = ctx.last_daily_streak {
                                             card.spawn((
                                                 Text::new(i18n.t_fmt(
@@ -739,6 +766,18 @@ fn spawn_result_ui(
                                                 ResultAction::OpenUpgradeBuilding(bldg_id),
                                             ));
                                         }
+                                        let claimable_bounties =
+                                            ctx.city.claimable_bounties_and_pass_count();
+                                        if claimable_bounties > 0 {
+                                            ready_badges.push((
+                                                i18n.t_fmt(
+                                                    "result.ready.bounties",
+                                                    &[("count", claimable_bounties.to_string())],
+                                                ),
+                                                COLOR_ACCENT_GOLD,
+                                                ResultAction::OpenFjordModal(ActiveModal::Bounties),
+                                            ));
+                                        }
                                         if !ready_badges.is_empty() {
                                             card.spawn(Node {
                                                 flex_wrap: FlexWrap::Wrap,
@@ -953,6 +992,102 @@ fn spawn_result_ui(
                                                 }
                                             },
                                         );
+                                        if session.can_use_last_stand() {
+                                            let ls_cost = last_stand_cost();
+                                            let can_afford_ls =
+                                                ctx.city.resources.can_afford(&ls_cost);
+                                            let ls_desc = if ctx.last_defeat_out_of_time {
+                                                i18n.t_fmt(
+                                                    "result.last_stand.desc_time",
+                                                    &[(
+                                                        "secs",
+                                                        (LAST_STAND_EXTRA_SECS as u32).to_string(),
+                                                    )],
+                                                )
+                                            } else {
+                                                i18n.t_fmt(
+                                                    "result.last_stand.desc_moves",
+                                                    &[(
+                                                        "moves",
+                                                        LAST_STAND_EXTRA_MOVES.to_string(),
+                                                    )],
+                                                )
+                                            };
+                                            card.spawn((
+                                                Node {
+                                                    flex_direction: FlexDirection::Column,
+                                                    align_items: AlignItems::Center,
+                                                    row_gap: Val::Px(6.0),
+                                                    padding: UiRect::axes(
+                                                        Val::Px(14.0),
+                                                        Val::Px(10.0),
+                                                    ),
+                                                    border: UiRect::all(Val::Px(1.5)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(
+                                                    0.18, 0.14, 0.08, 0.94,
+                                                )),
+                                                BorderColor(COLOR_ACCENT_GOLD),
+                                                BorderRadius::all(Val::Px(10.0)),
+                                            ))
+                                            .with_children(|ls_box| {
+                                                ls_box.spawn((
+                                                    Text::new(i18n.t("result.last_stand.title")),
+                                                    display_font(fjord_art, FONT_BODY),
+                                                    TextColor(COLOR_ACCENT_GOLD),
+                                                ));
+                                                ls_box.spawn((
+                                                    Text::new(ls_desc),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_TEXT_PRIMARY),
+                                                ));
+                                                if ctx.last_stand_pre_defeat_streak > 0 {
+                                                    ls_box.spawn((
+                                                        Text::new(i18n.t_fmt(
+                                                            "result.last_stand.keep_flame",
+                                                            &[(
+                                                                "streak",
+                                                                ctx.last_stand_pre_defeat_streak
+                                                                    .to_string(),
+                                                            )],
+                                                        )),
+                                                        TextFont {
+                                                            font_size: FONT_SMALL - 1.0,
+                                                            ..default()
+                                                        },
+                                                        TextColor(COLOR_ACCENT_GREEN_TEXT),
+                                                    ));
+                                                }
+                                                let btn_lbl = i18n.t_fmt(
+                                                    "result.last_stand.button",
+                                                    &[
+                                                        ("gold", ls_cost.gold.to_string()),
+                                                        ("mead", ls_cost.mead.to_string()),
+                                                    ],
+                                                );
+                                                spawn_result_btn(
+                                                    ls_box,
+                                                    &btn_lbl,
+                                                    can_afford_ls
+                                                        .then_some(ResultAction::UseLastStand),
+                                                    if can_afford_ls {
+                                                        COLOR_ACCENT_GOLD
+                                                    } else {
+                                                        COLOR_BUTTON_DISABLED
+                                                    },
+                                                    if can_afford_ls {
+                                                        COLOR_TEXT_DARK
+                                                    } else {
+                                                        COLOR_TEXT_MUTED
+                                                    },
+                                                    can_afford_ls,
+                                                );
+                                            });
+                                        }
                                     }
 
                                     let energy_cost = ctx.data.balance.energy_cost_per_level;
@@ -1284,6 +1419,8 @@ fn try_replay_active_level(ctx: &mut GameContext) -> Result<(), &'static str> {
 }
 
 fn execute_result_action(
+    commands: &mut Commands,
+    sound_bank: &SoundBank,
     action: &ResultAction,
     ctx: &mut GameContext,
     next_state: &mut NextState<AppState>,
@@ -1322,6 +1459,18 @@ fn execute_result_action(
             }
             false
         }
+        ResultAction::UseLastStand => match ctx.try_use_last_stand() {
+            Ok(()) => {
+                play_sfx(commands, sound_bank, SfxKind::FuryUnleash);
+                next_state.set(AppState::Match3);
+                false
+            }
+            Err(err_key) => {
+                ctx.status_notice_key = Some(err_key.to_string());
+                play_sfx(commands, sound_bank, SfxKind::Invalid);
+                true
+            }
+        },
         ResultAction::OpenFjordModal(modal) => {
             ctx.active_modal = *modal;
             next_state.set(AppState::FjordCity);
@@ -1409,7 +1558,13 @@ pub fn handle_result_buttons(
             focus_idx.and_then(|idx| focus_buttons.iter().nth(idx).map(|(_, act, _)| act.clone()))
         {
             *focus_idx = None;
-            if execute_result_action(&chosen, &mut ctx, &mut next_state) {
+            if execute_result_action(
+                &mut commands,
+                &sound_bank,
+                &chosen,
+                &mut ctx,
+                &mut next_state,
+            ) {
                 play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
                 for root in &roots {
                     commands.entity(root).despawn_recursive();
@@ -1428,6 +1583,8 @@ pub fn handle_result_buttons(
             if has_energy || is_trial {
                 if let Some(next_id) = find_next_level_id(&ctx) {
                     execute_result_action(
+                        &mut commands,
+                        &sound_bank,
                         &ResultAction::NextLevel(next_id),
                         &mut ctx,
                         &mut next_state,
@@ -1442,7 +1599,13 @@ pub fn handle_result_buttons(
                 .is_some_and(|id| id.starts_with("daily_"));
             let can_replay = !is_daily || ctx.city.is_daily_available(today_day_index());
             if can_replay && (is_daily || is_trial || has_energy) {
-                execute_result_action(&ResultAction::Replay, &mut ctx, &mut next_state);
+                execute_result_action(
+                    &mut commands,
+                    &sound_bank,
+                    &ResultAction::Replay,
+                    &mut ctx,
+                    &mut next_state,
+                );
                 return;
             }
         }
@@ -1461,7 +1624,13 @@ pub fn handle_result_buttons(
             continue;
         }
         *focus_idx = None;
-        if execute_result_action(action, &mut ctx, &mut next_state) {
+        if execute_result_action(
+            &mut commands,
+            &sound_bank,
+            action,
+            &mut ctx,
+            &mut next_state,
+        ) {
             play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
             for root in &roots {
                 commands.entity(root).despawn_recursive();

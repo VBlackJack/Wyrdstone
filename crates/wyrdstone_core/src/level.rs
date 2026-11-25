@@ -20,13 +20,16 @@ use crate::balance::{
     add_pct_u32, BalanceConfig, BlitzTuning, BossTuning, DailyTuning, ExpeditionTuning,
     SessionTuning,
 };
-use crate::board::{ActiveTool, Board, CellPos, MatchStepOutcome, PreparedClear, RuneType};
+use crate::board::{
+    ActiveTool, Board, Booster, CellPos, MatchStepOutcome, PreparedClear, RuneType,
+};
 use crate::boss::{BossDef, BossState, GauntletRun, GAUNTLET_BUILDING_ID, GAUNTLET_HP_SCALE_PCT};
 use crate::city::{AmuletEffect, CityBonuses, DivineSynergy, ResourceBundle, WarDraught};
 use crate::expedition::{ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITION_BUILDING_ID};
 use crate::patron::{
     PatronGod, FURY_CHARGE_MAX, FURY_PER_COMBO_STEP, FURY_PER_OBSTACLE, FURY_PER_TILE,
 };
+use crate::retention::{ValhallaFlameTier, LAST_STAND_EXTRA_MOVES, LAST_STAND_EXTRA_SECS};
 use crate::trials::TrialDef;
 use crate::turn::{Turn, TurnStep};
 use rand::rngs::StdRng;
@@ -460,6 +463,7 @@ pub struct LevelSession {
     pub expedition_relics: Vec<ExpeditionRelic>,
     pub daily_blessing: Option<DailyBlessing>,
     pub boss: Option<BossState>,
+    pub last_stand_used: bool,
 }
 
 impl LevelSession {
@@ -782,6 +786,7 @@ impl LevelSession {
             expedition_relics: Vec::new(),
             daily_blessing: None,
             boss,
+            last_stand_used: false,
         }
     }
 
@@ -864,7 +869,58 @@ impl LevelSession {
             expedition_relics: Vec::new(),
             daily_blessing: None,
             boss: None,
+            last_stand_used: false,
         })
+    }
+
+    /// Applies escalating Valhalla Flame win-streak starting power to a non-trial session.
+    pub fn apply_valhalla_flame<R: Rng>(&mut self, tier: ValhallaFlameTier, rng: &mut R) {
+        if self.is_trial || tier == ValhallaFlameTier::None {
+            return;
+        }
+        let booster = match tier {
+            ValhallaFlameTier::None => return,
+            ValhallaFlameTier::Ember => {
+                if rng.gen_bool(0.5) {
+                    Booster::LineHorizontal
+                } else {
+                    Booster::LineVertical
+                }
+            }
+            ValhallaFlameTier::Blaze => Booster::Bomb,
+            ValhallaFlameTier::Bifrost | ValhallaFlameTier::Inferno => Booster::BifrostShard,
+        };
+        let _ = self.board.spawn_specific_starting_booster(booster, rng);
+        let fury_bonus = tier.starting_fury_bonus();
+        if fury_bonus > 0 {
+            self.fury = self.fury.saturating_add(fury_bonus).min(self.fury_max);
+        }
+    }
+
+    /// True when the defeated player can invoke Last Stand once to continue this run.
+    pub fn can_use_last_stand(&self) -> bool {
+        self.outcome == LevelOutcome::Defeat
+            && !self.last_stand_used
+            && !self.is_trial
+            && !self.is_blitz
+    }
+
+    /// Revives a defeated session once with bonus moves or time.
+    pub fn apply_last_stand(&mut self, out_of_time: bool) -> bool {
+        if !self.can_use_last_stand() {
+            return false;
+        }
+        self.last_stand_used = true;
+        self.outcome = LevelOutcome::InProgress;
+        if out_of_time {
+            if let Some(secs) = self.time_left_secs.as_mut() {
+                *secs += LAST_STAND_EXTRA_SECS;
+            }
+            self.moves_left = self.moves_left.max(1);
+        } else {
+            self.moves_left = self.moves_left.saturating_add(LAST_STAND_EXTRA_MOVES);
+        }
+        true
     }
 
     /// Number of moves consumed so far in this session.

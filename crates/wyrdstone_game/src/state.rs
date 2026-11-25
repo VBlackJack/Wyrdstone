@@ -26,8 +26,9 @@ use wyrdstone_core::save::{
     LoadOutcome, ReadOnlyResolution, DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME,
 };
 use wyrdstone_core::{
-    ActiveTool, BalanceConfig, CityState, DailyBlessing, ExpeditionRun, GameDataBundle,
-    GauntletRun, Language, LevelOutcome, LevelSession, ResourceBundle, SaveData, HUB_BUILDING_ID,
+    last_stand_cost, ActiveTool, BalanceConfig, CityState, DailyBlessing, ExpeditionRun,
+    GameDataBundle, GauntletRun, Language, LevelOutcome, LevelSession, OfflineVaultSummary,
+    ResourceBundle, SaveData, HUB_BUILDING_ID,
 };
 
 /// File name of the primary save inside the platform data directory.
@@ -82,6 +83,8 @@ pub enum ActiveModal {
     ExpeditionBoons,
     LoginCalendar,
     ChapterDialogue,
+    WelcomeBack,
+    Bounties,
 }
 
 /// Illustrated Saga chapter milestone dialogue shown when rebuilding key Fjord landmarks.
@@ -135,6 +138,8 @@ pub struct GameContext {
     pub celebration_message: Option<String>,
     pub celebration_timer_secs: f32,
     pub pending_dialogue: Option<ChapterDialogue>,
+    pub pending_offline_vault: Option<OfflineVaultSummary>,
+    pub last_stand_pre_defeat_streak: u32,
     pub energy_regen_timer: Timer,
     /// Wall-clock instant from which the next endurance point is being earned.
     pub energy_regen_anchor_unix_secs: u64,
@@ -242,6 +247,8 @@ impl GameContext {
         };
 
         let now = now_unix_secs();
+        let today = today_day_index();
+        let mut pending_offline_vault = None;
         let (city, has_existing_save, regen_anchor) = match loaded_save {
             Some(mut saved) => {
                 data.i18n.set_language(saved.language);
@@ -277,10 +284,20 @@ impl GameContext {
                     let cap = saved.city.max_energy(&data.balance);
                     saved.city.energy = cap;
                 }
+                pending_offline_vault = saved.city.compute_offline_vault(
+                    &data.buildings,
+                    saved.last_saved_unix_secs,
+                    now,
+                );
+                saved.city.daily_bounties.ensure_for_day(today);
                 let progressed = has_saved_progress(&saved.city, tutorial_step);
                 (saved.city, progressed || has_unreadable_save, anchor)
             }
-            None => (CityState::new(&data.balance), has_unreadable_save, now),
+            None => {
+                let mut fresh = CityState::new(&data.balance);
+                fresh.daily_bounties.ensure_for_day(today);
+                (fresh, has_unreadable_save, now)
+            }
         };
 
         let default_bldg = data
@@ -330,6 +347,8 @@ impl GameContext {
             celebration_message: None,
             celebration_timer_secs: 0.0,
             pending_dialogue: None,
+            pending_offline_vault,
+            last_stand_pre_defeat_streak: 0,
             energy_regen_timer: Timer::from_seconds(regen_secs, TimerMode::Repeating),
             energy_regen_anchor_unix_secs: regen_anchor,
             save_path,
@@ -588,6 +607,9 @@ impl GameContext {
         self.last_defeat_out_of_time = false;
         self.open_inspector_on_city_enter = false;
         self.pending_dialogue = None;
+        self.pending_offline_vault = None;
+        self.last_stand_pre_defeat_streak = 0;
+        self.city.daily_bounties.ensure_for_day(today_day_index());
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
         self.persist_checked().map_err(|e| {
@@ -650,6 +672,9 @@ impl GameContext {
         self.celebration_message = None;
         self.celebration_timer_secs = 0.0;
         self.pending_dialogue = None;
+        self.pending_offline_vault = None;
+        self.last_stand_pre_defeat_streak = 0;
+        self.city.daily_bounties.ensure_for_day(today_day_index());
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
         self.persist();
@@ -657,6 +682,8 @@ impl GameContext {
     }
 
     fn apply_loadout_extras(&mut self, session: &mut LevelSession) -> bool {
+        let flame = self.city.valhalla_flame_tier();
+        session.apply_valhalla_flame(flame, &mut self.rng);
         if let Some(extra) = self.city.secondary_amulet_effect(&self.data.amulets) {
             session.apply_extra_amulet_effect(extra, &mut self.rng);
         }
@@ -669,6 +696,35 @@ impl GameContext {
             return true;
         }
         false
+    }
+
+    /// Invokes Last Stand once on defeat to grant extra moves/time and keep the win streak alive.
+    pub fn try_use_last_stand(&mut self) -> Result<(), &'static str> {
+        let Some(session) = self.active_session.as_ref() else {
+            return Err("city.error.level_not_found");
+        };
+        if !session.can_use_last_stand() {
+            return Err("city.error.level_not_found");
+        }
+        let cost = last_stand_cost();
+        if !self.city.resources.can_afford(&cost) {
+            return Err("city.error.not_enough_resources");
+        }
+        self.city.resources.subtract(&cost);
+        self.city.stats.win_streak = self.last_stand_pre_defeat_streak;
+        self.city.stats.best_win_streak = self
+            .city
+            .stats
+            .best_win_streak
+            .max(self.city.stats.win_streak);
+        let out_of_time = self.last_defeat_out_of_time;
+        if let Some(session) = self.active_session.as_mut() {
+            session.apply_last_stand(out_of_time);
+        }
+        self.last_outcome = None;
+        self.last_defeat_out_of_time = false;
+        self.persist();
+        Ok(())
     }
 
     /// Launches today's deterministic Daily Trial board (free of Endurance cost once per day).
@@ -1279,6 +1335,8 @@ mod read_only_notice_tests {
             celebration_message: None,
             celebration_timer_secs: 0.0,
             pending_dialogue: None,
+            pending_offline_vault: None,
+            last_stand_pre_defeat_streak: 0,
             energy_regen_timer: Timer::from_seconds(60.0, TimerMode::Repeating),
             energy_regen_anchor_unix_secs: 0,
             save_path: Some(save_file.clone()),

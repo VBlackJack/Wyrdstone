@@ -1691,6 +1691,19 @@ impl Board {
         (same(c - 1, r) && same(c - 2, r)) || (same(c, r - 1) && same(c, r - 2))
     }
 
+    /// Places a specific `Booster` on a random unblocked free rune cell.
+    pub fn spawn_specific_starting_booster<R: Rng>(
+        &mut self,
+        booster: Booster,
+        rng: &mut R,
+    ) -> Option<CellPos> {
+        let candidates: Vec<CellPos> = self.free_rune_positions();
+        let &pos = candidates.choose(rng)?;
+        let idx = self.idx(pos);
+        self.cells[idx].booster = booster;
+        Some(pos)
+    }
+
     /// Places a random Line or Bomb booster on an unblocked free rune cell (Odin's Eye amulet).
     pub fn spawn_random_starting_booster<R: Rng>(&mut self, rng: &mut R) -> Option<CellPos> {
         let candidates: Vec<CellPos> = self.free_rune_positions();

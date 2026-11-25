@@ -35,8 +35,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
 use wyrdstone_core::{
-    format_patron_desc, ActiveTool, Booster, CellPos, ClearPreview, LevelOutcome, LevelSession,
-    Turn, TurnStep,
+    format_patron_desc, ActiveTool, Booster, CellPos, ClearPreview, DailyBountyKind, LevelOutcome,
+    LevelSession, Turn, TurnStep,
 };
 
 pub(super) const PARTICLES_PER_CLEARED_TILE: usize = 9;
@@ -1248,6 +1248,14 @@ fn execute_patron_fury(
     else {
         return;
     };
+    ctx_ref
+        .city
+        .daily_bounties
+        .ensure_for_day(crate::state::today_day_index());
+    ctx_ref
+        .city
+        .daily_bounties
+        .record_progress(DailyBountyKind::TriggerFury, 1);
     input_state.undo_snapshot = None;
     input_state.clear_hint();
     play_sfx(commands, sound_bank, SfxKind::FuryUnleash);

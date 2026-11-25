@@ -245,6 +245,10 @@ pub enum CityAction {
     ClaimQuest(String),
     FocusActiveQuest,
     FocusFjordMap,
+    ClaimOfflineVault,
+    ClaimBounty(usize),
+    ClaimAllBounties,
+    ClaimSkaldTier(u8),
     ToggleDrawer(CityDrawer),
     ToggleModal(ActiveModal),
     CloseModal,
@@ -285,8 +289,11 @@ pub fn setup_city_ui(
         .map(|w| (w.width(), w.height()))
         .unwrap_or((WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT));
     let is_portrait = win_w < win_h;
+    ctx.city.daily_bounties.ensure_for_day(today_day_index());
     if ctx.active_modal == ActiveModal::None {
-        if ctx.city.stats.total_victories >= 1
+        if ctx.pending_offline_vault.is_some() {
+            ctx.active_modal = ActiveModal::WelcomeBack;
+        } else if ctx.city.stats.total_victories >= 1
             && ctx.city.is_login_tribute_available(today_day_index())
         {
             ctx.active_modal = ActiveModal::LoginCalendar;
@@ -455,6 +462,8 @@ fn spawn_city_tree(
         ctx.data.bosses.len(),
     );
     let claimable_cols = ctx.city.claimable_collection_count(&ctx.data.collections);
+    let claimable_bounties = ctx.city.claimable_bounties_and_pass_count();
+    let clan_badge = claimable_feats + claimable_cols + claimable_bounties;
     let tribute_ready = ctx.city.is_login_tribute_available(today_day_index());
     let right_panel_open = inspector_open || active_drawer != CityDrawer::None;
 
@@ -875,26 +884,38 @@ fn spawn_city_tree(
                                             TextColor(COLOR_RES_ENERGY),
                                         ));
                                     });
-                                if ctx.city.stats.win_streak
-                                    >= ctx.data.balance.win_streak_booster_threshold
-                                {
-                                    spawn_resource_pill(
-                                        pills,
-                                        &i18n.t_fmt(
-                                            "city.header.win_streak",
-                                            &[
-                                                ("streak", ctx.city.stats.win_streak.to_string()),
-                                                (
-                                                    "boosters",
-                                                    ctx.data
-                                                        .balance
-                                                        .win_streak_starting_boosters
-                                                        .to_string(),
-                                                ),
-                                            ],
-                                        ),
-                                        COLOR_ACCENT_GOLD,
+                                if ctx.city.stats.win_streak >= 1 {
+                                    let flame = ctx.city.valhalla_flame_tier();
+                                    let flame_lbl = i18n.t_fmt(
+                                        "city.header.flame",
+                                        &[
+                                            ("tier", i18n.t(flame.name_key()).to_string()),
+                                            ("streak", ctx.city.stats.win_streak.to_string()),
+                                        ],
                                     );
+                                    pills
+                                        .spawn((
+                                            Interaction::None,
+                                            CityTooltipTarget(i18n.t(flame.desc_key()).to_string()),
+                                            Node {
+                                                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(COLOR_PANEL_CARD),
+                                            BorderColor(COLOR_ACCENT_GOLD),
+                                            BorderRadius::all(Val::Px(6.0)),
+                                        ))
+                                        .with_children(|pill| {
+                                            pill.spawn((
+                                                Text::new(flame_lbl),
+                                                TextFont {
+                                                    font_size: FONT_SMALL,
+                                                    ..default()
+                                                },
+                                                TextColor(COLOR_ACCENT_GOLD),
+                                            ));
+                                        });
                                 }
                                 if ctx.city.energy < max_energy {
                                     let can_drink = res.mead >= ctx.data.balance.mead_refill_cost;
@@ -982,7 +1003,6 @@ fn spawn_city_tree(
                                         );
 
                                         let clan_open = active_drawer == CityDrawer::Clan;
-                                        let clan_badge = claimable_feats + claimable_cols;
                                         let clan_lbl = badged_label(
                                             i18n,
                                             "city.drawer.clan.button",
@@ -1342,7 +1362,6 @@ fn spawn_city_tree(
                 let clan_open = active_drawer == CityDrawer::Clan;
                 let menu_open = active_drawer == CityDrawer::Menu;
                 let modes_badge = usize::from(daily_ready);
-                let clan_badge = claimable_feats + claimable_cols;
                 let menu_badge = usize::from(tribute_ready);
                 let active_quest = ctx.city.active_quest(&ctx.data.quests);
                 let quest_ready = active_quest.is_some_and(|q| ctx.city.is_quest_ready(q));
@@ -1551,6 +1570,12 @@ fn spawn_city_tree(
                 }
                 ActiveModal::ChapterDialogue => {
                     modals::spawn_chapter_dialogue_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                }
+                ActiveModal::WelcomeBack => {
+                    modals::spawn_welcome_back_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                }
+                ActiveModal::Bounties => {
+                    modals::spawn_bounties_modal(viewport, ctx, fjord_art, vfx, m_scroll)
                 }
             }
 
@@ -2311,10 +2336,10 @@ pub fn handle_city_buttons(
         }
     }
 
-    // Keyboard confirm inside ChapterDialogue and LoginCalendar (Enter / Space).
+    // Keyboard confirm inside ChapterDialogue, LoginCalendar, and WelcomeBack (Enter / Space).
     if matches!(
         ctx.active_modal,
-        ActiveModal::ChapterDialogue | ActiveModal::LoginCalendar
+        ActiveModal::ChapterDialogue | ActiveModal::LoginCalendar | ActiveModal::WelcomeBack
     ) && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space))
     {
         if ctx.active_modal == ActiveModal::ChapterDialogue {
@@ -2322,6 +2347,11 @@ pub fn handle_city_buttons(
             ctx.active_modal = ActiveModal::None;
             scroll_mem.modal_offset_y = 0.0;
             play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+            rebuild = true;
+        } else if ctx.active_modal == ActiveModal::WelcomeBack {
+            if claim_offline_vault_action(&mut commands, &mut ctx, &sound_bank) {
+                haptics.send(HapticEvent(HapticKind::Victory));
+            }
             rebuild = true;
         } else if !claim_login_tribute(&mut commands, &mut ctx, &sound_bank) {
             ctx.active_modal = ActiveModal::None;
@@ -3407,6 +3437,73 @@ pub fn handle_city_buttons(
                 toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
                 rebuild = true;
             }
+            CityAction::ClaimOfflineVault => {
+                if claim_offline_vault_action(&mut commands, &mut ctx, &sound_bank) {
+                    layout_mode.last_ready_harvests = 0;
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                }
+                rebuild = true;
+            }
+            CityAction::ClaimBounty(idx) => {
+                if let Some((reward, xp)) = ctx.city.try_claim_bounty(*idx) {
+                    let summary = modals::format_reward_summary(&ctx.data.i18n, reward, 0);
+                    ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                        "city.bounties.claimed_toast",
+                        &[("reward", summary), ("xp", xp.to_string())],
+                    ));
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    ctx.status_notice_key = None;
+                    ctx.persist();
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            }
+            CityAction::ClaimAllBounties => {
+                let mut claimed_count = 0u32;
+                let mut total_res = wyrdstone_core::ResourceBundle::default();
+                let mut total_xp = 0u32;
+                let count = ctx.city.daily_bounties.bounties.len();
+                for idx in 0..count {
+                    if let Some((reward, xp)) = ctx.city.try_claim_bounty(idx) {
+                        claimed_count += 1;
+                        total_res.add(&reward);
+                        total_xp = total_xp.saturating_add(xp);
+                    }
+                }
+                if claimed_count > 0 {
+                    let summary = modals::format_reward_summary(&ctx.data.i18n, total_res, 0);
+                    ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                        "city.bounties.claimed_all_toast",
+                        &[
+                            ("count", claimed_count.to_string()),
+                            ("reward", summary),
+                            ("xp", total_xp.to_string()),
+                        ],
+                    ));
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    ctx.status_notice_key = None;
+                    ctx.persist();
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            }
+            CityAction::ClaimSkaldTier(tier) => {
+                if let Some((reward, _, glory)) = ctx.city.try_claim_skald_tier(*tier) {
+                    let summary = modals::format_reward_summary(&ctx.data.i18n, reward, glory);
+                    ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                        "city.skald_pass.claimed_toast",
+                        &[("tier", tier.to_string()), ("reward", summary)],
+                    ));
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    ctx.status_notice_key = None;
+                    ctx.persist();
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            }
             CityAction::BackToTitle => {
                 ctx.active_modal = ActiveModal::None;
                 next_state.set(AppState::Title);
@@ -3601,6 +3698,34 @@ pub fn update_city_hover_tooltip(
             }
         }
     }
+}
+
+fn claim_offline_vault_action(
+    commands: &mut Commands,
+    ctx: &mut GameContext,
+    sound_bank: &SoundBank,
+) -> bool {
+    let Some(summary) = ctx.pending_offline_vault.take() else {
+        ctx.active_modal = ActiveModal::None;
+        return false;
+    };
+    let now = now_unix_secs();
+    {
+        let s = &mut *ctx;
+        s.city.claim_offline_vault(&summary, &s.data.buildings, now);
+    }
+    let reward_str = modals::format_reward_summary(&ctx.data.i18n, summary.rewards, 0);
+    ctx.celebration_message = Some(
+        ctx.data
+            .i18n
+            .t_fmt("city.vault.claimed", &[("reward", reward_str)]),
+    );
+    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+    ctx.active_modal = ActiveModal::None;
+    ctx.status_notice_key = None;
+    ctx.persist();
+    play_sfx(commands, sound_bank, SfxKind::Victory);
+    true
 }
 
 fn claim_login_tribute(

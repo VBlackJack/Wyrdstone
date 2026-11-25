@@ -35,7 +35,8 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowResized};
 use std::collections::{HashMap, HashSet};
 use wyrdstone_core::{
-    ActiveTool, Booster, CellPos, LevelOutcome, PatronGod, TurnStep, VICTORY_SKIP_MAX_DETONATIONS,
+    ActiveTool, Booster, CellPos, DailyBountyKind, LevelOutcome, PatronGod, TurnStep,
+    SKALD_XP_BOARD_WIN, SKALD_XP_BOSS_WIN, SKALD_XP_DAILY_WIN, VICTORY_SKIP_MAX_DETONATIONS,
 };
 
 type BackdropQuery<'w, 's> = Query<
@@ -1347,6 +1348,28 @@ pub fn tick_board_animation(
                     return;
                 };
                 ctx.city.stats.record_clear(report.stats);
+                {
+                    let today = crate::state::today_day_index();
+                    ctx.city.daily_bounties.ensure_for_day(today);
+                    ctx.city.daily_bounties.record_progress(
+                        DailyBountyKind::ClearRunes,
+                        report.stats.runes_cleared as u32,
+                    );
+                    let obstacles = report
+                        .step
+                        .ice_broken
+                        .saturating_add(report.step.chains_broken)
+                        .saturating_add(report.step.crates_broken);
+                    ctx.city
+                        .daily_bounties
+                        .record_progress(DailyBountyKind::ClearObstacles, obstacles);
+                    ctx.city
+                        .daily_bounties
+                        .record_peak(DailyBountyKind::ReachCombo, report.combo);
+                    ctx.city
+                        .daily_bounties
+                        .record_progress(DailyBountyKind::EarnScore, report.score_awarded);
+                }
                 if report.step.ice_broken > 0
                     || report.step.chains_broken > 0
                     || report.step.crates_broken > 0
@@ -2281,6 +2304,22 @@ fn finalize_level_transition(
             ctx.last_discovered_relic_key = ctx
                 .city
                 .discover_next_relic_for_building(&building_id, &ctx.data.collections);
+            ctx.city
+                .daily_bounties
+                .ensure_for_day(crate::state::today_day_index());
+            ctx.city
+                .daily_bounties
+                .record_progress(DailyBountyKind::WinBoards, 1);
+            let skald_xp = if building_id == wyrdstone_core::GAUNTLET_BUILDING_ID
+                || building_id == wyrdstone_core::BOSS_RAID_BUILDING_ID
+            {
+                SKALD_XP_BOSS_WIN
+            } else if building_id == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID {
+                SKALD_XP_DAILY_WIN
+            } else {
+                SKALD_XP_BOARD_WIN
+            };
+            ctx.city.skald_pass.add_xp(skald_xp);
         } else {
             if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 ctx.active_expedition = None;
@@ -2298,6 +2337,7 @@ fn finalize_level_transition(
                     ctx.last_gauntlet_stages = Some((cleared, total));
                 }
             }
+            ctx.last_stand_pre_defeat_streak = ctx.city.stats.win_streak;
             if building_id != wyrdstone_core::TRIAL_BUILDING_ID {
                 ctx.city.reset_win_streak();
             }
