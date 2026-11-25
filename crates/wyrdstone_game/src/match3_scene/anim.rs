@@ -18,9 +18,9 @@
 
 use super::{
     cell_to_world, grid_to_world_f, rebuild_board_now, BlastBeam, BoardAnimPhase, BoardTileVisual,
-    BoosterPulse, BoosterShimmer, BurstParticle, FloatingScore, FlyingOrb, FuryReadyPulse,
-    LowMovesPulse, Match3Backdrop, Match3Cleanup, Match3Entity, Match3InputState, Match3TimerText,
-    SanctuaryEmber, SanctuaryTorchGlow, UndoSnapshot, FLOATING_TEXT_LIFETIME_SECS,
+    BoosterPulse, BoosterShimmer, BurstParticle, FloatingScore, FloatingScoreShadow, FlyingOrb,
+    FuryReadyPulse, LowMovesPulse, Match3Backdrop, Match3Cleanup, Match3Entity, Match3InputState,
+    Match3TimerText, SanctuaryEmber, SanctuaryTorchGlow, UndoSnapshot, FLOATING_TEXT_LIFETIME_SECS,
     FLOATING_TEXT_RISE_SPEED_PX, HINT_IDLE_SECS, PARTICLES_PER_CLEARED_TILE, PARTICLE_GRAVITY_PX,
     PARTICLE_LIFETIME_SECS, PARTICLE_SIZE_PX, PARTICLE_SPEED_PX, SANCTUARY_EMBER_HALF_H_RATIO,
     SANCTUARY_EMBER_HALF_W_RATIO, SHAKE_AMPLITUDE_PX, SHAKE_DURATION_SECS,
@@ -95,6 +95,7 @@ type PopupQuery<'w, 's> = Query<
         &'static mut FloatingScore,
         &'static mut Transform,
         &'static mut TextColor,
+        Option<&'static Children>,
     ),
     (
         Without<BurstParticle>,
@@ -104,8 +105,11 @@ type PopupQuery<'w, 's> = Query<
         Without<SanctuaryEmber>,
         Without<FlyingOrb>,
         Without<BoosterShimmer>,
+        Without<FloatingScoreShadow>,
     ),
 >;
+type PopupShadowQuery<'w, 's> =
+    Query<'w, 's, (&'static FloatingScoreShadow, &'static mut TextColor), Without<FloatingScore>>;
 type BoosterPulseQuery<'w, 's> = Query<
     'w,
     's,
@@ -860,6 +864,8 @@ pub(super) fn spawn_floating_score(
         ))
         .with_children(|p| {
             p.spawn((
+                Match3Cleanup,
+                FloatingScoreShadow { base_alpha: 0.88 },
                 Text2d::new(label),
                 TextFont {
                     font_size,
@@ -2048,6 +2054,8 @@ fn enter_defeat_beat(
         ))
         .with_children(|p| {
             p.spawn((
+                Match3Cleanup,
+                FloatingScoreShadow { base_alpha: 0.90 },
                 Text2d::new(ctx.data.i18n.t(key).to_string()),
                 TextFont {
                     font_size: 36.0,
@@ -2301,7 +2309,7 @@ pub fn animate_particles(
     mut beams: BeamQuery,
     mut orbs: FlyingOrbQuery,
     mut shimmers: ShimmerQuery,
-    mut popups: PopupQuery,
+    (mut popups, mut shadow_cols): (PopupQuery, PopupShadowQuery),
     mut boosters: BoosterPulseQuery,
     mut torches: TorchGlowQuery,
     mut embers: SanctuaryEmberQuery,
@@ -2368,7 +2376,7 @@ pub fn animate_particles(
     for (entity, mut p, mut tf, mut sprite) in &mut particles {
         p.elapsed += dt;
         if p.elapsed >= p.lifetime {
-            commands.entity(entity).despawn();
+            commands.entity(entity).despawn_recursive();
             continue;
         }
         let progress = p.elapsed / p.lifetime;
@@ -2388,7 +2396,7 @@ pub fn animate_particles(
     for (entity, mut b, mut tf, mut sprite) in &mut beams {
         b.elapsed += dt;
         if b.elapsed >= b.lifetime {
-            commands.entity(entity).despawn();
+            commands.entity(entity).despawn_recursive();
             continue;
         }
         let progress = b.elapsed / b.lifetime;
@@ -2413,7 +2421,7 @@ pub fn animate_particles(
                 orb.color.with_alpha(0.85),
                 0.24,
             );
-            commands.entity(entity).despawn();
+            commands.entity(entity).despawn_recursive();
             continue;
         }
         let u = (orb.elapsed / orb.duration).clamp(0.0, 1.0);
@@ -2447,10 +2455,10 @@ pub fn animate_particles(
         }
     }
 
-    for (entity, mut f, mut tf, mut col) in &mut popups {
+    for (entity, mut f, mut tf, mut col, children) in &mut popups {
         f.elapsed += dt;
         if f.elapsed >= f.lifetime {
-            commands.entity(entity).despawn();
+            commands.entity(entity).despawn_recursive();
             continue;
         }
         let progress = f.elapsed / f.lifetime;
@@ -2469,6 +2477,13 @@ pub fn animate_particles(
             (1.0 - (progress - 0.65) / 0.35).max(0.0)
         };
         col.0 = col.0.with_alpha(alpha);
+        if let Some(children) = children {
+            for &child in children {
+                if let Ok((shadow, mut scol)) = shadow_cols.get_mut(child) {
+                    scol.0 = scol.0.with_alpha(alpha * shadow.base_alpha);
+                }
+            }
+        }
     }
 
     let fury_glow = if input_state.reduced_motion {
@@ -2525,5 +2540,101 @@ pub fn animate_particles(
             cam.translation.x = 0.0;
             cam.translation.y = 0.0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tick_floating_popups(
+        mut commands: Commands,
+        time: Res<Time>,
+        (mut popups, mut shadow_cols): (PopupQuery, PopupShadowQuery),
+    ) {
+        let dt = time.delta_secs();
+        for (entity, mut f, mut tf, mut col, children) in &mut popups {
+            f.elapsed += dt;
+            if f.elapsed >= f.lifetime {
+                commands.entity(entity).despawn_recursive();
+                continue;
+            }
+            let progress = f.elapsed / f.lifetime;
+            tf.translation.y += FLOATING_TEXT_RISE_SPEED_PX * dt * (1.0 - progress * 0.4);
+            let alpha = if progress < 0.65 {
+                1.0
+            } else {
+                (1.0 - (progress - 0.65) / 0.35).max(0.0)
+            };
+            col.0 = col.0.with_alpha(alpha);
+            if let Some(children) = children {
+                for &child in children {
+                    if let Ok((shadow, mut scol)) = shadow_cols.get_mut(child) {
+                        scol.0 = scol.0.with_alpha(alpha * shadow.base_alpha);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn floating_score_expiry_despawns_shadow_children_and_fades_in_sync() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, tick_floating_popups);
+
+        let shadow = app
+            .world_mut()
+            .spawn((
+                FloatingScoreShadow { base_alpha: 0.88 },
+                Text2d::new("+200"),
+                TextColor(Color::srgba(0.03, 0.04, 0.08, 0.88)),
+                Transform::default(),
+            ))
+            .id();
+        let parent = app
+            .world_mut()
+            .spawn((
+                FloatingScore {
+                    elapsed: 0.0,
+                    lifetime: 1.0,
+                },
+                Text2d::new("+200"),
+                TextColor(Color::srgba(1.0, 0.8, 0.2, 1.0)),
+                Transform::default(),
+            ))
+            .add_child(shadow)
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Time<()>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.825));
+        app.update();
+
+        let parent_alpha = app
+            .world()
+            .get::<TextColor>(parent)
+            .expect("parent alive")
+            .0
+            .alpha();
+        let shadow_alpha = app
+            .world()
+            .get::<TextColor>(shadow)
+            .expect("shadow alive")
+            .0
+            .alpha();
+        assert!((parent_alpha - 0.5).abs() < 0.02, "got {parent_alpha}");
+        assert!((shadow_alpha - 0.44).abs() < 0.02, "got {shadow_alpha}");
+
+        app.world_mut()
+            .resource_mut::<Time<()>>()
+            .advance_by(std::time::Duration::from_secs_f32(0.25));
+        app.update();
+
+        assert!(app.world().get_entity(parent).is_err());
+        assert!(
+            app.world().get_entity(shadow).is_err(),
+            "shadow child must be despawned recursively when FloatingScore expires"
+        );
     }
 }

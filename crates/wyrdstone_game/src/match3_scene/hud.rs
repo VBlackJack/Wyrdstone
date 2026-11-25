@@ -375,6 +375,7 @@ pub(super) fn spawn_match3_hud(
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
                 padding: UiRect::all(Val::Px(12.0)),
                 ..default()
             },
@@ -388,6 +389,7 @@ pub(super) fn spawn_match3_hud(
                 sliced_panel_image(vfx),
                 Node {
                     width: Val::Percent(100.0),
+                    max_width: Val::Px(1680.0),
                     flex_wrap: FlexWrap::Wrap,
                     justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
@@ -1008,6 +1010,7 @@ pub(super) fn spawn_match3_hud(
                 sliced_panel_image(vfx),
                 Node {
                     width: Val::Percent(100.0),
+                    max_width: Val::Px(1680.0),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
                     row_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),

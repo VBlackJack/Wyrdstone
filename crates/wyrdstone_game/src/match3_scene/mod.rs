@@ -161,6 +161,12 @@ pub struct FloatingScore {
     pub lifetime: f32,
 }
 
+/// Drop-shadow child text attached to a `FloatingScore` popup so its alpha fades in sync.
+#[derive(Component)]
+pub struct FloatingScoreShadow {
+    pub base_alpha: f32,
+}
+
 /// Expanding lightning beam, shockwave ring, or runic mandala VFX for boosters and active tools.
 #[derive(Component)]
 pub struct BlastBeam {
