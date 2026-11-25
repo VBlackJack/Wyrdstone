@@ -199,6 +199,7 @@ pub struct CityLayoutMode {
     pub notice_secs_left: f32,
     pub pending_chapter_delay_secs: f32,
     pub last_map_size: Vec2,
+    pub last_canvas_window_size: Vec2,
     pub window_size: Vec2,
 }
 
@@ -293,6 +294,7 @@ pub fn setup_city_ui(
         notice_secs_left: NOTICE_TOAST_DURATION_SECS,
         pending_chapter_delay_secs: 0.0,
         last_map_size: Vec2::ZERO,
+        last_canvas_window_size: Vec2::new(win_w, win_h),
         window_size: Vec2::new(win_w, win_h),
     });
     spawn_city_tree(
@@ -2265,6 +2267,10 @@ pub fn handle_city_buttons(
     }
 
     for ev in resize_events.read() {
+        if !ev.width.is_finite() || !ev.height.is_finite() || ev.width < 100.0 || ev.height < 100.0
+        {
+            continue;
+        }
         layout_mode.window_size = Vec2::new(ev.width, ev.height);
         let now_portrait = ev.width < ev.height;
         if now_portrait != layout_mode.is_portrait {
@@ -3108,6 +3114,7 @@ pub fn handle_city_buttons(
 
     if rebuild {
         layout_mode.last_map_size = Vec2::ZERO;
+        layout_mode.last_canvas_window_size = layout_mode.window_size;
         for entity in &roots {
             commands.entity(entity).despawn_recursive();
         }
@@ -3526,15 +3533,25 @@ pub fn sync_map_building_layout(
 ) {
     if let Ok(win) = windows.get_single() {
         let (win_w, win_h) = (win.width(), win.height());
-        let (cover_w, cover_h) = compute_backdrop_cover_size(win_w, win_h);
-        for mut bd_node in &mut backdrop_q {
-            bd_node.width = Val::Px(cover_w);
-            bd_node.height = Val::Px(cover_h);
-        }
-        let (canvas_w, canvas_h) = compute_fjord_canvas_size(win_w, win_h, layout_mode.is_portrait);
-        for (_, mut map_node) in &mut map_q {
-            map_node.width = Val::Px(canvas_w);
-            map_node.height = Val::Px(canvas_h);
+        if win_w.is_finite()
+            && win_h.is_finite()
+            && win_w >= 100.0
+            && win_h >= 100.0
+            && ((win_w - layout_mode.last_canvas_window_size.x).abs() >= 1.0
+                || (win_h - layout_mode.last_canvas_window_size.y).abs() >= 1.0)
+        {
+            layout_mode.last_canvas_window_size = Vec2::new(win_w, win_h);
+            let (cover_w, cover_h) = compute_backdrop_cover_size(win_w, win_h);
+            for mut bd_node in &mut backdrop_q {
+                bd_node.width = Val::Px(cover_w);
+                bd_node.height = Val::Px(cover_h);
+            }
+            let (canvas_w, canvas_h) =
+                compute_fjord_canvas_size(win_w, win_h, layout_mode.is_portrait);
+            for (_, mut map_node) in &mut map_q {
+                map_node.width = Val::Px(canvas_w);
+                map_node.height = Val::Px(canvas_h);
+            }
         }
     }
     let Ok((map_computed, _)) = map_q.get_single() else {

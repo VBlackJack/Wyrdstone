@@ -2320,6 +2320,10 @@ pub fn animate_particles(
     let elapsed = time.elapsed_secs();
 
     for ev in resize_events.read() {
+        if !ev.width.is_finite() || !ev.height.is_finite() || ev.width < 100.0 || ev.height < 100.0
+        {
+            continue;
+        }
         let bg_w = ev.width.max(ev.height * (16.0 / 9.0));
         let bg_h = ev.height.max(ev.width * (9.0 / 16.0));
         for mut bg in &mut backdrops {

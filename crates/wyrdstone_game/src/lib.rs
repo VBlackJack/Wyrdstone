@@ -60,24 +60,10 @@ pub fn run_app() {
         ..default()
     };
 
-    let mut default_plugins = DefaultPlugins
-        .set(window_plugin)
-        .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(
-    );
-    #[cfg(target_os = "windows")]
-    {
-        default_plugins = default_plugins.set(bevy::render::RenderPlugin {
-            render_creation: bevy::render::settings::RenderCreation::Automatic(
-                bevy::render::settings::WgpuSettings {
-                    backends: Some(bevy::render::settings::Backends::DX12),
-                    ..default()
-                },
-            ),
-            ..default()
-        });
-    }
-
-    app.add_plugins(default_plugins)
+    // Use Bevy's default rendering stack (Vulkan-first on Windows with automatic fallback
+    // and WGPU_BACKEND env override, plus PipelinedRenderingPlugin) so rapid window resizes
+    // do not deadlock the Win32 UI thread inside DX12's synchronous swapchain ResizeBuffers wait.
+    app.add_plugins(DefaultPlugins.set(window_plugin))
         .insert_resource(ClearColor(COLOR_BG_DEEP))
         .insert_resource(ctx)
         .init_resource::<scroll::UiScrollMemory>()
