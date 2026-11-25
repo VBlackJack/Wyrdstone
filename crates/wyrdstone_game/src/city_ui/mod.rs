@@ -24,6 +24,7 @@ use crate::audio::{
     cycle_bgm_volume, cycle_sfx_volume, play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank,
 };
 use crate::fjord_art::FjordTextures;
+use crate::platform::{HapticEvent, HapticKind, SafeAreaInsets};
 use crate::scroll::{PressArm, UiScrollMemory};
 use crate::state::{
     now_unix_secs, today_day_index, ActiveModal, AppState, ChapterDialogue, GameContext,
@@ -38,7 +39,8 @@ use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 use bevy::window::{PrimaryWindow, WindowResized};
 use wyrdstone_core::{
-    format_rank_perk, ActiveTool, BuildingDef, I18nCatalog, PatronGod, QuestCondition,
+    format_building_bonus, format_rank_perk, ActiveTool, BuildingDef, I18nCatalog, PatronGod,
+    QuestCondition,
 };
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
@@ -171,6 +173,18 @@ pub struct CityEnergyText;
 #[derive(Component)]
 pub struct InspectorHarvestTimerText;
 
+/// Localized hover tooltip text attached to Fjord interactive elements on desktop.
+#[derive(Component)]
+pub struct CityTooltipTarget(pub String);
+
+/// Floating bottom-center tooltip container on desktop Fjord City.
+#[derive(Component)]
+pub struct FjordTooltipBar;
+
+/// Text inside `FjordTooltipBar`, updated in-place on hover without rebuilding the hub.
+#[derive(Component)]
+pub struct FjordTooltipText;
+
 /// Exclusive slide-out right drawer in the Fjord hub.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CityDrawer {
@@ -230,6 +244,7 @@ pub enum CityAction {
     DrinkMead,
     ClaimQuest(String),
     FocusActiveQuest,
+    FocusFjordMap,
     ToggleDrawer(CityDrawer),
     ToggleModal(ActiveModal),
     CloseModal,
@@ -262,6 +277,7 @@ pub fn setup_city_ui(
     vfx: Res<VfxTextures>,
     sound_bank: Res<SoundBank>,
     scroll_mem: Res<UiScrollMemory>,
+    safe_area: Res<SafeAreaInsets>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let (win_w, win_h) = windows
@@ -307,6 +323,7 @@ pub fn setup_city_ui(
         is_portrait,
         win_w,
         win_h,
+        *safe_area,
         CityDrawer::None,
         inspector_open,
         None,
@@ -419,6 +436,7 @@ fn spawn_city_tree(
     is_portrait: bool,
     win_w: f32,
     win_h: f32,
+    safe: SafeAreaInsets,
     active_drawer: CityDrawer,
     inspector_open: bool,
     just_built_id: Option<&str>,
@@ -689,9 +707,9 @@ fn spawn_city_tree(
                 .spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        top: Val::Px(edge_y),
-                        left: Val::Px(edge_x),
-                        right: Val::Px(edge_x),
+                        top: Val::Px(edge_y + safe.top),
+                        left: Val::Px(edge_x + safe.left),
+                        right: Val::Px(edge_x + safe.right),
                         flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(6.0),
                         ..default()
@@ -793,32 +811,40 @@ fn spawn_city_tree(
                                         resource_pill_text(i18n, key, amount)
                                     }
                                 };
-                                spawn_resource_pill_with_icon(
+                                spawn_resource_pill_with_icon_tip(
                                     pills,
                                     vfx.icon_wood.clone(),
                                     &res_lbl("resources.label.wood", res.wood),
                                     COLOR_RES_WOOD,
+                                    Some(i18n.t("city.tooltip.wood").to_string()),
                                 );
-                                spawn_resource_pill_with_icon(
+                                spawn_resource_pill_with_icon_tip(
                                     pills,
                                     vfx.icon_stone.clone(),
                                     &res_lbl("resources.label.stone", res.stone),
                                     COLOR_RES_STONE,
+                                    Some(i18n.t("city.tooltip.stone").to_string()),
                                 );
-                                spawn_resource_pill_with_icon(
+                                spawn_resource_pill_with_icon_tip(
                                     pills,
                                     vfx.icon_gold.clone(),
                                     &res_lbl("resources.label.gold", res.gold),
                                     COLOR_ACCENT_GOLD,
+                                    Some(i18n.t("city.tooltip.gold").to_string()),
                                 );
-                                spawn_resource_pill_with_icon(
+                                spawn_resource_pill_with_icon_tip(
                                     pills,
                                     vfx.icon_mead.clone(),
                                     &res_lbl("resources.label.mead", res.mead),
                                     COLOR_RES_MEAD,
+                                    Some(i18n.t("city.tooltip.mead").to_string()),
                                 );
                                 pills
                                     .spawn((
+                                        Interaction::None,
+                                        CityTooltipTarget(
+                                            i18n.t("city.tooltip.energy").to_string(),
+                                        ),
                                         Node {
                                             padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                                             column_gap: Val::Px(5.0),
@@ -896,99 +922,116 @@ fn spawn_city_tree(
                                 }
                             });
 
-                            // Right: Clean Burger/Drawer Controls (Modes, Clan, Menu + contextual Collect All)
-                            bar.spawn((
-                                Node {
-                                    column_gap: Val::Px(6.0),
-                                    row_gap: Val::Px(4.0),
-                                    flex_wrap: FlexWrap::Wrap,
-                                    align_items: AlignItems::Center,
-                                    padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(COLOR_HUD_GROUP_BG),
-                                BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.28)),
-                                BorderRadius::all(Val::Px(RADIUS_MD)),
-                            ))
-                            .with_children(|actions| {
-                                if ready_harvests >= 2 {
-                                    spawn_small_button_colored(
-                                        actions,
-                                        &i18n.t_fmt(
-                                            "city.harvest.collect_all",
-                                            &[("count", ready_harvests.to_string())],
-                                        ),
-                                        CityAction::CollectAllHarvests,
-                                        COLOR_ACCENT_GOLD,
-                                        COLOR_TEXT_DARK,
-                                        true,
-                                    );
-                                }
-                                let modes_open = active_drawer == CityDrawer::Modes;
-                                let modes_badge = usize::from(daily_ready);
-                                let modes_lbl =
-                                    badged_label(i18n, "city.drawer.modes.button", modes_badge);
-                                spawn_small_button_colored(
-                                    actions,
-                                    &modes_lbl,
-                                    CityAction::ToggleDrawer(CityDrawer::Modes),
-                                    if modes_open {
-                                        COLOR_ACCENT_TEAL
-                                    } else if daily_ready {
-                                        COLOR_ACCENT_GOLD
-                                    } else {
-                                        COLOR_PANEL_CARD
+                            // Right: Clean Burger/Drawer Controls (Portrait moves Modes/Clan/Menu to bottom nav bar)
+                            if !is_portrait || ready_harvests >= 2 {
+                                bar.spawn((
+                                    Node {
+                                        column_gap: Val::Px(6.0),
+                                        row_gap: Val::Px(4.0),
+                                        flex_wrap: FlexWrap::Wrap,
+                                        align_items: AlignItems::Center,
+                                        padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        ..default()
                                     },
-                                    if !modes_open && daily_ready {
-                                        COLOR_TEXT_DARK
-                                    } else {
-                                        COLOR_TEXT_PRIMARY
-                                    },
-                                    true,
-                                );
+                                    BackgroundColor(COLOR_HUD_GROUP_BG),
+                                    BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.28)),
+                                    BorderRadius::all(Val::Px(RADIUS_MD)),
+                                ))
+                                .with_children(|actions| {
+                                    if ready_harvests >= 2 {
+                                        spawn_small_button_colored(
+                                            actions,
+                                            &i18n.t_fmt(
+                                                "city.harvest.collect_all",
+                                                &[("count", ready_harvests.to_string())],
+                                            ),
+                                            CityAction::CollectAllHarvests,
+                                            COLOR_ACCENT_GOLD,
+                                            COLOR_TEXT_DARK,
+                                            true,
+                                        );
+                                    }
+                                    if !is_portrait {
+                                        let modes_open = active_drawer == CityDrawer::Modes;
+                                        let modes_badge = usize::from(daily_ready);
+                                        let modes_lbl = badged_label(
+                                            i18n,
+                                            "city.drawer.modes.button",
+                                            modes_badge,
+                                        );
+                                        spawn_small_button_with_opts(
+                                            actions,
+                                            &modes_lbl,
+                                            CityAction::ToggleDrawer(CityDrawer::Modes),
+                                            if modes_open {
+                                                COLOR_ACCENT_TEAL
+                                            } else if daily_ready {
+                                                COLOR_ACCENT_GOLD
+                                            } else {
+                                                COLOR_PANEL_CARD
+                                            },
+                                            if !modes_open && daily_ready {
+                                                COLOR_TEXT_DARK
+                                            } else {
+                                                COLOR_TEXT_PRIMARY
+                                            },
+                                            true,
+                                            Some(i18n.t("city.tooltip.modes").to_string()),
+                                            0.0,
+                                        );
 
-                                let clan_open = active_drawer == CityDrawer::Clan;
-                                let clan_badge = claimable_feats + claimable_cols;
-                                let clan_lbl =
-                                    badged_label(i18n, "city.drawer.clan.button", clan_badge);
-                                spawn_small_button_colored(
-                                    actions,
-                                    &clan_lbl,
-                                    CityAction::ToggleDrawer(CityDrawer::Clan),
-                                    if clan_open {
-                                        COLOR_ACCENT_TEAL
-                                    } else if clan_badge > 0 {
-                                        COLOR_ACCENT_GREEN
-                                    } else {
-                                        COLOR_PANEL_CARD
-                                    },
-                                    COLOR_TEXT_PRIMARY,
-                                    true,
-                                );
+                                        let clan_open = active_drawer == CityDrawer::Clan;
+                                        let clan_badge = claimable_feats + claimable_cols;
+                                        let clan_lbl = badged_label(
+                                            i18n,
+                                            "city.drawer.clan.button",
+                                            clan_badge,
+                                        );
+                                        spawn_small_button_with_opts(
+                                            actions,
+                                            &clan_lbl,
+                                            CityAction::ToggleDrawer(CityDrawer::Clan),
+                                            if clan_open {
+                                                COLOR_ACCENT_TEAL
+                                            } else if clan_badge > 0 {
+                                                COLOR_ACCENT_GREEN
+                                            } else {
+                                                COLOR_PANEL_CARD
+                                            },
+                                            COLOR_TEXT_PRIMARY,
+                                            true,
+                                            Some(i18n.t("city.tooltip.clan").to_string()),
+                                            0.0,
+                                        );
 
-                                let menu_open = active_drawer == CityDrawer::Menu;
-                                let menu_badge = usize::from(tribute_ready);
-                                let menu_lbl = badged_label(i18n, "city.button.menu", menu_badge);
-                                spawn_small_button_colored(
-                                    actions,
-                                    &menu_lbl,
-                                    CityAction::ToggleDrawer(CityDrawer::Menu),
-                                    if menu_open {
-                                        COLOR_ACCENT_TEAL
-                                    } else if tribute_ready {
-                                        COLOR_ACCENT_GOLD
-                                    } else {
-                                        COLOR_PANEL_CARD
-                                    },
-                                    if !menu_open && tribute_ready {
-                                        COLOR_TEXT_DARK
-                                    } else {
-                                        COLOR_TEXT_PRIMARY
-                                    },
-                                    true,
-                                );
-                            });
+                                        let menu_open = active_drawer == CityDrawer::Menu;
+                                        let menu_badge = usize::from(tribute_ready);
+                                        let menu_lbl =
+                                            badged_label(i18n, "city.button.menu", menu_badge);
+                                        spawn_small_button_with_opts(
+                                            actions,
+                                            &menu_lbl,
+                                            CityAction::ToggleDrawer(CityDrawer::Menu),
+                                            if menu_open {
+                                                COLOR_ACCENT_TEAL
+                                            } else if tribute_ready {
+                                                COLOR_ACCENT_GOLD
+                                            } else {
+                                                COLOR_PANEL_CARD
+                                            },
+                                            if !menu_open && tribute_ready {
+                                                COLOR_TEXT_DARK
+                                            } else {
+                                                COLOR_TEXT_PRIMARY
+                                            },
+                                            true,
+                                            Some(i18n.t("city.tooltip.menu").to_string()),
+                                            0.0,
+                                        );
+                                    }
+                                });
+                            }
                         });
 
                     // Guided 3-step Tutorial Banner
@@ -1084,9 +1127,9 @@ fn spawn_city_tree(
                 let quest_node = if is_portrait {
                     Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Px(6.0),
-                        right: Val::Px(6.0),
-                        bottom: Val::Px(6.0),
+                        left: Val::Px(6.0 + safe.left),
+                        right: Val::Px(6.0 + safe.right),
+                        bottom: Val::Px(PORTRAIT_BOTTOM_NAV_HEIGHT_PX + 10.0 + safe.bottom),
                         justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::Center,
                         padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
@@ -1213,10 +1256,10 @@ fn spawn_city_tree(
                 let drawer_node = if is_portrait {
                     Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Px(6.0),
-                        right: Val::Px(6.0),
-                        bottom: Val::Px(6.0),
-                        height: Val::Percent(68.0),
+                        left: Val::Px(6.0 + safe.left),
+                        right: Val::Px(6.0 + safe.right),
+                        bottom: Val::Px(PORTRAIT_BOTTOM_NAV_HEIGHT_PX + 10.0 + safe.bottom),
+                        height: Val::Percent(60.0),
                         min_height: Val::Px(0.0),
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
@@ -1293,7 +1336,180 @@ fn spawn_city_tree(
                     });
             }
 
-            // 4. Exclusive Modal Overlay
+            // 4b. Portrait Thumb-Zone Bottom Navigation Bar OR Desktop Hover Tooltip Bar
+            if is_portrait {
+                let modes_open = active_drawer == CityDrawer::Modes;
+                let clan_open = active_drawer == CityDrawer::Clan;
+                let menu_open = active_drawer == CityDrawer::Menu;
+                let modes_badge = usize::from(daily_ready);
+                let clan_badge = claimable_feats + claimable_cols;
+                let menu_badge = usize::from(tribute_ready);
+                let active_quest = ctx.city.active_quest(&ctx.data.quests);
+                let quest_ready = active_quest.is_some_and(|q| ctx.city.is_quest_ready(q));
+                let quest_action = if let Some(q) = active_quest {
+                    if quest_ready {
+                        CityAction::ClaimQuest(q.id.clone())
+                    } else {
+                        CityAction::FocusActiveQuest
+                    }
+                } else {
+                    CityAction::FocusFjordMap
+                };
+                viewport
+                    .spawn((
+                        FocusPolicy::Block,
+                        Interaction::default(),
+                        sliced_panel_image(vfx),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(6.0 + safe.left),
+                            right: Val::Px(6.0 + safe.right),
+                            bottom: Val::Px(4.0 + safe.bottom),
+                            min_height: Val::Px(PORTRAIT_BOTTOM_NAV_HEIGHT_PX),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceAround,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(4.0),
+                            padding: UiRect::axes(Val::Px(6.0), Val::Px(5.0)),
+                            ..default()
+                        },
+                        panel_shadow(),
+                        ZIndex(45),
+                    ))
+                    .with_children(|nav| {
+                        spawn_small_button_with_opts(
+                            nav,
+                            i18n.t("city.nav.fjord"),
+                            CityAction::FocusFjordMap,
+                            if !right_panel_open {
+                                COLOR_ACCENT_TEAL
+                            } else {
+                                COLOR_PANEL_CARD
+                            },
+                            COLOR_TEXT_PRIMARY,
+                            true,
+                            None,
+                            1.0,
+                        );
+                        spawn_small_button_with_opts(
+                            nav,
+                            &badged_label(i18n, "city.drawer.modes.button", modes_badge),
+                            CityAction::ToggleDrawer(CityDrawer::Modes),
+                            if modes_open {
+                                COLOR_ACCENT_TEAL
+                            } else if daily_ready {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_CARD
+                            },
+                            if !modes_open && daily_ready {
+                                COLOR_TEXT_DARK
+                            } else {
+                                COLOR_TEXT_PRIMARY
+                            },
+                            true,
+                            None,
+                            1.0,
+                        );
+                        spawn_small_button_with_opts(
+                            nav,
+                            &badged_label(i18n, "city.drawer.clan.button", clan_badge),
+                            CityAction::ToggleDrawer(CityDrawer::Clan),
+                            if clan_open {
+                                COLOR_ACCENT_TEAL
+                            } else if clan_badge > 0 {
+                                COLOR_ACCENT_GREEN
+                            } else {
+                                COLOR_PANEL_CARD
+                            },
+                            COLOR_TEXT_PRIMARY,
+                            true,
+                            None,
+                            1.0,
+                        );
+                        spawn_small_button_with_opts(
+                            nav,
+                            &badged_label(i18n, "city.nav.quest", usize::from(quest_ready)),
+                            quest_action,
+                            if quest_ready {
+                                COLOR_ACCENT_GREEN
+                            } else if active_quest.is_some() {
+                                COLOR_PANEL_CARD
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            COLOR_TEXT_PRIMARY,
+                            active_quest.is_some(),
+                            None,
+                            1.0,
+                        );
+                        spawn_small_button_with_opts(
+                            nav,
+                            &badged_label(i18n, "city.button.menu", menu_badge),
+                            CityAction::ToggleDrawer(CityDrawer::Menu),
+                            if menu_open {
+                                COLOR_ACCENT_TEAL
+                            } else if tribute_ready {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_CARD
+                            },
+                            if !menu_open && tribute_ready {
+                                COLOR_TEXT_DARK
+                            } else {
+                                COLOR_TEXT_PRIMARY
+                            },
+                            true,
+                            None,
+                            1.0,
+                        );
+                    });
+            } else {
+                viewport
+                    .spawn((
+                        FjordTooltipBar,
+                        Node {
+                            display: Display::None,
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            right: Val::Px(0.0),
+                            bottom: Val::Px(14.0),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        ZIndex(35),
+                        PickingBehavior::IGNORE,
+                    ))
+                    .with_children(|row| {
+                        row.spawn((
+                            Node {
+                                max_width: Val::Px(560.0),
+                                padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_DARK),
+                            BorderColor(COLOR_ACCENT_GOLD),
+                            BorderRadius::all(Val::Px(RADIUS_MD)),
+                            panel_shadow(),
+                            PickingBehavior::IGNORE,
+                        ))
+                        .with_children(|card| {
+                            card.spawn((
+                                FjordTooltipText,
+                                Text::new(""),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                                PickingBehavior::IGNORE,
+                            ));
+                        });
+                    });
+            }
+
+            // 5. Exclusive Modal Overlay
             let m_scroll = scroll_mem.modal_offset_y;
             match ctx.active_modal {
                 ActiveModal::None => {}
@@ -1428,10 +1644,27 @@ fn spawn_map_building_pin(
         Color::srgba(0.02, 0.04, 0.08, 0.72)
     };
 
+    let bname = i18n.t(&b.name_key).to_string();
+    let pin_tooltip = if !unlocked {
+        i18n.t_fmt("city.tooltip.building_locked", &[("name", bname)])
+    } else if tier == 0 {
+        i18n.t_fmt("city.tooltip.building_ruined", &[("name", bname)])
+    } else {
+        i18n.t_fmt(
+            "city.tooltip.building",
+            &[
+                ("name", bname),
+                ("tier", tier.to_string()),
+                ("bonus", format_building_bonus(i18n, b, &ctx.data.balance)),
+            ],
+        )
+    };
+
     map.spawn((
         pin_data,
         Button,
         CityAction::SelectBuilding(b.id.clone()),
+        CityTooltipTarget(pin_tooltip),
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(init_left),
@@ -1798,37 +2031,49 @@ pub(super) fn spawn_resource_pill_with_icon(
     text: &str,
     text_color: Color,
 ) {
-    parent
-        .spawn((
+    spawn_resource_pill_with_icon_tip(parent, icon, text, text_color, None);
+}
+
+fn spawn_resource_pill_with_icon_tip(
+    parent: &mut ChildBuilder,
+    icon: Handle<Image>,
+    text: &str,
+    text_color: Color,
+    tooltip: Option<String>,
+) {
+    let mut cmd = parent.spawn((
+        Node {
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+            column_gap: Val::Px(5.0),
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(1.0)),
+            ..default()
+        },
+        BackgroundColor(COLOR_PANEL_CARD),
+        BorderColor(COLOR_PANEL_BORDER),
+        BorderRadius::all(Val::Px(6.0)),
+    ));
+    if let Some(tip) = tooltip {
+        cmd.insert((Interaction::None, CityTooltipTarget(tip)));
+    }
+    cmd.with_children(|pill| {
+        pill.spawn((
+            ImageNode::new(icon),
             Node {
-                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                column_gap: Val::Px(5.0),
-                align_items: AlignItems::Center,
-                border: UiRect::all(Val::Px(1.0)),
+                width: Val::Px(16.0),
+                height: Val::Px(16.0),
                 ..default()
             },
-            BackgroundColor(COLOR_PANEL_CARD),
-            BorderColor(COLOR_PANEL_BORDER),
-            BorderRadius::all(Val::Px(6.0)),
-        ))
-        .with_children(|pill| {
-            pill.spawn((
-                ImageNode::new(icon),
-                Node {
-                    width: Val::Px(16.0),
-                    height: Val::Px(16.0),
-                    ..default()
-                },
-            ));
-            pill.spawn((
-                Text::new(text),
-                TextFont {
-                    font_size: FONT_SMALL,
-                    ..default()
-                },
-                TextColor(text_color),
-            ));
-        });
+        ));
+        pill.spawn((
+            Text::new(text),
+            TextFont {
+                font_size: FONT_SMALL,
+                ..default()
+            },
+            TextColor(text_color),
+        ));
+    });
 }
 
 pub(crate) fn spawn_resource_pill(parent: &mut ChildBuilder, text: &str, text_color: Color) {
@@ -1888,6 +2133,22 @@ pub(crate) fn spawn_small_button_colored(
     text_color: Color,
     enabled: bool,
 ) {
+    spawn_small_button_with_opts(
+        parent, label, action, bg_color, text_color, enabled, None, 0.0,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_small_button_with_opts(
+    parent: &mut ChildBuilder,
+    label: &str,
+    action: CityAction,
+    bg_color: Color,
+    text_color: Color,
+    enabled: bool,
+    tooltip: Option<String>,
+    flex_grow: f32,
+) {
     let text_color = if !enabled {
         COLOR_TEXT_MUTED
     } else {
@@ -1902,9 +2163,18 @@ pub(crate) fn spawn_small_button_colored(
         Button,
         action,
         Node {
+            flex_grow,
+            flex_basis: if flex_grow > 0.0 {
+                Val::Px(0.0)
+            } else {
+                Val::Auto
+            },
             min_height: Val::Px(MIN_TOUCH_TARGET_PX),
             min_width: Val::Px(MIN_TOUCH_TARGET_PX),
-            padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
+            padding: UiRect::axes(
+                Val::Px(if flex_grow > 0.0 { 6.0 } else { 11.0 }),
+                Val::Px(7.0),
+            ),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border: UiRect::all(Val::Px(1.0)),
@@ -1916,6 +2186,9 @@ pub(crate) fn spawn_small_button_colored(
     ));
     if !enabled {
         cmd.insert(NoButtonScale);
+    }
+    if let Some(tip) = tooltip {
+        cmd.insert(CityTooltipTarget(tip));
     }
     cmd.with_children(|btn| {
         btn.spawn((
@@ -1985,6 +2258,14 @@ type HarvestTimerQuery<'w, 's> = Query<
     (With<InspectorHarvestTimerText>, Without<CityEnergyText>),
 >;
 
+type CityInputParams<'w, 's> = (
+    Res<'w, Touches>,
+    Local<'s, PressArm>,
+    ResMut<'w, UiScrollMemory>,
+    Res<'w, SafeAreaInsets>,
+    EventWriter<'w, HapticEvent>,
+);
+
 /// Processes button presses, passive harvest checks, and Escape modal-close shortcut.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_city_buttons(
@@ -1992,8 +2273,7 @@ pub fn handle_city_buttons(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<GameContext>,
-    fjord_art: Res<FjordTextures>,
-    vfx: Res<VfxTextures>,
+    (fjord_art, vfx): (Res<FjordTextures>, Res<VfxTextures>),
     mut sound_bank: ResMut<SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut layout_mode: ResMut<CityLayoutMode>,
@@ -2002,11 +2282,7 @@ pub fn handle_city_buttons(
     roots: Query<Entity, With<CityRoot>>,
     mut energy_texts: Query<&mut Text, (With<CityEnergyText>, Without<InspectorHarvestTimerText>)>,
     mut harvest_texts: HarvestTimerQuery,
-    (touches, mut press_arm, mut scroll_mem): (
-        Res<Touches>,
-        Local<PressArm>,
-        ResMut<UiScrollMemory>,
-    ),
+    (touches, mut press_arm, mut scroll_mem, safe_area, mut haptics): CityInputParams,
     buttons: Query<(Entity, &Interaction, &CityAction), Changed<Interaction>>,
 ) {
     let mut rebuild = false;
@@ -2057,7 +2333,7 @@ pub fn handle_city_buttons(
         }
     }
 
-    // Keyboard shortcuts on the Fjord hub when no modal is open (1-6 buildings, Enter play, C harvest all).
+    // Keyboard shortcuts on the Fjord hub when no modal is open (1-6 buildings, Tab cycle, Enter play, C harvest all, Q quest, E modes, G clan, F1 guide).
     if ctx.active_modal == ActiveModal::None {
         let digit_keys = [
             KeyCode::Digit1,
@@ -2077,9 +2353,102 @@ pub fn handle_city_buttons(
                     layout_mode.inspector_open = true;
                     scroll_mem.inspector_offset_y = 0.0;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    haptics.send(HapticEvent(HapticKind::LightTap));
                     rebuild = true;
                 }
             }
+        }
+        if keys.just_pressed(KeyCode::Tab) {
+            let reverse = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            let mut candidates: Vec<&str> = ctx
+                .data
+                .buildings
+                .iter()
+                .filter(|b| ctx.city.is_building_unlocked(b))
+                .map(|b| b.id.as_str())
+                .collect();
+            if candidates.is_empty() {
+                candidates = ctx.data.buildings.iter().map(|b| b.id.as_str()).collect();
+            }
+            if !candidates.is_empty() {
+                let cur_idx = candidates
+                    .iter()
+                    .position(|id| *id == ctx.selected_building_id)
+                    .unwrap_or(0);
+                let next_idx = if reverse {
+                    (cur_idx + candidates.len() - 1) % candidates.len()
+                } else {
+                    (cur_idx + 1) % candidates.len()
+                };
+                ctx.selected_building_id = candidates[next_idx].to_string();
+                ctx.selected_difficulty = 0;
+                ctx.status_notice_key = None;
+                layout_mode.active_drawer = CityDrawer::None;
+                layout_mode.inspector_open = true;
+                scroll_mem.inspector_offset_y = 0.0;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                haptics.send(HapticEvent(HapticKind::LightTap));
+                rebuild = true;
+            }
+        }
+        if keys.just_pressed(KeyCode::KeyQ) {
+            if let Some(quest) = ctx.city.active_quest(&ctx.data.quests).cloned() {
+                if ctx.city.is_quest_ready(&quest) {
+                    if claim_quest_by_id(&mut commands, &mut ctx, &sound_bank, &quest.id) {
+                        haptics.send(HapticEvent(HapticKind::Victory));
+                        rebuild = true;
+                    }
+                } else {
+                    match focus_active_quest(
+                        &mut commands,
+                        &mut ctx,
+                        &sound_bank,
+                        &mut layout_mode,
+                        &mut scroll_mem,
+                        &mut next_state,
+                    ) {
+                        FocusQuestResult::LaunchedMatch3 => return,
+                        FocusQuestResult::UpdatedHub(ok) => {
+                            if !ok {
+                                haptics.send(HapticEvent(HapticKind::Error));
+                            } else {
+                                haptics.send(HapticEvent(HapticKind::LightTap));
+                            }
+                            rebuild = true;
+                        }
+                        FocusQuestResult::NoQuest => {}
+                    }
+                }
+            }
+        }
+        if keys.just_pressed(KeyCode::KeyE) {
+            layout_mode.inspector_open = false;
+            layout_mode.active_drawer = if layout_mode.active_drawer == CityDrawer::Modes {
+                CityDrawer::None
+            } else {
+                CityDrawer::Modes
+            };
+            scroll_mem.inspector_offset_y = 0.0;
+            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+            rebuild = true;
+        }
+        if keys.just_pressed(KeyCode::KeyG) {
+            layout_mode.inspector_open = false;
+            layout_mode.active_drawer = if layout_mode.active_drawer == CityDrawer::Clan {
+                CityDrawer::None
+            } else {
+                CityDrawer::Clan
+            };
+            scroll_mem.inspector_offset_y = 0.0;
+            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+            rebuild = true;
+        }
+        if keys.just_pressed(KeyCode::F1) {
+            layout_mode.active_drawer = CityDrawer::None;
+            ctx.toggle_modal(ActiveModal::Help);
+            scroll_mem.modal_offset_y = 0.0;
+            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+            rebuild = true;
         }
         if keys.just_pressed(KeyCode::KeyC) {
             let now = now_unix_secs();
@@ -2097,6 +2466,7 @@ pub fn handle_city_buttons(
                 layout_mode.last_ready_harvests = 0;
                 ctx.persist();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                haptics.send(HapticEvent(HapticKind::Victory));
                 rebuild = true;
             }
         }
@@ -2314,6 +2684,7 @@ pub fn handle_city_buttons(
                 layout_mode.inspector_open = true;
                 scroll_mem.inspector_offset_y = 0.0;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                haptics.send(HapticEvent(HapticKind::LightTap));
                 rebuild = true;
             }
             CityAction::CloseInspector => {
@@ -2405,6 +2776,7 @@ pub fn handle_city_buttons(
                         layout_mode.last_ready_harvests = count_ready_harvests(&ctx, now);
                         ctx.persist();
                         play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                        haptics.send(HapticEvent(HapticKind::LightTap));
                         rebuild = true;
                     }
                 }
@@ -2425,6 +2797,7 @@ pub fn handle_city_buttons(
                     layout_mode.last_ready_harvests = 0;
                     ctx.persist();
                     play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    haptics.send(HapticEvent(HapticKind::Victory));
                     rebuild = true;
                 }
             }
@@ -2662,10 +3035,12 @@ pub fn handle_city_buttons(
                             }
                             ctx.persist();
                             play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                            haptics.send(HapticEvent(HapticKind::Victory));
                         }
                         Err(err_key) => {
                             ctx.status_notice_key = Some(err_key.to_string());
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                            haptics.send(HapticEvent(HapticKind::Error));
                         }
                     }
                     rebuild = true;
@@ -2690,116 +3065,40 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::ClaimQuest(quest_id) => {
-                if let Some(quest) = ctx.data.quests.iter().find(|q| q.id == *quest_id).cloned() {
-                    let claimed = {
-                        let s = &mut *ctx;
-                        s.city.try_claim_quest(&quest, &s.data.balance)
-                    };
-                    if claimed {
-                        let summary =
-                            modals::format_reward_summary(&ctx.data.i18n, quest.reward, 0);
-                        ctx.celebration_message = Some(celebration_claim_line(
-                            &ctx.data.i18n,
-                            ctx.data.i18n.t(&quest.title_key).to_string(),
-                            summary,
-                        ));
-                        ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
-                        ctx.status_notice_key = None;
-                        ctx.persist();
-                        play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
-                        rebuild = true;
-                    }
+                if claim_quest_by_id(&mut commands, &mut ctx, &sound_bank, quest_id) {
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
                 }
             }
             CityAction::FocusActiveQuest => {
-                if let Some(quest) = ctx.city.active_quest(&ctx.data.quests).cloned() {
-                    ctx.status_notice_key = None;
-                    match &quest.condition {
-                        QuestCondition::WinBuildingLevel { building_id, .. }
-                        | QuestCondition::ReachBuildingTier { building_id, .. } => {
-                            ctx.selected_building_id = building_id.clone();
-                            ctx.selected_difficulty = 0;
-                            layout_mode.active_drawer = CityDrawer::None;
-                            layout_mode.inspector_open = true;
-                            scroll_mem.inspector_offset_y = 0.0;
-                            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
-                            rebuild = true;
-                        }
-                        QuestCondition::WinSpecificLevel { level_id } => {
-                            if let Some(level) = ctx.data.level_by_id(level_id).cloned() {
-                                let diff = ctx
-                                    .data
-                                    .building_by_id(&level.building_id)
-                                    .map(|b| {
-                                        if b.legendary_level_id.as_deref()
-                                            == Some(level_id.as_str())
-                                        {
-                                            2
-                                        } else if b.mastery_level_id.as_deref()
-                                            == Some(level_id.as_str())
-                                        {
-                                            1
-                                        } else {
-                                            0
-                                        }
-                                    })
-                                    .unwrap_or(0);
-                                ctx.selected_building_id = level.building_id;
-                                ctx.selected_difficulty = diff;
-                                layout_mode.active_drawer = CityDrawer::None;
-                                layout_mode.inspector_open = true;
-                                scroll_mem.inspector_offset_y = 0.0;
-                                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
-                                rebuild = true;
-                            }
-                        }
-                        QuestCondition::CraftAnyAmulet => {
-                            ctx.active_modal = ActiveModal::Amulets;
-                            scroll_mem.modal_offset_y = 0.0;
-                            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
-                            rebuild = true;
-                        }
-                        QuestCondition::ClaimAnyCollection => {
-                            ctx.active_modal = ActiveModal::Collections;
-                            scroll_mem.modal_offset_y = 0.0;
-                            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
-                            rebuild = true;
-                        }
-                        QuestCondition::DefeatBosses { .. } => {
-                            ctx.active_modal = ActiveModal::Raids;
-                            scroll_mem.modal_offset_y = 0.0;
-                            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
-                            rebuild = true;
-                        }
-                        QuestCondition::CompleteDailyTrials { .. } => {
-                            if ctx.city.is_daily_available(today_day_index())
-                                && ctx.start_daily_trial().is_ok()
-                            {
-                                next_state.set(AppState::Match3);
-                                return;
-                            }
-                            ctx.status_notice_key = Some("city.panel.daily.done".to_string());
-                            play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
-                            rebuild = true;
-                        }
-                        QuestCondition::ReachExpeditionWave { .. } => {
-                            match ctx.start_or_resume_expedition() {
-                                Ok(true) => {
-                                    next_state.set(AppState::Match3);
-                                    return;
-                                }
-                                Ok(false) => {
-                                    scroll_mem.modal_offset_y = 0.0;
-                                    rebuild = true;
-                                }
-                                Err(err_key) => {
-                                    ctx.status_notice_key = Some(err_key.to_string());
-                                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
-                                    rebuild = true;
-                                }
-                            }
-                        }
+                match focus_active_quest(
+                    &mut commands,
+                    &mut ctx,
+                    &sound_bank,
+                    &mut layout_mode,
+                    &mut scroll_mem,
+                    &mut next_state,
+                ) {
+                    FocusQuestResult::LaunchedMatch3 => return,
+                    FocusQuestResult::UpdatedHub(ok) => {
+                        haptics.send(HapticEvent(if ok {
+                            HapticKind::LightTap
+                        } else {
+                            HapticKind::Error
+                        }));
+                        rebuild = true;
                     }
+                    FocusQuestResult::NoQuest => {}
+                }
+            }
+            CityAction::FocusFjordMap => {
+                if layout_mode.inspector_open || layout_mode.active_drawer != CityDrawer::None {
+                    layout_mode.inspector_open = false;
+                    layout_mode.active_drawer = CityDrawer::None;
+                    ctx.status_notice_key = None;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    haptics.send(HapticEvent(HapticKind::LightTap));
+                    rebuild = true;
                 }
             }
             CityAction::ToggleDrawer(drawer) => {
@@ -2854,10 +3153,12 @@ pub fn handle_city_buttons(
                             ctx.status_notice_key = None;
                             ctx.persist();
                             play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                            haptics.send(HapticEvent(HapticKind::Victory));
                         }
                         Err(err_key) => {
                             ctx.status_notice_key = Some(err_key.to_string());
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                            haptics.send(HapticEvent(HapticKind::Error));
                         }
                     }
                     rebuild = true;
@@ -2934,10 +3235,12 @@ pub fn handle_city_buttons(
                             ctx.status_notice_key = None;
                             ctx.persist();
                             play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
+                            haptics.send(HapticEvent(HapticKind::Victory));
                         }
                         Err(err_key) => {
                             ctx.status_notice_key = Some(err_key.to_string());
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                            haptics.send(HapticEvent(HapticKind::Error));
                         }
                     }
                     rebuild = true;
@@ -3129,10 +3432,174 @@ pub fn handle_city_buttons(
             layout_mode.is_portrait,
             layout_mode.window_size.x,
             layout_mode.window_size.y,
+            *safe_area,
             layout_mode.active_drawer,
             layout_mode.inspector_open,
             just_built.as_deref(),
         );
+    }
+}
+
+enum FocusQuestResult {
+    NoQuest,
+    UpdatedHub(bool),
+    LaunchedMatch3,
+}
+
+fn claim_quest_by_id(
+    commands: &mut Commands,
+    ctx: &mut GameContext,
+    sound_bank: &SoundBank,
+    quest_id: &str,
+) -> bool {
+    let Some(quest) = ctx.data.quests.iter().find(|q| q.id == quest_id).cloned() else {
+        return false;
+    };
+    let claimed = {
+        let s = &mut *ctx;
+        s.city.try_claim_quest(&quest, &s.data.balance)
+    };
+    if claimed {
+        let summary = modals::format_reward_summary(&ctx.data.i18n, quest.reward, 0);
+        ctx.celebration_message = Some(celebration_claim_line(
+            &ctx.data.i18n,
+            ctx.data.i18n.t(&quest.title_key).to_string(),
+            summary,
+        ));
+        ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+        ctx.status_notice_key = None;
+        ctx.persist();
+        play_sfx(commands, sound_bank, SfxKind::Upgrade);
+        return true;
+    }
+    false
+}
+
+fn focus_active_quest(
+    commands: &mut Commands,
+    ctx: &mut GameContext,
+    sound_bank: &SoundBank,
+    layout_mode: &mut CityLayoutMode,
+    scroll_mem: &mut UiScrollMemory,
+    next_state: &mut NextState<AppState>,
+) -> FocusQuestResult {
+    let Some(quest) = ctx.city.active_quest(&ctx.data.quests).cloned() else {
+        return FocusQuestResult::NoQuest;
+    };
+    ctx.status_notice_key = None;
+    match &quest.condition {
+        QuestCondition::WinBuildingLevel { building_id, .. }
+        | QuestCondition::ReachBuildingTier { building_id, .. } => {
+            ctx.selected_building_id = building_id.clone();
+            ctx.selected_difficulty = 0;
+            layout_mode.active_drawer = CityDrawer::None;
+            layout_mode.inspector_open = true;
+            scroll_mem.inspector_offset_y = 0.0;
+            play_sfx(commands, sound_bank, SfxKind::Swap);
+            FocusQuestResult::UpdatedHub(true)
+        }
+        QuestCondition::WinSpecificLevel { level_id } => {
+            let Some(level) = ctx.data.level_by_id(level_id).cloned() else {
+                return FocusQuestResult::NoQuest;
+            };
+            let diff = ctx
+                .data
+                .building_by_id(&level.building_id)
+                .map(|b| {
+                    if b.legendary_level_id.as_deref() == Some(level_id.as_str()) {
+                        2
+                    } else if b.mastery_level_id.as_deref() == Some(level_id.as_str()) {
+                        1
+                    } else {
+                        0
+                    }
+                })
+                .unwrap_or(0);
+            ctx.selected_building_id = level.building_id;
+            ctx.selected_difficulty = diff;
+            layout_mode.active_drawer = CityDrawer::None;
+            layout_mode.inspector_open = true;
+            scroll_mem.inspector_offset_y = 0.0;
+            play_sfx(commands, sound_bank, SfxKind::Swap);
+            FocusQuestResult::UpdatedHub(true)
+        }
+        QuestCondition::CraftAnyAmulet => {
+            ctx.active_modal = ActiveModal::Amulets;
+            scroll_mem.modal_offset_y = 0.0;
+            play_sfx(commands, sound_bank, SfxKind::Swap);
+            FocusQuestResult::UpdatedHub(true)
+        }
+        QuestCondition::ClaimAnyCollection => {
+            ctx.active_modal = ActiveModal::Collections;
+            scroll_mem.modal_offset_y = 0.0;
+            play_sfx(commands, sound_bank, SfxKind::Swap);
+            FocusQuestResult::UpdatedHub(true)
+        }
+        QuestCondition::DefeatBosses { .. } => {
+            ctx.active_modal = ActiveModal::Raids;
+            scroll_mem.modal_offset_y = 0.0;
+            play_sfx(commands, sound_bank, SfxKind::Swap);
+            FocusQuestResult::UpdatedHub(true)
+        }
+        QuestCondition::CompleteDailyTrials { .. } => {
+            if ctx.city.is_daily_available(today_day_index()) && ctx.start_daily_trial().is_ok() {
+                next_state.set(AppState::Match3);
+                return FocusQuestResult::LaunchedMatch3;
+            }
+            ctx.status_notice_key = Some("city.panel.daily.done".to_string());
+            play_sfx(commands, sound_bank, SfxKind::Invalid);
+            FocusQuestResult::UpdatedHub(false)
+        }
+        QuestCondition::ReachExpeditionWave { .. } => match ctx.start_or_resume_expedition() {
+            Ok(true) => {
+                next_state.set(AppState::Match3);
+                FocusQuestResult::LaunchedMatch3
+            }
+            Ok(false) => {
+                scroll_mem.modal_offset_y = 0.0;
+                FocusQuestResult::UpdatedHub(true)
+            }
+            Err(err_key) => {
+                ctx.status_notice_key = Some(err_key.to_string());
+                play_sfx(commands, sound_bank, SfxKind::Invalid);
+                FocusQuestResult::UpdatedHub(false)
+            }
+        },
+    }
+}
+
+/// Updates the desktop Fjord hover tooltip bar in-place without rebuilding the hub UI.
+pub fn update_city_hover_tooltip(
+    ctx: Res<GameContext>,
+    layout_mode: Res<CityLayoutMode>,
+    targets: Query<(&Interaction, &CityTooltipTarget)>,
+    mut bar_q: Query<&mut Node, With<FjordTooltipBar>>,
+    mut text_q: Query<&mut Text, With<FjordTooltipText>>,
+) {
+    let hovered_tip = if layout_mode.is_portrait || ctx.active_modal != ActiveModal::None {
+        None
+    } else {
+        targets
+            .iter()
+            .find(|(interaction, _)| **interaction == Interaction::Hovered)
+            .map(|(_, tip)| tip.0.as_str())
+    };
+    for mut node in &mut bar_q {
+        let want = if hovered_tip.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != want {
+            node.display = want;
+        }
+    }
+    if let Some(tip) = hovered_tip {
+        for mut text in &mut text_q {
+            if text.0 != tip {
+                text.0 = tip.to_string();
+            }
+        }
     }
 }
 

@@ -24,6 +24,7 @@ use super::{
 };
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
+use crate::platform::{HudLayoutMode, SafeAreaInsets};
 use crate::runes_art::RuneTextures;
 use crate::scroll::{spawn_scrollbar_track, ScrollMoreHint, ScrollPanelKind, ScrollablePanel};
 use crate::state::{ActiveModal, GameContext};
@@ -345,6 +346,1031 @@ impl HudTextQueries<'_, '_> {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn spawn_hud_divider(parent: &mut ChildBuilder) {
+    parent.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Px(1.0),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.93, 0.74, 0.29, 0.25)),
+    ));
+}
+
+fn spawn_section_header(parent: &mut ChildBuilder, fjord_art: &FjordTextures, label: &str) {
+    parent.spawn((
+        Text::new(label),
+        display_font(fjord_art, FONT_BODY),
+        TextColor(COLOR_ACCENT_GOLD),
+    ));
+}
+
+fn spawn_moves_score_overdrive(
+    stats: &mut ChildBuilder,
+    ctx: &GameContext,
+    session: &LevelSession,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    vertical: bool,
+) {
+    let i18n = &ctx.data.i18n;
+    let low_moves = !session.is_blitz && session.moves_left <= LOW_MOVES_THRESHOLD;
+    let hot_blitz = session.is_blitz && session.blitz_multiplier >= 4;
+    let mut moves_box = stats.spawn((
+        Node {
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+            justify_content: if vertical {
+                JustifyContent::SpaceBetween
+            } else {
+                JustifyContent::FlexStart
+            },
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(if low_moves || hot_blitz { 2.0 } else { 1.0 })),
+            ..default()
+        },
+        BackgroundColor(if low_moves {
+            Color::srgba(0.36, 0.08, 0.10, 0.92)
+        } else if hot_blitz {
+            Color::srgba(0.42, 0.22, 0.04, 0.95)
+        } else if vertical {
+            COLOR_PANEL_CARD
+        } else {
+            Color::NONE
+        }),
+        BorderColor(if low_moves {
+            COLOR_ACCENT_CRIMSON
+        } else if hot_blitz {
+            COLOR_ACCENT_GOLD
+        } else if vertical {
+            COLOR_PANEL_BORDER
+        } else {
+            Color::NONE
+        }),
+        BorderRadius::all(Val::Px(8.0)),
+    ));
+    if low_moves {
+        moves_box.insert(LowMovesPulse);
+    }
+    moves_box.with_children(|mbox| {
+        mbox.spawn((
+            Match3MovesText,
+            Text::new(moves_label(i18n, session)),
+            display_font(fjord_art, FONT_HEADING),
+            TextColor(if low_moves {
+                COLOR_ACCENT_CRIMSON_TEXT
+            } else {
+                COLOR_ACCENT_GOLD
+            }),
+        ));
+        if session.is_trial {
+            mbox.spawn((
+                Text::new(i18n.t_fmt(
+                    "match3.hud.trial_par",
+                    &[("par", session.trial_par_moves.to_string())],
+                )),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_TEAL_TEXT),
+                Node {
+                    margin: UiRect::left(Val::Px(6.0)),
+                    ..default()
+                },
+            ));
+        } else if !session.is_blitz
+            && session.boss.is_none()
+            && session.level.building_id != wyrdstone_core::expedition::EXPEDITION_BUILDING_ID
+        {
+            let stars_now = projected_stars(session, &ctx.data.balance.session);
+            mbox.spawn(Node {
+                column_gap: Val::Px(2.0),
+                margin: UiRect::left(Val::Px(6.0)),
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|srow| {
+                for s_idx in 0..3u8 {
+                    let active = s_idx < stars_now;
+                    srow.spawn((
+                        ImageNode::new(vfx.icon_star.clone()).with_color(if active {
+                            Color::WHITE
+                        } else {
+                            Color::srgba(0.28, 0.34, 0.44, 0.40)
+                        }),
+                        Node {
+                            width: Val::Px(13.0),
+                            height: Val::Px(13.0),
+                            ..default()
+                        },
+                    ));
+                }
+            });
+        }
+    });
+
+    if let Some(secs) = session.time_left_secs {
+        let whole = secs.ceil() as u32;
+        let frozen = session.is_blitz && session.blitz_freeze_secs > 0.0;
+        let timer_text = if frozen {
+            i18n.t_fmt("match3.hud.timer_frozen", &[("secs", whole.to_string())])
+        } else {
+            i18n.t_fmt("match3.hud.timer", &[("secs", whole.to_string())])
+        };
+        stats.spawn((
+            Match3TimerText,
+            Text::new(timer_text),
+            display_font(fjord_art, FONT_HEADING),
+            TextColor(if frozen {
+                Color::srgb(0.45, 0.88, 1.0)
+            } else if whole <= 15 {
+                COLOR_ACCENT_CRIMSON_TEXT
+            } else {
+                COLOR_ACCENT_TEAL_TEXT
+            }),
+        ));
+    }
+
+    stats.spawn((
+        Match3ScoreText,
+        Text::new(score_label(i18n, session)),
+        TextFont {
+            font_size: FONT_BODY,
+            ..default()
+        },
+        TextColor(COLOR_TEXT_PRIMARY),
+    ));
+
+    if session.session_tuning.overdrive_turns > 0 {
+        let od_active = session.overdrive_turns_left > 0;
+        stats
+            .spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                    border: UiRect::all(Val::Px(1.5)),
+                    justify_content: if vertical {
+                        JustifyContent::Center
+                    } else {
+                        JustifyContent::FlexStart
+                    },
+                    ..default()
+                },
+                BackgroundColor(if od_active {
+                    Color::srgba(0.42, 0.22, 0.04, 0.95)
+                } else {
+                    COLOR_PANEL_CARD
+                }),
+                BorderColor(if od_active {
+                    COLOR_ACCENT_GOLD
+                } else {
+                    COLOR_PANEL_BORDER
+                }),
+                BorderRadius::all(Val::Px(6.0)),
+            ))
+            .with_children(|od| {
+                od.spawn((
+                    Match3OverdriveText,
+                    Text::new(overdrive_label(i18n, session)),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(if od_active {
+                        COLOR_ACCENT_GOLD
+                    } else {
+                        COLOR_ACCENT_TEAL_TEXT
+                    }),
+                ));
+            });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_objectives_or_boss(
+    objs: &mut ChildBuilder,
+    ctx: &GameContext,
+    session: &LevelSession,
+    fjord_art: &FjordTextures,
+    textures: &RuneTextures,
+    vfx: &VfxTextures,
+    hud_mode: HudLayoutMode,
+) {
+    let i18n = &ctx.data.i18n;
+    let is_compact = hud_mode.is_compact();
+    let is_wide = hud_mode.is_desktop_wide();
+    if let Some(boss) = &session.boss {
+        let hp_pct = (boss.hp as f32 / boss.def.max_hp.max(1) as f32 * 100.0).clamp(0.0, 100.0);
+        objs.spawn(Node {
+            flex_direction: if is_wide {
+                FlexDirection::Column
+            } else {
+                FlexDirection::Row
+            },
+            flex_wrap: FlexWrap::Wrap,
+            align_items: if is_wide {
+                AlignItems::Stretch
+            } else {
+                AlignItems::Center
+            },
+            column_gap: Val::Px(8.0),
+            row_gap: Val::Px(6.0),
+            width: if is_wide {
+                Val::Percent(100.0)
+            } else {
+                Val::Auto
+            },
+            ..default()
+        })
+        .with_children(|brow| {
+            brow.spawn(Node {
+                column_gap: Val::Px(8.0),
+                align_items: AlignItems::Center,
+                justify_content: if is_wide {
+                    JustifyContent::Center
+                } else {
+                    JustifyContent::FlexStart
+                },
+                ..default()
+            })
+            .with_children(|icons| {
+                if let Some(img) = fjord_art.boss_portrait(&boss.def.id) {
+                    let hit_flash = boss.last_damage_dealt > 0;
+                    icons.spawn((
+                        ImageNode {
+                            image: img,
+                            color: if hit_flash {
+                                Color::srgb(1.35, 0.72, 0.72)
+                            } else {
+                                Color::WHITE
+                            },
+                            ..default()
+                        },
+                        Node {
+                            width: Val::Px(if is_wide { 54.0 } else { 46.0 }),
+                            height: Val::Px(if is_wide { 54.0 } else { 46.0 }),
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BorderColor(if hit_flash || boss.is_phase2() {
+                            COLOR_ACCENT_GOLD
+                        } else {
+                            COLOR_ACCENT_CRIMSON
+                        }),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ));
+                }
+                if let Some(weak_icon) = textures.runes.get(&boss.active_weakness()).cloned() {
+                    icons
+                        .spawn((
+                            Node {
+                                padding: UiRect::all(Val::Px(3.0)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderColor(COLOR_ACCENT_TEAL),
+                            BorderRadius::all(Val::Px(RADIUS_MD)),
+                        ))
+                        .with_children(|wbox| {
+                            wbox.spawn((
+                                ImageNode::new(weak_icon),
+                                Node {
+                                    width: Val::Px(26.0),
+                                    height: Val::Px(26.0),
+                                    ..default()
+                                },
+                            ));
+                        });
+                }
+            });
+
+            brow.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(4.0),
+                align_items: if is_wide {
+                    AlignItems::Stretch
+                } else {
+                    AlignItems::Center
+                },
+                ..default()
+            })
+            .with_children(|bcol| {
+                if let Some(run) = &ctx.active_gauntlet {
+                    bcol.spawn((
+                        Text::new(i18n.t_fmt(
+                            "match3.hud.gauntlet_stage",
+                            &[
+                                ("cur", (run.stage_index + 1).to_string()),
+                                ("total", run.total_stages.to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                }
+                bcol.spawn((
+                    Match3BossHpText,
+                    Text::new(boss_hp_label(
+                        i18n,
+                        boss,
+                        ctx.data.balance.boss.weakness_multiplier,
+                    )),
+                    TextFont {
+                        font_size: if is_compact || is_wide {
+                            FONT_SMALL
+                        } else {
+                            FONT_BODY
+                        },
+                        ..default()
+                    },
+                    TextColor(if boss.turns_until_riposte <= 1 {
+                        COLOR_ACCENT_CRIMSON_TEXT
+                    } else if boss.is_phase2() {
+                        COLOR_ACCENT_GOLD
+                    } else {
+                        COLOR_ACCENT_CRIMSON_TEXT
+                    }),
+                ));
+                bcol.spawn((
+                    Node {
+                        width: if is_wide {
+                            Val::Percent(100.0)
+                        } else if is_compact {
+                            Val::Px(150.0)
+                        } else {
+                            Val::Px(280.0)
+                        },
+                        height: Val::Px(10.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.16, 0.08, 0.10, 0.95)),
+                    BorderColor(if boss.turns_until_riposte <= 1 {
+                        COLOR_ACCENT_CRIMSON
+                    } else {
+                        COLOR_ACCENT_GOLD
+                    }),
+                    BorderRadius::all(Val::Px(5.0)),
+                ))
+                .with_children(|track| {
+                    track.spawn((
+                        Match3BossHpFill,
+                        Node {
+                            width: Val::Percent(hp_pct),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_ACCENT_CRIMSON),
+                        BorderRadius::all(Val::Px(4.0)),
+                    ));
+                    // Phase-2 enrage threshold marker at 50% HP.
+                    track.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Percent(50.0),
+                            top: Val::Px(0.0),
+                            width: Val::Px(2.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_ACCENT_GOLD),
+                    ));
+                });
+                if boss.turns_until_riposte <= 1 && !boss.is_defeated() {
+                    bcol.spawn((
+                        Text::new(i18n.t_fmt(
+                            "match3.boss.stagger_hint",
+                            &[
+                                (
+                                    "tiles",
+                                    ctx.data.balance.boss.stagger_weakness_tiles.to_string(),
+                                ),
+                                (
+                                    "rune",
+                                    i18n.t(boss.active_weakness().i18n_key()).to_string(),
+                                ),
+                                ("combo", ctx.data.balance.boss.stagger_min_combo.to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_TEAL_TEXT),
+                    ));
+                }
+            });
+        });
+    } else {
+        for (obj_idx, prog) in session.objectives.iter().enumerate() {
+            let icon_opt = match &prog.objective {
+                Objective::ClearIce { .. } => Some(textures.ice_top_layer1.clone()),
+                Objective::CollectRune { rune, .. } => textures.runes.get(rune).cloned(),
+                Objective::ReachScore { .. } => Some(vfx.icon_star.clone()),
+                Objective::DropRelics { .. } => Some(textures.relic_icon.clone()),
+            };
+            let label = objective_label_for_session(i18n, session, prog, is_compact);
+            let complete = prog.is_complete();
+            objs.spawn((
+                Node {
+                    width: if is_wide {
+                        Val::Percent(100.0)
+                    } else {
+                        Val::Auto
+                    },
+                    padding: UiRect::axes(Val::Px(9.0), Val::Px(6.0)),
+                    column_gap: Val::Px(8.0),
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.5)),
+                    ..default()
+                },
+                BackgroundColor(if complete {
+                    Color::srgba(0.12, 0.30, 0.20, 0.92)
+                } else {
+                    COLOR_PANEL_CARD
+                }),
+                BorderColor(if complete {
+                    COLOR_ACCENT_GREEN
+                } else {
+                    COLOR_PANEL_BORDER
+                }),
+                BorderRadius::all(Val::Px(8.0)),
+            ))
+            .with_children(|pill| {
+                if let Some(icon) = icon_opt {
+                    let badge_opt = if ctx.colorblind_mode {
+                        match &prog.objective {
+                            Objective::CollectRune { rune, .. } => {
+                                textures.colorblind_badges.get(rune).cloned()
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    pill.spawn(Node {
+                        width: Val::Px(22.0),
+                        height: Val::Px(22.0),
+                        flex_shrink: 0.0,
+                        ..default()
+                    })
+                    .with_children(|icon_box| {
+                        icon_box.spawn((
+                            ImageNode::new(icon),
+                            Node {
+                                width: Val::Px(22.0),
+                                height: Val::Px(22.0),
+                                ..default()
+                            },
+                        ));
+                        if let Some(badge) = badge_opt {
+                            icon_box.spawn((
+                                ImageNode::new(badge),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(0.0),
+                                    top: Val::Px(0.0),
+                                    width: Val::Px(22.0),
+                                    height: Val::Px(22.0),
+                                    ..default()
+                                },
+                            ));
+                        }
+                    });
+                }
+                pill.spawn((
+                    Match3ObjectiveText(obj_idx),
+                    Text::new(label),
+                    TextFont {
+                        font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
+                        ..default()
+                    },
+                    TextColor(if complete {
+                        COLOR_ACCENT_GREEN_TEXT
+                    } else {
+                        COLOR_TEXT_PRIMARY
+                    }),
+                ));
+            });
+        }
+    }
+}
+
+fn spawn_status_banner(parent: &mut ChildBuilder, i18n: &I18nCatalog, session: &LevelSession) {
+    if session.last_frost_spread.is_some() {
+        parent.spawn((
+            Text::new(i18n.t("match3.hud.frost_spread")),
+            TextFont {
+                font_size: FONT_SMALL,
+                ..default()
+            },
+            TextColor(Color::srgb(0.45, 0.86, 1.0)),
+        ));
+    } else if session.last_shuffled {
+        parent.spawn((
+            Text::new(i18n.t("match3.hud.shuffled")),
+            TextFont {
+                font_size: FONT_SMALL,
+                ..default()
+            },
+            TextColor(COLOR_ACCENT_GOLD),
+        ));
+    } else if session.last_combo >= 2 {
+        parent.spawn((
+            Match3ComboText,
+            Text::new(combo_label(i18n, session)),
+            TextFont {
+                font_size: FONT_BODY,
+                ..default()
+            },
+            TextColor(COLOR_ACCENT_GOLD),
+        ));
+    }
+}
+
+fn spawn_utility_buttons(
+    row: &mut ChildBuilder,
+    i18n: &I18nCatalog,
+    can_undo: bool,
+    undo_used: bool,
+    confirm_retreat: bool,
+) {
+    let mut undo_btn = row.spawn((
+        Button,
+        Match3UiAction::Undo,
+        Node {
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+            min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(if can_undo {
+            COLOR_ACCENT_TEAL
+        } else {
+            COLOR_BUTTON_DISABLED
+        }),
+        BorderRadius::all(Val::Px(6.0)),
+    ));
+    if !can_undo {
+        undo_btn.insert(NoButtonScale);
+    }
+    undo_btn.with_children(|btn| {
+        let undo_lbl = if undo_used {
+            i18n.t("match3.hud.undo_used")
+        } else {
+            i18n.t("match3.hud.undo_ready")
+        };
+        btn.spawn((
+            Text::new(undo_lbl),
+            TextFont {
+                font_size: FONT_SMALL,
+                ..default()
+            },
+            TextColor(if can_undo {
+                COLOR_TEXT_ON_ACCENT
+            } else {
+                COLOR_TEXT_MUTED
+            }),
+        ));
+    });
+
+    row.spawn((
+        Button,
+        Match3UiAction::ToggleHelp,
+        Node {
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+            min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(COLOR_PANEL_CARD),
+        BorderRadius::all(Val::Px(6.0)),
+    ))
+    .with_children(|btn| {
+        btn.spawn((
+            Text::new(i18n.t("match3.hud.pause")),
+            TextFont {
+                font_size: FONT_SMALL,
+                ..default()
+            },
+            TextColor(COLOR_ACCENT_GOLD),
+        ));
+    });
+
+    row.spawn((
+        Button,
+        Match3UiAction::Retreat,
+        Node {
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+            min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(if confirm_retreat { 1.5 } else { 0.0 })),
+            ..default()
+        },
+        BackgroundColor(if confirm_retreat {
+            Color::srgb(0.92, 0.20, 0.22)
+        } else {
+            COLOR_ACCENT_CRIMSON
+        }),
+        BorderColor(COLOR_ACCENT_GOLD),
+        BorderRadius::all(Val::Px(6.0)),
+    ))
+    .with_children(|btn| {
+        btn.spawn((
+            Text::new(if confirm_retreat {
+                i18n.t("match3.hud.retreat_confirm")
+            } else {
+                i18n.t("match3.hud.back")
+            }),
+            TextFont {
+                font_size: FONT_SMALL,
+                ..default()
+            },
+            TextColor(COLOR_TEXT_PRIMARY),
+        ));
+    });
+}
+
+fn spawn_fury_card(
+    parent: &mut ChildBuilder,
+    i18n: &I18nCatalog,
+    session: &LevelSession,
+    fjord_art: &FjordTextures,
+    textures: &RuneTextures,
+    hud_mode: HudLayoutMode,
+) {
+    let is_compact = hud_mode.is_compact();
+    let is_wide = hud_mode.is_desktop_wide();
+    let fury_ready = session.can_trigger_fury();
+    let fury_lbl = fury_label(i18n, session, is_compact);
+    let mut fury_btn = parent.spawn((
+        Button,
+        Match3UiAction::TriggerFury,
+        Node {
+            width: if is_wide {
+                Val::Percent(100.0)
+            } else {
+                Val::Auto
+            },
+            padding: if is_compact {
+                UiRect::axes(Val::Px(6.0), Val::Px(4.0))
+            } else {
+                UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+            },
+            column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
+            justify_content: if is_wide {
+                JustifyContent::SpaceBetween
+            } else {
+                JustifyContent::Center
+            },
+            align_items: AlignItems::Center,
+            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+            min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+            border: UiRect::all(Val::Px(2.0)),
+            ..default()
+        },
+        BackgroundColor(if fury_ready {
+            COLOR_ACCENT_GOLD
+        } else {
+            Color::srgba(0.16, 0.14, 0.24, 0.95)
+        }),
+        BorderColor(if fury_ready {
+            COLOR_ACCENT_GOLD_HOVER
+        } else {
+            COLOR_PANEL_BORDER
+        }),
+        BorderRadius::all(Val::Px(8.0)),
+    ));
+    if fury_ready {
+        fury_btn.insert((FuryReadyPulse, gold_glow_shadow()));
+    }
+    fury_btn.with_children(|btn| {
+        btn.spawn(Node {
+            column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
+            align_items: AlignItems::Center,
+            flex_shrink: 1.0,
+            ..default()
+        })
+        .with_children(|left| {
+            if let Some(p_img) = fjord_art.patron_portrait(session.patron) {
+                let icon_px = if is_compact { 26.0 } else { 32.0 };
+                left.spawn((
+                    ImageNode::new(p_img),
+                    Node {
+                        width: Val::Px(icon_px),
+                        height: Val::Px(icon_px),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                    BorderRadius::all(Val::Px(6.0)),
+                ));
+            }
+            if let Some(fav_img) = textures.runes.get(&session.patron.favored_rune()).cloned() {
+                let fav_px = if is_compact { 14.0 } else { 18.0 };
+                left.spawn((
+                    ImageNode::new(fav_img),
+                    Node {
+                        width: Val::Px(fav_px),
+                        height: Val::Px(fav_px),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                ));
+            }
+            left.spawn((
+                Match3FuryText,
+                Text::new(fury_lbl),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(if fury_ready {
+                    COLOR_TEXT_DARK
+                } else {
+                    COLOR_ACCENT_GOLD
+                }),
+            ));
+        });
+        if is_wide {
+            btn.spawn((
+                Text::new(i18n.t("match3.hud.keycap_fury")),
+                TextFont {
+                    font_size: FONT_SMALL - 2.0,
+                    ..default()
+                },
+                TextColor(if fury_ready {
+                    COLOR_TEXT_DARK
+                } else {
+                    COLOR_TEXT_MUTED
+                }),
+            ));
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_tools_section(
+    row: &mut ChildBuilder,
+    ctx: &GameContext,
+    session: &LevelSession,
+    fjord_art: &FjordTextures,
+    textures: &RuneTextures,
+    hud_mode: HudLayoutMode,
+    confirm_loki_shuffle: bool,
+) {
+    let i18n = &ctx.data.i18n;
+    let is_compact = hud_mode.is_compact();
+    let is_wide = hud_mode.is_desktop_wide();
+    if session.is_trial {
+        let trial_hint = ctx
+            .data
+            .trial_by_id(&session.level.id)
+            .map(|t| i18n.t(&t.hint_key).to_string())
+            .unwrap_or_default();
+        if !trial_hint.is_empty() {
+            row.spawn((
+                Text::new(trial_hint),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_PRIMARY),
+            ));
+        }
+        row.spawn((
+            Button,
+            Match3UiAction::RestartBoard,
+            Node {
+                width: if is_wide {
+                    Val::Percent(100.0)
+                } else {
+                    Val::Auto
+                },
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(COLOR_ACCENT_TEAL),
+            BorderRadius::all(Val::Px(8.0)),
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new(i18n.t("match3.hud.restart")),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_ON_ACCENT),
+            ));
+        });
+        return;
+    }
+
+    if !is_wide {
+        spawn_fury_card(row, i18n, session, fjord_art, textures, hud_mode);
+    }
+
+    let tools = [
+        (1, ActiveTool::Mjolnir, "match3.tool.mjolnir"),
+        (2, ActiveTool::SurtrEmber, "match3.tool.surtr_ember"),
+        (3, ActiveTool::ThorBolt, "match3.tool.thor_bolt"),
+        (4, ActiveTool::BifrostPrism, "match3.tool.bifrost_prism"),
+        (5, ActiveTool::DrakkarCharge, "match3.tool.drakkar_charge"),
+        (6, ActiveTool::LokiShuffle, "match3.tool.loki_shuffle"),
+    ];
+    for (hotkey, tool, key) in tools {
+        let count = ctx.city.tools.count(tool);
+        let armed = ctx.armed_tool == Some(tool)
+            || (tool == ActiveTool::LokiShuffle && confirm_loki_shuffle);
+        let bg = if armed {
+            COLOR_ACCENT_GOLD
+        } else if count > 0 {
+            COLOR_PANEL_CARD
+        } else {
+            COLOR_BUTTON_DISABLED
+        };
+        let text_col = if armed {
+            COLOR_TEXT_DARK
+        } else {
+            COLOR_TEXT_PRIMARY
+        };
+        let base_lbl = if tool == ActiveTool::LokiShuffle && confirm_loki_shuffle {
+            i18n.t("match3.tool.confirm_loki").to_string()
+        } else if is_compact {
+            i18n.t_fmt("match3.tool.count_short", &[("count", count.to_string())])
+        } else {
+            i18n.t_fmt(key, &[("count", count.to_string())])
+        };
+        let tool_lbl = if is_wide {
+            i18n.t_fmt(
+                "match3.tool.keycap_label",
+                &[("key", hotkey.to_string()), ("label", base_lbl)],
+            )
+        } else {
+            base_lbl
+        };
+        row.spawn((
+            Button,
+            Match3UiAction::SelectTool(tool),
+            Node {
+                width: if is_wide {
+                    Val::Percent(100.0)
+                } else {
+                    Val::Auto
+                },
+                padding: if is_compact {
+                    UiRect::axes(Val::Px(6.0), Val::Px(4.0))
+                } else {
+                    UiRect::axes(Val::Px(8.0), Val::Px(5.0))
+                },
+                column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
+                justify_content: if is_wide {
+                    JustifyContent::FlexStart
+                } else {
+                    JustifyContent::Center
+                },
+                align_items: AlignItems::Center,
+                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                border: UiRect::all(Val::Px(1.5)),
+                ..default()
+            },
+            BackgroundColor(bg),
+            BorderColor(if armed {
+                COLOR_ACCENT_GOLD_HOVER
+            } else {
+                COLOR_PANEL_BORDER
+            }),
+            BorderRadius::all(Val::Px(8.0)),
+        ))
+        .with_children(|btn| {
+            if let Some(icon) = fjord_art.tool_icon(tool) {
+                let icon_px = if is_compact {
+                    26.0
+                } else if is_wide {
+                    30.0
+                } else {
+                    34.0
+                };
+                btn.spawn((
+                    ImageNode {
+                        image: icon,
+                        color: if count > 0 {
+                            Color::WHITE
+                        } else {
+                            Color::srgba(0.55, 0.55, 0.60, 0.7)
+                        },
+                        ..default()
+                    },
+                    Node {
+                        width: Val::Px(icon_px),
+                        height: Val::Px(icon_px),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                    BorderRadius::all(Val::Px(6.0)),
+                ));
+            }
+            btn.spawn((
+                Text::new(tool_lbl),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(text_col),
+            ));
+        });
+    }
+}
+
+fn spawn_tooltip_section(
+    parent: &mut ChildBuilder,
+    ctx: &GameContext,
+    confirm_loki_shuffle: bool,
+    in_valhalla: bool,
+) {
+    let i18n = &ctx.data.i18n;
+    let active_hint_key = if in_valhalla {
+        Some("match3.valhalla.skip_hint")
+    } else if confirm_loki_shuffle {
+        Some("match3.tool.hint.loki_shuffle")
+    } else {
+        ctx.armed_tool.map(super::tool_hint_key)
+    };
+    let initial_tip = active_hint_key
+        .map(|k| i18n.t(k).to_string())
+        .unwrap_or_default();
+    let show_cancel_tool = !in_valhalla && (ctx.armed_tool.is_some() || confirm_loki_shuffle);
+    parent
+        .spawn(Node {
+            column_gap: Val::Px(10.0),
+            row_gap: Val::Px(4.0),
+            flex_wrap: FlexWrap::Wrap,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .with_children(|tip_row| {
+            tip_row.spawn((
+                Match3TooltipText,
+                Text::new(initial_tip),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+                Node {
+                    display: if active_hint_key.is_some() {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    },
+                    ..default()
+                },
+            ));
+            if show_cancel_tool {
+                tip_row
+                    .spawn((
+                        Button,
+                        Match3UiAction::CancelTool,
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                            min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_ACCENT_CRIMSON),
+                        BorderRadius::all(Val::Px(6.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(i18n.t("match3.tool.cancel")),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_PRIMARY),
+                        ));
+                    });
+            }
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_match3_hud(
     commands: &mut Commands,
     ctx: &GameContext,
@@ -353,7 +1379,8 @@ pub(super) fn spawn_match3_hud(
     vfx: &VfxTextures,
     sound_bank: &SoundBank,
     modal_scroll_y: f32,
-    is_compact: bool,
+    hud_mode: HudLayoutMode,
+    safe: SafeAreaInsets,
     can_undo: bool,
     undo_used: bool,
     confirm_retreat: bool,
@@ -365,6 +1392,8 @@ pub(super) fn spawn_match3_hud(
     let Some(session) = &ctx.active_session else {
         return;
     };
+    let is_compact = hud_mode.is_compact();
+    let is_wide = hud_mode.is_desktop_wide();
 
     commands
         .spawn((
@@ -373,943 +1402,302 @@ pub(super) fn spawn_match3_hud(
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
+                flex_direction: if is_wide {
+                    FlexDirection::Row
+                } else {
+                    FlexDirection::Column
+                },
                 justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::Center,
-                padding: UiRect::all(Val::Px(12.0)),
+                align_items: if is_wide {
+                    AlignItems::Stretch
+                } else {
+                    AlignItems::Center
+                },
+                padding: UiRect {
+                    left: Val::Px(12.0 + safe.left),
+                    right: Val::Px(12.0 + safe.right),
+                    top: Val::Px(12.0 + safe.top),
+                    bottom: Val::Px(12.0 + safe.bottom),
+                },
                 ..default()
             },
         ))
         .with_children(|root| {
-            // Top HUD bar (9-slice sculpted stone & bronze frame, blocks clicks to board)
-            root.spawn((
-                Match3HudBar,
-                Interaction::None,
-                FocusPolicy::Block,
-                sliced_panel_image(vfx),
-                Node {
-                    width: Val::Percent(100.0),
-                    max_width: Val::Px(1680.0),
-                    flex_wrap: FlexWrap::Wrap,
-                    justify_content: JustifyContent::SpaceBetween,
-                    align_items: AlignItems::Center,
-                    padding: if is_compact {
-                        UiRect::axes(Val::Px(8.0), Val::Px(6.0))
-                    } else {
-                        UiRect::axes(Val::Px(16.0), Val::Px(12.0))
+            if is_wide {
+                // Desktop Wide Left Rail: Moves, Timer, Score, Overdrive, Objectives / Boss Raid, Status Banner.
+                root.spawn((
+                    Match3HudBar,
+                    Interaction::None,
+                    FocusPolicy::Block,
+                    sliced_panel_image(vfx),
+                    Node {
+                        width: Val::Px(DESKTOP_SIDE_RAIL_WIDTH_PX),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Stretch,
+                        padding: UiRect::all(Val::Px(14.0)),
+                        row_gap: Val::Px(10.0),
+                        overflow: Overflow::clip(),
+                        ..default()
                     },
-                    column_gap: Val::Px(if is_compact { 8.0 } else { 14.0 }),
-                    row_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),
-                    ..default()
-                },
-                panel_shadow(),
-            ))
-            .with_children(|top| {
-                top.spawn(Node {
-                    column_gap: Val::Px(if is_compact { 10.0 } else { 18.0 }),
-                    row_gap: Val::Px(4.0),
-                    flex_wrap: FlexWrap::Wrap,
-                    align_items: AlignItems::Center,
-                    ..default()
-                })
-                .with_children(|stats| {
-                    let low_moves = !session.is_blitz && session.moves_left <= LOW_MOVES_THRESHOLD;
-                    let hot_blitz = session.is_blitz && session.blitz_multiplier >= 4;
-                    let mut moves_box = stats.spawn((
-                        Node {
-                            padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
-                            border: UiRect::all(Val::Px(if low_moves || hot_blitz {
-                                2.0
-                            } else {
-                                1.0
-                            })),
-                            ..default()
-                        },
-                        BackgroundColor(if low_moves {
-                            Color::srgba(0.36, 0.08, 0.10, 0.92)
-                        } else if hot_blitz {
-                            Color::srgba(0.42, 0.22, 0.04, 0.95)
-                        } else {
-                            Color::NONE
-                        }),
-                        BorderColor(if low_moves {
-                            COLOR_ACCENT_CRIMSON
-                        } else if hot_blitz {
-                            COLOR_ACCENT_GOLD
-                        } else {
-                            Color::NONE
-                        }),
-                        BorderRadius::all(Val::Px(8.0)),
-                    ));
-                    if low_moves {
-                        moves_box.insert(LowMovesPulse);
-                    }
-                    moves_box.with_children(|mbox| {
-                        mbox.spawn((
-                            Match3MovesText,
-                            Text::new(moves_label(i18n, session)),
-                            display_font(fjord_art, FONT_HEADING),
-                            TextColor(if low_moves {
-                                COLOR_ACCENT_CRIMSON_TEXT
-                            } else {
-                                COLOR_ACCENT_GOLD
-                            }),
-                        ));
-                        if session.is_trial {
-                            mbox.spawn((
-                                Text::new(i18n.t_fmt(
-                                    "match3.hud.trial_par",
-                                    &[("par", session.trial_par_moves.to_string())],
-                                )),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_TEAL_TEXT),
-                                Node {
-                                    margin: UiRect::left(Val::Px(6.0)),
-                                    ..default()
-                                },
-                            ));
-                        } else if !session.is_blitz
-                            && session.boss.is_none()
-                            && session.level.building_id
-                                != wyrdstone_core::expedition::EXPEDITION_BUILDING_ID
-                        {
-                            let stars_now = projected_stars(session, &ctx.data.balance.session);
-                            mbox.spawn(Node {
-                                column_gap: Val::Px(2.0),
-                                margin: UiRect::left(Val::Px(6.0)),
-                                align_items: AlignItems::Center,
+                    panel_shadow(),
+                ))
+                .with_children(|left| {
+                    left.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        align_items: AlignItems::Stretch,
+                        ..default()
+                    })
+                    .with_children(|top_sec| {
+                        top_sec
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(8.0),
+                                align_items: AlignItems::Stretch,
                                 ..default()
                             })
-                            .with_children(|srow| {
-                                for s_idx in 0..3u8 {
-                                    let active = s_idx < stars_now;
-                                    srow.spawn((
-                                        ImageNode::new(vfx.icon_star.clone()).with_color(
-                                            if active {
-                                                Color::WHITE
-                                            } else {
-                                                Color::srgba(0.28, 0.34, 0.44, 0.40)
-                                            },
-                                        ),
-                                        Node {
-                                            width: Val::Px(13.0),
-                                            height: Val::Px(13.0),
-                                            ..default()
-                                        },
-                                    ));
-                                }
+                            .with_children(|stats| {
+                                spawn_moves_score_overdrive(
+                                    stats, ctx, session, fjord_art, vfx, true,
+                                );
                             });
-                        }
-                    });
-                    if let Some(secs) = session.time_left_secs {
-                        let whole = secs.ceil() as u32;
-                        let frozen = session.is_blitz && session.blitz_freeze_secs > 0.0;
-                        let timer_text = if frozen {
-                            i18n.t_fmt("match3.hud.timer_frozen", &[("secs", whole.to_string())])
+                        spawn_hud_divider(top_sec);
+                        let sec_key = if session.boss.is_some() {
+                            "match3.hud.section.boss"
                         } else {
-                            i18n.t_fmt("match3.hud.timer", &[("secs", whole.to_string())])
+                            "match3.hud.section.objectives"
                         };
-                        stats.spawn((
-                            Match3TimerText,
-                            Text::new(timer_text),
-                            display_font(fjord_art, FONT_HEADING),
-                            TextColor(if frozen {
-                                Color::srgb(0.45, 0.88, 1.0)
-                            } else if whole <= 15 {
-                                COLOR_ACCENT_CRIMSON_TEXT
-                            } else {
-                                COLOR_ACCENT_TEAL_TEXT
-                            }),
-                        ));
-                    }
-                    stats.spawn((
-                        Match3ScoreText,
-                        Text::new(score_label(i18n, session)),
-                        TextFont {
-                            font_size: FONT_BODY,
-                            ..default()
-                        },
-                        TextColor(COLOR_TEXT_PRIMARY),
-                    ));
-                    if session.session_tuning.overdrive_turns > 0 {
-                        let od_active = session.overdrive_turns_left > 0;
-                        stats
-                            .spawn((
-                                Node {
-                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(2.0)),
-                                    border: UiRect::all(Val::Px(1.5)),
-                                    ..default()
-                                },
-                                BackgroundColor(if od_active {
-                                    Color::srgba(0.42, 0.22, 0.04, 0.95)
-                                } else {
-                                    COLOR_PANEL_CARD
-                                }),
-                                BorderColor(if od_active {
-                                    COLOR_ACCENT_GOLD
-                                } else {
-                                    COLOR_PANEL_BORDER
-                                }),
-                                BorderRadius::all(Val::Px(6.0)),
-                            ))
-                            .with_children(|od| {
-                                od.spawn((
-                                    Match3OverdriveText,
-                                    Text::new(overdrive_label(i18n, session)),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
-                                    },
-                                    TextColor(if od_active {
-                                        COLOR_ACCENT_GOLD
-                                    } else {
-                                        COLOR_ACCENT_TEAL_TEXT
-                                    }),
-                                ));
+                        spawn_section_header(top_sec, fjord_art, i18n.t(sec_key));
+                        top_sec
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(6.0),
+                                align_items: AlignItems::Stretch,
+                                ..default()
+                            })
+                            .with_children(|objs| {
+                                spawn_objectives_or_boss(
+                                    objs, ctx, session, fjord_art, textures, vfx, hud_mode,
+                                );
                             });
-                    }
+                    });
+
+                    left.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|status_col| {
+                        spawn_status_banner(status_col, i18n, session);
+                    });
                 });
 
-                top.spawn(Node {
-                    column_gap: Val::Px(14.0),
-                    flex_wrap: FlexWrap::Wrap,
-                    align_items: AlignItems::Center,
-                    ..default()
-                })
-                .with_children(|objs| {
-                    if let Some(boss) = &session.boss {
-                        let hp_pct = (boss.hp as f32 / boss.def.max_hp.max(1) as f32 * 100.0)
-                            .clamp(0.0, 100.0);
-                        objs.spawn(Node {
-                            flex_wrap: FlexWrap::Wrap,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(8.0),
-                            row_gap: Val::Px(4.0),
+                // Desktop Wide Right Rail: Utility controls, Patron Divine Fury, Runic Arsenal, Tooltips & Shortcuts.
+                root.spawn((
+                    Match3HudBar,
+                    Interaction::None,
+                    FocusPolicy::Block,
+                    sliced_panel_image(vfx),
+                    Node {
+                        width: Val::Px(DESKTOP_SIDE_RAIL_WIDTH_PX),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Stretch,
+                        padding: UiRect::all(Val::Px(14.0)),
+                        row_gap: Val::Px(8.0),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    panel_shadow(),
+                ))
+                .with_children(|right| {
+                    right
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(8.0),
+                            align_items: AlignItems::Stretch,
                             ..default()
                         })
-                        .with_children(|brow| {
-                            if let Some(img) = fjord_art.boss_portrait(&boss.def.id) {
-                                let hit_flash = boss.last_damage_dealt > 0;
-                                brow.spawn((
-                                    ImageNode {
-                                        image: img,
-                                        color: if hit_flash {
-                                            Color::srgb(1.35, 0.72, 0.72)
-                                        } else {
-                                            Color::WHITE
-                                        },
-                                        ..default()
-                                    },
-                                    Node {
-                                        width: Val::Px(46.0),
-                                        height: Val::Px(46.0),
-                                        border: UiRect::all(Val::Px(2.0)),
-                                        ..default()
-                                    },
-                                    BorderColor(if hit_flash || boss.is_phase2() {
-                                        COLOR_ACCENT_GOLD
-                                    } else {
-                                        COLOR_ACCENT_CRIMSON
-                                    }),
-                                    BorderRadius::all(Val::Px(8.0)),
-                                ));
-                            }
-                            if let Some(weak_icon) =
-                                textures.runes.get(&boss.active_weakness()).cloned()
-                            {
-                                brow.spawn((
-                                    Node {
-                                        padding: UiRect::all(Val::Px(3.0)),
-                                        border: UiRect::all(Val::Px(1.5)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(COLOR_PANEL_CARD),
-                                    BorderColor(COLOR_ACCENT_TEAL),
-                                    BorderRadius::all(Val::Px(RADIUS_MD)),
-                                ))
-                                .with_children(|wbox| {
-                                    wbox.spawn((
-                                        ImageNode::new(weak_icon),
-                                        Node {
-                                            width: Val::Px(26.0),
-                                            height: Val::Px(26.0),
-                                            ..default()
-                                        },
-                                    ));
-                                });
-                            }
-                            brow.spawn(Node {
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(4.0),
-                                align_items: AlignItems::Center,
-                                ..default()
-                            })
-                            .with_children(|bcol| {
-                                if let Some(run) = &ctx.active_gauntlet {
-                                    bcol.spawn((
-                                        Text::new(i18n.t_fmt(
-                                            "match3.hud.gauntlet_stage",
-                                            &[
-                                                ("cur", (run.stage_index + 1).to_string()),
-                                                ("total", run.total_stages.to_string()),
-                                            ],
-                                        )),
-                                        TextFont {
-                                            font_size: FONT_SMALL,
-                                            ..default()
-                                        },
-                                        TextColor(COLOR_ACCENT_GOLD),
-                                    ));
-                                }
-                                bcol.spawn((
-                                    Match3BossHpText,
-                                    Text::new(boss_hp_label(
-                                        i18n,
-                                        boss,
-                                        ctx.data.balance.boss.weakness_multiplier,
-                                    )),
-                                    TextFont {
-                                        font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
-                                        ..default()
-                                    },
-                                    TextColor(if boss.turns_until_riposte <= 1 {
-                                        COLOR_ACCENT_CRIMSON_TEXT
-                                    } else if boss.is_phase2() {
-                                        COLOR_ACCENT_GOLD
-                                    } else {
-                                        COLOR_ACCENT_CRIMSON_TEXT
-                                    }),
-                                ));
-                                bcol.spawn((
-                                    Node {
-                                        width: Val::Px(if is_compact { 150.0 } else { 280.0 }),
-                                        height: Val::Px(10.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::srgba(0.16, 0.08, 0.10, 0.95)),
-                                    BorderColor(if boss.turns_until_riposte <= 1 {
-                                        COLOR_ACCENT_CRIMSON
-                                    } else {
-                                        COLOR_ACCENT_GOLD
-                                    }),
-                                    BorderRadius::all(Val::Px(5.0)),
-                                ))
-                                .with_children(|track| {
-                                    track.spawn((
-                                        Match3BossHpFill,
-                                        Node {
-                                            width: Val::Percent(hp_pct),
-                                            height: Val::Percent(100.0),
-                                            ..default()
-                                        },
-                                        BackgroundColor(COLOR_ACCENT_CRIMSON),
-                                        BorderRadius::all(Val::Px(4.0)),
-                                    ));
-                                    // Phase-2 enrage threshold marker at 50% HP.
-                                    track.spawn((
-                                        Node {
-                                            position_type: PositionType::Absolute,
-                                            left: Val::Percent(50.0),
-                                            top: Val::Px(0.0),
-                                            width: Val::Px(2.0),
-                                            height: Val::Percent(100.0),
-                                            ..default()
-                                        },
-                                        BackgroundColor(COLOR_ACCENT_GOLD),
-                                    ));
-                                });
-                                if boss.turns_until_riposte <= 1 && !boss.is_defeated() {
-                                    bcol.spawn((
-                                        Text::new(
-                                            i18n.t_fmt(
-                                                "match3.boss.stagger_hint",
-                                                &[
-                                                    (
-                                                        "tiles",
-                                                        ctx.data
-                                                            .balance
-                                                            .boss
-                                                            .stagger_weakness_tiles
-                                                            .to_string(),
-                                                    ),
-                                                    (
-                                                        "rune",
-                                                        i18n.t(boss.active_weakness().i18n_key())
-                                                            .to_string(),
-                                                    ),
-                                                    (
-                                                        "combo",
-                                                        ctx.data
-                                                            .balance
-                                                            .boss
-                                                            .stagger_min_combo
-                                                            .to_string(),
-                                                    ),
-                                                ],
-                                            ),
-                                        ),
-                                        TextFont {
-                                            font_size: FONT_SMALL,
-                                            ..default()
-                                        },
-                                        TextColor(COLOR_ACCENT_TEAL_TEXT),
-                                    ));
-                                }
-                            });
-                        });
-                    } else {
-                        for (obj_idx, prog) in session.objectives.iter().enumerate() {
-                            let icon_opt = match &prog.objective {
-                                Objective::ClearIce { .. } => Some(textures.ice_top_layer1.clone()),
-                                Objective::CollectRune { rune, .. } => {
-                                    textures.runes.get(rune).cloned()
-                                }
-                                Objective::ReachScore { .. } => Some(vfx.icon_star.clone()),
-                                Objective::DropRelics { .. } => Some(textures.relic_icon.clone()),
-                            };
-                            let label =
-                                objective_label_for_session(i18n, session, prog, is_compact);
-                            let complete = prog.is_complete();
-                            objs.spawn((
-                                Node {
-                                    padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                        .with_children(|top_sec| {
+                            top_sec
+                                .spawn(Node {
                                     column_gap: Val::Px(6.0),
+                                    row_gap: Val::Px(6.0),
+                                    flex_wrap: FlexWrap::Wrap,
+                                    justify_content: JustifyContent::SpaceBetween,
                                     align_items: AlignItems::Center,
-                                    border: UiRect::all(Val::Px(1.5)),
+                                    ..default()
+                                })
+                                .with_children(|u_row| {
+                                    spawn_utility_buttons(
+                                        u_row,
+                                        i18n,
+                                        can_undo,
+                                        undo_used,
+                                        confirm_retreat,
+                                    );
+                                });
+                            if !session.is_trial {
+                                spawn_hud_divider(top_sec);
+                                spawn_fury_card(
+                                    top_sec, i18n, session, fjord_art, textures, hud_mode,
+                                );
+                            }
+                            spawn_hud_divider(top_sec);
+                            spawn_section_header(
+                                top_sec,
+                                fjord_art,
+                                i18n.t("match3.hud.section.arsenal"),
+                            );
+                            top_sec
+                                .spawn(Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(6.0),
+                                    align_items: AlignItems::Stretch,
+                                    ..default()
+                                })
+                                .with_children(|tools_col| {
+                                    spawn_tools_section(
+                                        tools_col,
+                                        ctx,
+                                        session,
+                                        fjord_art,
+                                        textures,
+                                        hud_mode,
+                                        confirm_loki_shuffle,
+                                    );
+                                });
+                        });
+
+                    right
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(6.0),
+                            align_items: AlignItems::Center,
+                            ..default()
+                        })
+                        .with_children(|foot| {
+                            spawn_tooltip_section(foot, ctx, confirm_loki_shuffle, in_valhalla);
+                            foot.spawn((
+                                Text::new(i18n.t("match3.hud.shortcuts_hint")),
+                                TextFont {
+                                    font_size: FONT_SMALL - 2.0,
                                     ..default()
                                 },
-                                BackgroundColor(if complete {
-                                    Color::srgba(0.12, 0.30, 0.20, 0.92)
-                                } else {
-                                    COLOR_PANEL_CARD
-                                }),
-                                BorderColor(if complete {
-                                    COLOR_ACCENT_GREEN
-                                } else {
-                                    COLOR_PANEL_BORDER
-                                }),
-                                BorderRadius::all(Val::Px(8.0)),
-                            ))
-                            .with_children(|pill| {
-                                if let Some(icon) = icon_opt {
-                                    let badge_opt = if ctx.colorblind_mode {
-                                        match &prog.objective {
-                                            Objective::CollectRune { rune, .. } => {
-                                                textures.colorblind_badges.get(rune).cloned()
-                                            }
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    };
-                                    pill.spawn(Node {
-                                        width: Val::Px(22.0),
-                                        height: Val::Px(22.0),
-                                        ..default()
-                                    })
-                                    .with_children(
-                                        |icon_box| {
-                                            icon_box.spawn((
-                                                ImageNode::new(icon),
-                                                Node {
-                                                    width: Val::Px(22.0),
-                                                    height: Val::Px(22.0),
-                                                    ..default()
-                                                },
-                                            ));
-                                            if let Some(badge) = badge_opt {
-                                                icon_box.spawn((
-                                                    ImageNode::new(badge),
-                                                    Node {
-                                                        position_type: PositionType::Absolute,
-                                                        left: Val::Px(0.0),
-                                                        top: Val::Px(0.0),
-                                                        width: Val::Px(22.0),
-                                                        height: Val::Px(22.0),
-                                                        ..default()
-                                                    },
-                                                ));
-                                            }
-                                        },
-                                    );
-                                }
-                                pill.spawn((
-                                    Match3ObjectiveText(obj_idx),
-                                    Text::new(label),
-                                    TextFont {
-                                        font_size: if is_compact { FONT_SMALL } else { FONT_BODY },
-                                        ..default()
-                                    },
-                                    TextColor(if complete {
-                                        COLOR_ACCENT_GREEN_TEXT
-                                    } else {
-                                        COLOR_TEXT_PRIMARY
-                                    }),
-                                ));
-                            });
-                        }
-                    }
+                                TextColor(COLOR_TEXT_MUTED),
+                            ));
+                        });
+                });
+            } else {
+                // Top HUD bar (Compact & Portrait layouts)
+                root.spawn((
+                    Match3HudBar,
+                    Interaction::None,
+                    FocusPolicy::Block,
+                    sliced_panel_image(vfx),
+                    Node {
+                        width: Val::Percent(100.0),
+                        max_width: Val::Px(1680.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        padding: if is_compact {
+                            UiRect::axes(Val::Px(8.0), Val::Px(6.0))
+                        } else {
+                            UiRect::axes(Val::Px(16.0), Val::Px(12.0))
+                        },
+                        column_gap: Val::Px(if is_compact { 8.0 } else { 14.0 }),
+                        row_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),
+                        ..default()
+                    },
+                    panel_shadow(),
+                ))
+                .with_children(|top| {
+                    top.spawn(Node {
+                        column_gap: Val::Px(if is_compact { 10.0 } else { 18.0 }),
+                        row_gap: Val::Px(4.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|stats| {
+                        spawn_moves_score_overdrive(stats, ctx, session, fjord_art, vfx, false);
+                    });
+
+                    top.spawn(Node {
+                        column_gap: Val::Px(14.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|objs| {
+                        spawn_objectives_or_boss(
+                            objs, ctx, session, fjord_art, textures, vfx, hud_mode,
+                        );
+                    });
+
+                    top.spawn(Node {
+                        column_gap: Val::Px(8.0),
+                        row_gap: Val::Px(4.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|right| {
+                        spawn_status_banner(right, i18n, session);
+                        spawn_utility_buttons(right, i18n, can_undo, undo_used, confirm_retreat);
+                    });
                 });
 
-                top.spawn(Node {
-                    column_gap: Val::Px(8.0),
-                    row_gap: Val::Px(4.0),
-                    flex_wrap: FlexWrap::Wrap,
-                    align_items: AlignItems::Center,
-                    ..default()
-                })
-                .with_children(|right| {
-                    if session.last_frost_spread.is_some() {
-                        right.spawn((
-                            Text::new(i18n.t("match3.hud.frost_spread")),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.45, 0.86, 1.0)),
-                        ));
-                    } else if session.last_shuffled {
-                        right.spawn((
-                            Text::new(i18n.t("match3.hud.shuffled")),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_ACCENT_GOLD),
-                        ));
-                    } else if session.last_combo >= 2 {
-                        right.spawn((
-                            Match3ComboText,
-                            Text::new(combo_label(i18n, session)),
-                            TextFont {
-                                font_size: FONT_BODY,
-                                ..default()
-                            },
-                            TextColor(COLOR_ACCENT_GOLD),
-                        ));
-                    }
-
-                    let mut undo_btn = right.spawn((
-                        Button,
-                        Match3UiAction::Undo,
-                        Node {
-                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                            min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                // Bottom active tools bar (Compact & Portrait layouts)
+                root.spawn((
+                    Match3HudBar,
+                    Interaction::None,
+                    FocusPolicy::Block,
+                    sliced_panel_image(vfx),
+                    Node {
+                        width: Val::Percent(100.0),
+                        max_width: Val::Px(1680.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),
+                        padding: if is_compact {
+                            UiRect::axes(Val::Px(8.0), Val::Px(6.0))
+                        } else {
+                            UiRect::axes(Val::Px(16.0), Val::Px(10.0))
+                        },
+                        ..default()
+                    },
+                    panel_shadow(),
+                ))
+                .with_children(|bottom| {
+                    spawn_tooltip_section(bottom, ctx, confirm_loki_shuffle, in_valhalla);
+                    bottom
+                        .spawn(Node {
+                            column_gap: Val::Px(8.0),
+                            row_gap: Val::Px(6.0),
+                            flex_wrap: FlexWrap::Wrap,
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             ..default()
-                        },
-                        BackgroundColor(if can_undo {
-                            COLOR_ACCENT_TEAL
-                        } else {
-                            COLOR_BUTTON_DISABLED
-                        }),
-                        BorderRadius::all(Val::Px(6.0)),
-                    ));
-                    if !can_undo {
-                        undo_btn.insert(NoButtonScale);
-                    }
-                    undo_btn.with_children(|btn| {
-                        let undo_lbl = if undo_used {
-                            i18n.t("match3.hud.undo_used")
-                        } else {
-                            i18n.t("match3.hud.undo_ready")
-                        };
-                        btn.spawn((
-                            Text::new(undo_lbl),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(if can_undo {
-                                COLOR_TEXT_ON_ACCENT
-                            } else {
-                                COLOR_TEXT_MUTED
-                            }),
-                        ));
-                    });
-
-                    right
-                        .spawn((
-                            Button,
-                            Match3UiAction::ToggleHelp,
-                            Node {
-                                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(COLOR_PANEL_CARD),
-                            BorderRadius::all(Val::Px(6.0)),
-                        ))
-                        .with_children(|btn| {
-                            btn.spawn((
-                                Text::new(i18n.t("match3.hud.pause")),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_GOLD),
-                            ));
-                        });
-
-                    right
-                        .spawn((
-                            Button,
-                            Match3UiAction::Retreat,
-                            Node {
-                                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(if confirm_retreat {
-                                    1.5
-                                } else {
-                                    0.0
-                                })),
-                                ..default()
-                            },
-                            BackgroundColor(if confirm_retreat {
-                                Color::srgb(0.92, 0.20, 0.22)
-                            } else {
-                                COLOR_ACCENT_CRIMSON
-                            }),
-                            BorderColor(COLOR_ACCENT_GOLD),
-                            BorderRadius::all(Val::Px(6.0)),
-                        ))
-                        .with_children(|btn| {
-                            btn.spawn((
-                                Text::new(if confirm_retreat {
-                                    i18n.t("match3.hud.retreat_confirm")
-                                } else {
-                                    i18n.t("match3.hud.back")
-                                }),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_TEXT_PRIMARY),
-                            ));
+                        })
+                        .with_children(|row| {
+                            spawn_tools_section(
+                                row,
+                                ctx,
+                                session,
+                                fjord_art,
+                                textures,
+                                hud_mode,
+                                confirm_loki_shuffle,
+                            );
                         });
                 });
-            });
-
-            // Bottom active tools bar (9-slice sculpted stone & bronze frame, blocks clicks to board)
-            root.spawn((
-                Match3HudBar,
-                Interaction::None,
-                FocusPolicy::Block,
-                sliced_panel_image(vfx),
-                Node {
-                    width: Val::Percent(100.0),
-                    max_width: Val::Px(1680.0),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),
-                    padding: if is_compact {
-                        UiRect::axes(Val::Px(8.0), Val::Px(6.0))
-                    } else {
-                        UiRect::axes(Val::Px(16.0), Val::Px(10.0))
-                    },
-                    ..default()
-                },
-                panel_shadow(),
-            ))
-            .with_children(|bottom| {
-                let active_hint_key = if in_valhalla {
-                    Some("match3.valhalla.skip_hint")
-                } else if confirm_loki_shuffle {
-                    Some("match3.tool.hint.loki_shuffle")
-                } else {
-                    ctx.armed_tool.map(super::tool_hint_key)
-                };
-                let initial_tip = active_hint_key
-                    .map(|k| i18n.t(k).to_string())
-                    .unwrap_or_default();
-                let show_cancel_tool =
-                    !in_valhalla && (ctx.armed_tool.is_some() || confirm_loki_shuffle);
-                bottom
-                    .spawn(Node {
-                        column_gap: Val::Px(10.0),
-                        row_gap: Val::Px(4.0),
-                        flex_wrap: FlexWrap::Wrap,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    })
-                    .with_children(|tip_row| {
-                        tip_row.spawn((
-                            Match3TooltipText,
-                            Text::new(initial_tip),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_ACCENT_GOLD),
-                            Node {
-                                display: if active_hint_key.is_some() {
-                                    Display::Flex
-                                } else {
-                                    Display::None
-                                },
-                                ..default()
-                            },
-                        ));
-                        if show_cancel_tool {
-                            tip_row
-                                .spawn((
-                                    Button,
-                                    Match3UiAction::CancelTool,
-                                    Node {
-                                        padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
-                                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                        min_width: Val::Px(MIN_TOUCH_TARGET_PX),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        ..default()
-                                    },
-                                    BackgroundColor(COLOR_ACCENT_CRIMSON),
-                                    BorderRadius::all(Val::Px(6.0)),
-                                ))
-                                .with_children(|btn| {
-                                    btn.spawn((
-                                        Text::new(i18n.t("match3.tool.cancel")),
-                                        TextFont {
-                                            font_size: FONT_SMALL,
-                                            ..default()
-                                        },
-                                        TextColor(COLOR_TEXT_PRIMARY),
-                                    ));
-                                });
-                        }
-                    });
-
-                bottom
-                    .spawn(Node {
-                        column_gap: Val::Px(8.0),
-                        row_gap: Val::Px(6.0),
-                        flex_wrap: FlexWrap::Wrap,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    })
-                    .with_children(|row| {
-                        if session.is_trial {
-                            let trial_hint = ctx
-                                .data
-                                .trial_by_id(&session.level.id)
-                                .map(|t| i18n.t(&t.hint_key).to_string())
-                                .unwrap_or_default();
-                            if !trial_hint.is_empty() {
-                                row.spawn((
-                                    Text::new(trial_hint),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
-                                    },
-                                    TextColor(COLOR_TEXT_PRIMARY),
-                                ));
-                            }
-                            row.spawn((
-                                Button,
-                                Match3UiAction::RestartBoard,
-                                Node {
-                                    padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
-                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                BackgroundColor(COLOR_ACCENT_TEAL),
-                                BorderRadius::all(Val::Px(8.0)),
-                            ))
-                            .with_children(|btn| {
-                                btn.spawn((
-                                    Text::new(i18n.t("match3.hud.restart")),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
-                                    },
-                                    TextColor(COLOR_TEXT_ON_ACCENT),
-                                ));
-                            });
-                            return;
-                        }
-                        // Divine Fury Patron button
-                        let fury_ready = session.can_trigger_fury();
-                        let fury_lbl = fury_label(i18n, session, is_compact);
-                        let mut fury_btn = row.spawn((
-                            Button,
-                            Match3UiAction::TriggerFury,
-                            Node {
-                                padding: if is_compact {
-                                    UiRect::axes(Val::Px(6.0), Val::Px(4.0))
-                                } else {
-                                    UiRect::axes(Val::Px(10.0), Val::Px(6.0))
-                                },
-                                column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
-                                align_items: AlignItems::Center,
-                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
-                                border: UiRect::all(Val::Px(2.0)),
-                                ..default()
-                            },
-                            BackgroundColor(if fury_ready {
-                                COLOR_ACCENT_GOLD
-                            } else {
-                                Color::srgba(0.16, 0.14, 0.24, 0.95)
-                            }),
-                            BorderColor(if fury_ready {
-                                COLOR_ACCENT_GOLD_HOVER
-                            } else {
-                                COLOR_PANEL_BORDER
-                            }),
-                            BorderRadius::all(Val::Px(8.0)),
-                        ));
-                        if fury_ready {
-                            fury_btn.insert((FuryReadyPulse, gold_glow_shadow()));
-                        }
-                        fury_btn.with_children(|btn| {
-                            if let Some(p_img) = fjord_art.patron_portrait(session.patron) {
-                                let icon_px = if is_compact { 26.0 } else { 32.0 };
-                                btn.spawn((
-                                    ImageNode::new(p_img),
-                                    Node {
-                                        width: Val::Px(icon_px),
-                                        height: Val::Px(icon_px),
-                                        ..default()
-                                    },
-                                    BorderRadius::all(Val::Px(6.0)),
-                                ));
-                            }
-                            if let Some(fav_img) =
-                                textures.runes.get(&session.patron.favored_rune()).cloned()
-                            {
-                                let fav_px = if is_compact { 14.0 } else { 18.0 };
-                                btn.spawn((
-                                    ImageNode::new(fav_img),
-                                    Node {
-                                        width: Val::Px(fav_px),
-                                        height: Val::Px(fav_px),
-                                        ..default()
-                                    },
-                                ));
-                            }
-                            btn.spawn((
-                                Match3FuryText,
-                                Text::new(fury_lbl),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(if fury_ready {
-                                    COLOR_TEXT_DARK
-                                } else {
-                                    COLOR_ACCENT_GOLD
-                                }),
-                            ));
-                        });
-
-                        let tools = [
-                            (ActiveTool::Mjolnir, "match3.tool.mjolnir"),
-                            (ActiveTool::SurtrEmber, "match3.tool.surtr_ember"),
-                            (ActiveTool::ThorBolt, "match3.tool.thor_bolt"),
-                            (ActiveTool::BifrostPrism, "match3.tool.bifrost_prism"),
-                            (ActiveTool::DrakkarCharge, "match3.tool.drakkar_charge"),
-                            (ActiveTool::LokiShuffle, "match3.tool.loki_shuffle"),
-                        ];
-                        for (tool, key) in tools {
-                            let count = ctx.city.tools.count(tool);
-                            let armed = ctx.armed_tool == Some(tool)
-                                || (tool == ActiveTool::LokiShuffle && confirm_loki_shuffle);
-                            let bg = if armed {
-                                COLOR_ACCENT_GOLD
-                            } else if count > 0 {
-                                COLOR_PANEL_CARD
-                            } else {
-                                COLOR_BUTTON_DISABLED
-                            };
-                            let text_col = if armed {
-                                COLOR_TEXT_DARK
-                            } else {
-                                COLOR_TEXT_PRIMARY
-                            };
-                            let tool_lbl =
-                                if tool == ActiveTool::LokiShuffle && confirm_loki_shuffle {
-                                    i18n.t("match3.tool.confirm_loki").to_string()
-                                } else if is_compact {
-                                    i18n.t_fmt(
-                                        "match3.tool.count_short",
-                                        &[("count", count.to_string())],
-                                    )
-                                } else {
-                                    i18n.t_fmt(key, &[("count", count.to_string())])
-                                };
-                            row.spawn((
-                                Button,
-                                Match3UiAction::SelectTool(tool),
-                                Node {
-                                    padding: if is_compact {
-                                        UiRect::axes(Val::Px(6.0), Val::Px(4.0))
-                                    } else {
-                                        UiRect::axes(Val::Px(8.0), Val::Px(5.0))
-                                    },
-                                    column_gap: Val::Px(if is_compact { 4.0 } else { 6.0 }),
-                                    align_items: AlignItems::Center,
-                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                    min_width: Val::Px(MIN_TOUCH_TARGET_PX),
-                                    border: UiRect::all(Val::Px(1.5)),
-                                    ..default()
-                                },
-                                BackgroundColor(bg),
-                                BorderColor(if armed {
-                                    COLOR_ACCENT_GOLD_HOVER
-                                } else {
-                                    COLOR_PANEL_BORDER
-                                }),
-                                BorderRadius::all(Val::Px(8.0)),
-                            ))
-                            .with_children(|btn| {
-                                if let Some(icon) = fjord_art.tool_icon(tool) {
-                                    let icon_px = if is_compact { 26.0 } else { 34.0 };
-                                    btn.spawn((
-                                        ImageNode {
-                                            image: icon,
-                                            color: if count > 0 {
-                                                Color::WHITE
-                                            } else {
-                                                Color::srgba(0.55, 0.55, 0.60, 0.7)
-                                            },
-                                            ..default()
-                                        },
-                                        Node {
-                                            width: Val::Px(icon_px),
-                                            height: Val::Px(icon_px),
-                                            ..default()
-                                        },
-                                        BorderRadius::all(Val::Px(6.0)),
-                                    ));
-                                }
-                                btn.spawn((
-                                    Text::new(tool_lbl),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
-                                    },
-                                    TextColor(text_col),
-                                ));
-                            });
-                        }
-                    });
-            });
+            }
 
             // Optional Wyrdstone Guide overlay inside Match-3 (pauses countdown timer)
             if ctx.active_modal == ActiveModal::Help {

@@ -25,6 +25,7 @@ use crate::audio::{
     cycle_bgm_volume, cycle_sfx_volume, play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank,
 };
 use crate::fjord_art::FjordTextures;
+use crate::platform::{HapticEvent, HapticKind, HudLayoutMode, SafeAreaInsets};
 use crate::runes_art::RuneTextures;
 use crate::scroll::UiScrollMemory;
 use crate::state::{ActiveModal, AppState, GameContext};
@@ -316,7 +317,7 @@ pub struct Match3InputState {
     pub cell_step: f32,
     pub board_origin: Vec2,
     pub board_center_y: f32,
-    pub is_compact_hud: bool,
+    pub hud_mode: HudLayoutMode,
     pub dirty_static_board: bool,
     pub dirty_board: bool,
     pub dirty_hud: bool,
@@ -371,6 +372,10 @@ impl Match3InputState {
         matches!(self.phase, BoardAnimPhase::Idle)
     }
 
+    pub fn is_compact_hud(&self) -> bool {
+        self.hud_mode.is_compact()
+    }
+
     pub fn can_undo(&self, ctx: &GameContext) -> bool {
         self.is_idle()
             && !self.undo_used
@@ -389,6 +394,7 @@ pub fn setup_match3_scene(
     fjord_art: Res<FjordTextures>,
     sound_bank: Res<SoundBank>,
     scroll_mem: Res<UiScrollMemory>,
+    safe_area: Res<SafeAreaInsets>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let mut input_state = Match3InputState {
@@ -478,6 +484,7 @@ pub fn setup_match3_scene(
                 window.height(),
                 session.board.cols(),
                 session.board.rows(),
+                *safe_area,
                 &mut input_state,
             );
             spawn_board_static_sprites(&mut commands, session, &textures, &vfx, &input_state);
@@ -501,7 +508,8 @@ pub fn setup_match3_scene(
         &vfx,
         &sound_bank,
         scroll_mem.modal_offset_y,
-        input_state.is_compact_hud,
+        input_state.hud_mode,
+        *safe_area,
         input_state.can_undo(&ctx),
         input_state.undo_used,
         input_state.confirm_retreat,
@@ -533,29 +541,39 @@ pub(super) fn compute_board_layout(
     win_h: f32,
     cols: usize,
     rows: usize,
+    safe: SafeAreaInsets,
     layout: &mut Match3InputState,
 ) {
-    let compact = win_w < 760.0;
-    let narrow = win_w < 500.0;
-    layout.is_compact_hud = compact;
-    let side_margin = if compact { 12.0 } else { BOARD_SIDE_MARGIN_PX };
-    let top_reserved = if narrow {
-        178.0
-    } else if compact {
-        152.0
-    } else {
-        BOARD_TOP_RESERVED_PX
-    };
-    let bottom_reserved = if narrow {
-        174.0
-    } else if compact {
-        148.0
-    } else {
-        BOARD_BOTTOM_RESERVED_PX
-    };
+    let hud_mode = HudLayoutMode::from_viewport(win_w, win_h);
+    layout.hud_mode = hud_mode;
     const BOARD_FRAME_PAD_PX: f32 = 28.0;
-    let avail_w = (win_w - side_margin * 2.0 - BOARD_FRAME_PAD_PX).max(180.0);
-    let avail_h = (win_h - top_reserved - bottom_reserved - BOARD_FRAME_PAD_PX).max(180.0);
+    let (avail_w, avail_h, top_reserved, bottom_reserved) = match hud_mode {
+        HudLayoutMode::DesktopWide => {
+            let rail_total = (DESKTOP_SIDE_RAIL_WIDTH_PX + 24.0) * 2.0 + safe.left + safe.right;
+            let top_res = DESKTOP_BOARD_VERTICAL_MARGIN_PX + safe.top;
+            let bot_res = DESKTOP_BOARD_VERTICAL_MARGIN_PX + safe.bottom;
+            let aw = (win_w - rail_total - BOARD_FRAME_PAD_PX).max(180.0);
+            let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
+            (aw, ah, top_res, bot_res)
+        }
+        HudLayoutMode::Compact => {
+            let top_res = BOARD_TOP_RESERVED_PX + safe.top;
+            let bot_res = BOARD_BOTTOM_RESERVED_PX + safe.bottom;
+            let side_margin = BOARD_SIDE_MARGIN_PX + safe.left.max(safe.right);
+            let aw = (win_w - side_margin * 2.0 - BOARD_FRAME_PAD_PX).max(180.0);
+            let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
+            (aw, ah, top_res, bot_res)
+        }
+        HudLayoutMode::Portrait => {
+            let narrow = win_w < 500.0;
+            let top_res = (if narrow { 178.0 } else { 152.0 }) + safe.top;
+            let bot_res = (if narrow { 174.0 } else { 148.0 }) + safe.bottom;
+            let side_margin = 12.0 + safe.left.max(safe.right);
+            let aw = (win_w - side_margin * 2.0 - BOARD_FRAME_PAD_PX).max(180.0);
+            let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
+            (aw, ah, top_res, bot_res)
+        }
+    };
     let step = (avail_w / cols as f32)
         .min(avail_h / rows as f32)
         .clamp(MIN_TILE_SIZE_PX, MAX_TILE_SIZE_PX);
@@ -999,6 +1017,7 @@ pub(super) fn rebuild_board_now(
     textures: &RuneTextures,
     vfx: &VfxTextures,
     window: &Window,
+    safe: SafeAreaInsets,
     input_state: &mut Match3InputState,
     sprites: &Query<Entity, With<Match3Entity>>,
     fall_starts: Option<&HashMap<CellPos, i32>>,
@@ -1017,6 +1036,7 @@ pub(super) fn rebuild_board_now(
         window.height(),
         session.board.cols(),
         session.board.rows(),
+        safe,
         input_state,
     );
     spawn_board_sprites(
@@ -1274,7 +1294,7 @@ fn execute_patron_fury(
     }
 }
 
-/// Handles HUD button interactions and keyboard shortcuts (`1-6`, `Space`, `H`, `Backspace` Undo, Arrows+`Enter`, `Escape`).
+/// Handles HUD button interactions and keyboard shortcuts (`1-6`, `Space`/`F`, `H`, `Backspace` Undo, Arrows+`Enter`, `Escape`).
 #[allow(clippy::too_many_arguments)]
 pub fn handle_match3_hud_buttons(
     mut commands: Commands,
@@ -1282,7 +1302,7 @@ pub fn handle_match3_hud_buttons(
     mut ctx: ResMut<GameContext>,
     textures: Res<RuneTextures>,
     vfx: Res<VfxTextures>,
-    mut sound_bank: ResMut<SoundBank>,
+    (mut sound_bank, mut haptics): (ResMut<SoundBank>, EventWriter<HapticEvent>),
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut scroll_mem: ResMut<UiScrollMemory>,
     mut input_state: ResMut<Match3InputState>,
@@ -1430,6 +1450,7 @@ pub fn handle_match3_hud_buttons(
                             input_state.selected = None;
                             input_state.shake_secs = SHAKE_DURATION_SECS;
                             input_state.dirty_hud = true;
+                            haptics.send(HapticEvent(HapticKind::BoosterBlast));
                             input_state.phase = BoardAnimPhase::Clearing {
                                 turn,
                                 preview,
@@ -1443,6 +1464,7 @@ pub fn handle_match3_hud_buttons(
                         Err(ToolStartError::Invalid) => {
                             spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                            haptics.send(HapticEvent(HapticKind::Error));
                         }
                     }
                     return;
@@ -1465,6 +1487,7 @@ pub fn handle_match3_hud_buttons(
                                 &selection_markers,
                             );
                             play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                            haptics.send(HapticEvent(HapticKind::LightTap));
                         } else {
                             update_selection_marker(
                                 &mut commands,
@@ -1475,6 +1498,7 @@ pub fn handle_match3_hud_buttons(
                             spawn_invalid_cell_flash(&mut commands, prev, &input_state);
                             spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                            haptics.send(HapticEvent(HapticKind::Error));
                         }
                     } else {
                         input_state.selected = Some(cell);
@@ -1512,7 +1536,7 @@ pub fn handle_match3_hud_buttons(
         return;
     }
 
-    if keys.just_pressed(KeyCode::Space)
+    if (keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::KeyF))
         && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
         && !ctx.active_session.as_ref().is_some_and(|s| s.is_trial)
@@ -1523,6 +1547,9 @@ pub fn handle_match3_hud_buttons(
             input_state.dirty_hud = true;
         }
         execute_patron_fury(&mut commands, &mut ctx, &vfx, &sound_bank, &mut input_state);
+        if matches!(input_state.phase, BoardAnimPhase::Clearing { .. }) {
+            haptics.send(HapticEvent(HapticKind::BoosterBlast));
+        }
         return;
     }
 
@@ -1752,7 +1779,7 @@ pub fn handle_match3_hud_buttons(
                     if res.is_ok() {
                         *input_state = Match3InputState {
                             reduced_motion: ctx.reduced_motion,
-                            is_compact_hud: input_state.is_compact_hud,
+                            hud_mode: input_state.hud_mode,
                             dirty_static_board: true,
                             dirty_board: true,
                             dirty_hud: true,
@@ -1763,6 +1790,7 @@ pub fn handle_match3_hud_buttons(
                         play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     } else {
                         play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        haptics.send(HapticEvent(HapticKind::Error));
                         input_state.dirty_hud = true;
                     }
                 }
@@ -1784,8 +1812,12 @@ pub fn handle_match3_hud_buttons(
                             node.display = Display::Flex;
                         }
                     }
+                    haptics.send(HapticEvent(HapticKind::Error));
                 }
                 execute_patron_fury(&mut commands, &mut ctx, &vfx, &sound_bank, &mut input_state);
+                if ready {
+                    haptics.send(HapticEvent(HapticKind::BoosterBlast));
+                }
             }
             Match3UiAction::SelectTool(tool) => {
                 if !input_state.is_idle() {
@@ -1798,6 +1830,7 @@ pub fn handle_match3_hud_buttons(
                         node.display = Display::Flex;
                     }
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    haptics.send(HapticEvent(HapticKind::Error));
                     continue;
                 }
                 input_state.confirm_retreat = false;
@@ -1811,6 +1844,7 @@ pub fn handle_match3_hud_buttons(
                             &sound_bank,
                             &mut input_state,
                         );
+                        haptics.send(HapticEvent(HapticKind::BoosterBlast));
                     } else {
                         ctx.armed_tool = None;
                         input_state.confirm_loki_shuffle = true;
@@ -1858,7 +1892,7 @@ pub fn handle_board_pointer_input(
     mut ctx: ResMut<GameContext>,
     textures: Res<RuneTextures>,
     vfx: Res<VfxTextures>,
-    sound_bank: Res<SoundBank>,
+    (sound_bank, mut haptics): (Res<SoundBank>, EventWriter<HapticEvent>),
     mut input_state: ResMut<Match3InputState>,
     hover_overlays: Query<Entity, With<ToolHoverOverlay>>,
     drag_highlights: Query<Entity, With<DragTargetHighlight>>,
@@ -2154,6 +2188,7 @@ pub fn handle_board_pointer_input(
                         input_state.selected = None;
                         input_state.shake_secs = SHAKE_DURATION_SECS;
                         input_state.dirty_hud = true;
+                        haptics.send(HapticEvent(HapticKind::BoosterBlast));
                         input_state.phase = BoardAnimPhase::Clearing {
                             turn,
                             preview,
@@ -2167,6 +2202,7 @@ pub fn handle_board_pointer_input(
                     Err(ToolStartError::Invalid) => {
                         spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                         play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        haptics.send(HapticEvent(HapticKind::Error));
                     }
                 }
             }
@@ -2215,6 +2251,7 @@ pub fn handle_board_pointer_input(
                             input_state.selected = None;
                             input_state.shake_secs = SHAKE_DURATION_SECS;
                             input_state.dirty_hud = true;
+                            haptics.send(HapticEvent(HapticKind::BoosterBlast));
                             input_state.phase = BoardAnimPhase::Clearing {
                                 turn,
                                 preview,
@@ -2228,6 +2265,7 @@ pub fn handle_board_pointer_input(
                         Err(ToolStartError::Invalid) => {
                             spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                            haptics.send(HapticEvent(HapticKind::Error));
                         }
                     }
                     return;
@@ -2253,6 +2291,7 @@ pub fn handle_board_pointer_input(
                                 &selection_markers,
                             );
                             play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                            haptics.send(HapticEvent(HapticKind::LightTap));
                         } else {
                             update_selection_marker(
                                 &mut commands,
@@ -2263,6 +2302,7 @@ pub fn handle_board_pointer_input(
                             spawn_invalid_cell_flash(&mut commands, prev, &input_state);
                             spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                             play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                            haptics.send(HapticEvent(HapticKind::Error));
                         }
                         return;
                     }
@@ -2290,6 +2330,7 @@ pub fn handle_board_pointer_input(
                     );
                     spawn_invalid_cell_flash(&mut commands, cell, &input_state);
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    haptics.send(HapticEvent(HapticKind::Error));
                 }
             }
         }
@@ -2361,6 +2402,7 @@ pub fn handle_board_pointer_input(
                         &selection_markers,
                     );
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    haptics.send(HapticEvent(HapticKind::LightTap));
                 } else {
                     update_selection_marker(
                         &mut commands,
@@ -2371,6 +2413,7 @@ pub fn handle_board_pointer_input(
                     spawn_invalid_cell_flash(&mut commands, origin_cell, &input_state);
                     spawn_invalid_cell_flash(&mut commands, nb, &input_state);
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    haptics.send(HapticEvent(HapticKind::Error));
                 }
             }
         }
@@ -2426,7 +2469,7 @@ pub fn sync_match3_visuals(
     vfx: Res<VfxTextures>,
     fjord_art: Res<FjordTextures>,
     sound_bank: Res<SoundBank>,
-    scroll_mem: Res<UiScrollMemory>,
+    (scroll_mem, safe_area): (Res<UiScrollMemory>, Res<SafeAreaInsets>),
     windows: Query<&Window, With<PrimaryWindow>>,
     mut input_state: ResMut<Match3InputState>,
     static_sprites: Query<Entity, With<BoardStaticEntity>>,
@@ -2459,6 +2502,7 @@ pub fn sync_match3_visuals(
                 window.height(),
                 session.board.cols(),
                 session.board.rows(),
+                *safe_area,
                 &mut input_state,
             );
             spawn_board_static_sprites(&mut commands, session, &textures, &vfx, &input_state);
@@ -2474,6 +2518,7 @@ pub fn sync_match3_visuals(
                 &textures,
                 &vfx,
                 window,
+                *safe_area,
                 &mut input_state,
                 &sprites,
                 None,
@@ -2491,7 +2536,7 @@ pub fn sync_match3_visuals(
             .map(|s| hud::hud_shape(s, &ctx.data.balance.session));
         match new_shape {
             Some(shape) if hud::can_update_in_place(input_state.hud_shape.as_ref(), &shape) => {
-                hud_texts.refresh(&ctx, input_state.is_compact_hud);
+                hud_texts.refresh(&ctx, input_state.is_compact_hud());
             }
             _ => input_state.dirty_hud = true,
         }
@@ -2514,7 +2559,8 @@ pub fn sync_match3_visuals(
             &vfx,
             &sound_bank,
             scroll_mem.modal_offset_y,
-            input_state.is_compact_hud,
+            input_state.hud_mode,
+            *safe_area,
             input_state.can_undo(&ctx),
             input_state.undo_used,
             input_state.confirm_retreat,
@@ -2570,5 +2616,42 @@ mod tests {
         state.clear_hint();
         assert!(!state.hint_checked);
         assert_eq!(state.idle_secs, 0.0);
+    }
+
+    #[test]
+    fn desktop_wide_board_fits_between_side_rails_and_uses_vertical_space() {
+        let mut state = Match3InputState::default();
+        let safe = SafeAreaInsets::default();
+        compute_board_layout(1920.0, 1080.0, 8, 8, safe, &mut state);
+        assert_eq!(state.hud_mode, HudLayoutMode::DesktopWide);
+        assert!(!state.is_compact_hud());
+        let board_w = state.cell_step * 8.0 + 28.0;
+        let rail_clearance = 1920.0 - (DESKTOP_SIDE_RAIL_WIDTH_PX + 24.0) * 2.0;
+        assert!(
+            board_w <= rail_clearance + 0.5,
+            "board_w ({board_w}) exceeds central band ({rail_clearance})"
+        );
+        assert!(
+            state.cell_step >= 115.0,
+            "1080p desktop board should reach near-max tile size, got {}",
+            state.cell_step
+        );
+    }
+
+    #[test]
+    fn portrait_board_fits_phone_viewport_with_safe_area() {
+        let mut state = Match3InputState::default();
+        let safe = SafeAreaInsets {
+            top: 28.0,
+            bottom: 20.0,
+            left: 0.0,
+            right: 0.0,
+        };
+        compute_board_layout(360.0, 780.0, 8, 8, safe, &mut state);
+        assert_eq!(state.hud_mode, HudLayoutMode::Portrait);
+        assert!(state.is_compact_hud());
+        let board_w = state.cell_step * 8.0 + 28.0;
+        assert!(board_w <= 360.0 - 24.0 + 0.5);
+        assert!(state.cell_step >= MIN_TILE_SIZE_PX);
     }
 }

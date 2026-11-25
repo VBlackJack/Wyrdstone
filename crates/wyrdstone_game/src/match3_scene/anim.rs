@@ -26,6 +26,7 @@ use super::{
     SANCTUARY_EMBER_HALF_W_RATIO, SHAKE_AMPLITUDE_PX, SHAKE_DURATION_SECS,
 };
 use crate::audio::{play_sfx, SfxKind, SoundBank};
+use crate::platform::{HapticEvent, HapticKind, HudLayoutMode, SafeAreaInsets};
 use crate::runes_art::RuneTextures;
 use crate::state::{ActiveModal, AppState, GameContext};
 use crate::theme::*;
@@ -255,8 +256,18 @@ fn spawn_flying_orbs(
     let has_boss = boss_weakness.is_some();
     let has_non_boss_obj = !session.objectives.is_empty();
     let step = (cells.len() / MAX_FLYING_ORBS_PER_WAVE).max(1);
-    let obj_target = Vec2::new(-win_w * 0.14, win_h * 0.43);
-    let boss_target = Vec2::new(win_w * 0.16, win_h * 0.43);
+    let (obj_target, boss_target) = if layout.hud_mode.is_desktop_wide() {
+        let rail_x = -win_w * 0.5 + DESKTOP_SIDE_RAIL_WIDTH_PX * 0.5 + 14.0;
+        (
+            Vec2::new(rail_x, win_h * 0.10),
+            Vec2::new(rail_x, win_h * 0.16),
+        )
+    } else {
+        (
+            Vec2::new(-win_w * 0.14, win_h * 0.43),
+            Vec2::new(win_w * 0.16, win_h * 0.43),
+        )
+    };
 
     for (idx, &pos) in cells
         .iter()
@@ -885,7 +896,11 @@ pub fn tick_board_animation(
     mut ctx: ResMut<GameContext>,
     textures: Res<RuneTextures>,
     vfx: Res<VfxTextures>,
-    sound_bank: Res<SoundBank>,
+    (sound_bank, safe_area, mut haptics): (
+        Res<SoundBank>,
+        Res<SafeAreaInsets>,
+        EventWriter<HapticEvent>,
+    ),
     windows: Query<&Window, With<PrimaryWindow>>,
     mut input_state: ResMut<Match3InputState>,
     mut next_state: ResMut<NextState<AppState>>,
@@ -923,6 +938,7 @@ pub fn tick_board_animation(
             match ctx.active_session.as_ref().map(|s| s.outcome) {
                 Some(LevelOutcome::Victory) => {
                     play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    haptics.send(HapticEvent(HapticKind::Victory));
                     input_state.dirty_hud = true;
                     input_state.phase = BoardAnimPhase::VictoryCelebration {
                         elapsed: 0.0,
@@ -1075,6 +1091,7 @@ pub fn tick_board_animation(
                             &textures,
                             &vfx,
                             window,
+                            *safe_area,
                             &mut input_state,
                             &all_sprites,
                             None,
@@ -1345,6 +1362,11 @@ pub fn tick_board_animation(
                     play_sfx(&mut commands, &sound_bank, SfxKind::FuryReady);
                 }
                 let combo = report.combo;
+                if combo >= 3 {
+                    haptics.send(HapticEvent(HapticKind::ComboSurge));
+                } else if !report.cells.is_empty() {
+                    haptics.send(HapticEvent(HapticKind::MatchClear));
+                }
                 let gained_score = report.score_awarded;
                 let boss_damaged = report.boss.as_ref().is_some_and(|hit| hit.damage > 0);
                 let boss_phase2_info =
@@ -1473,6 +1495,7 @@ pub fn tick_board_animation(
                         &textures,
                         &vfx,
                         window,
+                        *safe_area,
                         &mut input_state,
                         &all_sprites,
                         Some(&fall_map),
@@ -1565,6 +1588,7 @@ pub fn tick_board_animation(
                                 &textures,
                                 &vfx,
                                 window,
+                                *safe_area,
                                 &mut input_state,
                                 &all_sprites,
                                 Some(&relic_fall_map),
@@ -1684,6 +1708,7 @@ pub fn tick_board_animation(
                         match end.outcome {
                             LevelOutcome::Victory => {
                                 play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                                haptics.send(HapticEvent(HapticKind::Victory));
                                 let banner = ctx.data.i18n.t("result.victory.title").to_string();
                                 commands.spawn((
                                     Match3Cleanup,
@@ -1841,6 +1866,7 @@ pub fn tick_board_animation(
                             &textures,
                             &vfx,
                             window,
+                            *safe_area,
                             &mut input_state,
                             &all_sprites,
                             None,
@@ -2150,7 +2176,7 @@ fn finalize_level_transition(
                         );
                         *input_state = Match3InputState {
                             reduced_motion: ctx.reduced_motion,
-                            is_compact_hud: input_state.is_compact_hud,
+                            hud_mode: input_state.hud_mode,
                             dirty_static_board: true,
                             dirty_board: true,
                             dirty_hud: true,
@@ -2343,9 +2369,9 @@ pub fn animate_particles(
             tf.translation.x = ember.base_x;
             tf.translation.y = ember.y;
         }
-        let now_compact = ev.width < 760.0;
-        if now_compact != input_state.is_compact_hud {
-            input_state.is_compact_hud = now_compact;
+        let now_mode = HudLayoutMode::from_viewport(ev.width, ev.height);
+        if now_mode != input_state.hud_mode {
+            input_state.hud_mode = now_mode;
             input_state.dirty_hud = true;
         }
         input_state.dirty_static_board = true;

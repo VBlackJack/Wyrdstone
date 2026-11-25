@@ -21,6 +21,7 @@ mod audio;
 mod city_ui;
 mod fjord_art;
 mod match3_scene;
+mod platform;
 mod result_ui;
 mod runes_art;
 mod scroll;
@@ -66,6 +67,8 @@ pub fn run_app() {
     app.add_plugins(DefaultPlugins.set(window_plugin))
         .insert_resource(ClearColor(COLOR_BG_DEEP))
         .insert_resource(ctx)
+        .init_resource::<platform::SafeAreaInsets>()
+        .add_event::<platform::HapticEvent>()
         .init_resource::<scroll::UiScrollMemory>()
         .init_state::<AppState>()
         .add_systems(
@@ -89,6 +92,7 @@ pub fn run_app() {
                 scroll::handle_ui_scroll,
                 ui_style::tick_screen_fades,
                 ui_style::animate_button_feedback,
+                platform::handle_haptic_events,
             ),
         )
         // Title screen
@@ -117,6 +121,7 @@ pub fn run_app() {
             Update,
             (
                 city_ui::handle_city_buttons,
+                city_ui::update_city_hover_tooltip,
                 city_ui::sync_map_building_layout,
             )
                 .chain()
