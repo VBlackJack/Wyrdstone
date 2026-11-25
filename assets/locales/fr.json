@@ -583,5 +583,21 @@
   "result.trial.par_achieved": "Sceau Par Maîtrisé !",
   "result.trial.par_missed": "Épreuve réussie (Visez le Par pour bonus)",
   "result.gauntlet.cleared": "Gantelet : {cur}/{total} Boss vaincus",
-  "result.button.next_trial": "Épreuve suivante"
+  "result.button.next_trial": "Épreuve suivante",
+  "city.drawer.modes.button": "Modes",
+  "city.drawer.modes.title": "Expéditions & Modes de Jeu",
+  "city.drawer.modes.daily_desc": "Défi quotidien procédural à récompenses croissantes (Série : {streak}).",
+  "city.drawer.modes.raids_desc": "Affrontez les 4 Boss ou lancez le Gantelet ({slain}/{total} vaincus).",
+  "city.drawer.modes.expedition_desc": "Vagues roguelite avec Reliques, Serments et Boss vague 5 (Record : vague {best}).",
+  "city.drawer.modes.blitz_desc": "Sprint arcade 75s à multiplicateur et bonus temps (Record : {best}).",
+  "city.drawer.modes.trials_desc": "Casse-têtes tactiques 0 RNG avec Sceaux Par ({par}/{total} maîtrisés).",
+  "city.drawer.clan.button": "Clan",
+  "city.drawer.clan.title": "Clan, Équipement & Progrès",
+  "city.drawer.clan.loadout": "Patron : {patron} | Amulette : {amulet} | Synergies : {synergies}",
+  "city.drawer.clan.amulets_desc": "Forgez les amulettes Niv. 1-3 et Synergies Divines ({crafted}/{total} forgées).",
+  "city.drawer.clan.shop_desc": "Forgez vos outils Match-3 et brassez les Breuvages de Guerre.",
+  "city.drawer.clan.feats_desc": "Accomplissez les exploits du clan pour de la Gloire ({claimed}/{total} réclamés).",
+  "city.drawer.clan.collections_desc": "Complétez les collections des Neuf Royaumes ({claimed}/{total} complètes).",
+  "city.drawer.menu.title": "Menu du Fjord",
+  "city.drawer.menu.title_btn": "Écran Titre"
 }

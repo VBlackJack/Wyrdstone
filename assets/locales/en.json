@@ -583,5 +583,21 @@
   "result.trial.par_achieved": "Par Seal Mastered!",
   "result.trial.par_missed": "Trial Cleared (Beat Par for Bonus Glory)",
   "result.gauntlet.cleared": "Gauntlet Progress: {cur}/{total} Bosses Vanquished",
-  "result.button.next_trial": "Next Trial"
+  "result.button.next_trial": "Next Trial",
+  "city.drawer.modes.button": "Modes",
+  "city.drawer.modes.title": "Expeditions & Battle Modes",
+  "city.drawer.modes.daily_desc": "Procedural daily challenge with escalating streak rewards (Streak: {streak}).",
+  "city.drawer.modes.raids_desc": "Challenge Fenrir, Jormungandr, Surtr & Hel or enter the Gauntlet ({slain}/{total} slain).",
+  "city.drawer.modes.expedition_desc": "Roguelite waves with Relics, Skald's Oaths & Wave-5 bosses (Best wave: {best}).",
+  "city.drawer.modes.blitz_desc": "75s arcade score rush with momentum multipliers & time bonuses (Record: {best}).",
+  "city.drawer.modes.trials_desc": "Handcrafted zero-RNG tactical puzzles with Par Seals ({par}/{total} mastered).",
+  "city.drawer.clan.button": "Clan",
+  "city.drawer.clan.title": "Clan, Gear & Progression",
+  "city.drawer.clan.loadout": "Patron: {patron} | Band: {amulet} | Synergies: {synergies}",
+  "city.drawer.clan.amulets_desc": "Craft, upgrade Tier 1-3 bands & pair Divine Synergies ({crafted}/{total} forged).",
+  "city.drawer.clan.shop_desc": "Forge active Match-3 tools & brew single-raid War Draughts.",
+  "city.drawer.clan.feats_desc": "Unlock Clan milestones & claim Glory tributes ({claimed}/{total} claimed).",
+  "city.drawer.clan.collections_desc": "Complete Nine Realms relic sets for clan spoils ({claimed}/{total} complete).",
+  "city.drawer.menu.title": "Fjord Menu",
+  "city.drawer.menu.title_btn": "Back to Title"
 }
