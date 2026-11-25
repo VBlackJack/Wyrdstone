@@ -660,5 +660,15 @@
   "bounty.kind.trigger_fury": "Déchaînez {target} fois la Fureur Divine",
   "bounty.kind.reach_combo": "Atteignez un combo en cascade x{target}",
   "bounty.kind.clear_obstacles": "Brisez {target} obstacles (Glace, Chaînes ou Caisses)",
-  "bounty.kind.earn_score": "Marquez {target} points au total"
+  "bounty.kind.earn_score": "Marquez {target} points au total",
+  "mode.locked.button": "Verrouillé",
+  "mode.unlock.daily": "Débloqué après 1 victoire ou Grande Salle Niv. 1.",
+  "mode.unlock.trials": "Débloqué après 2 victoires ou Grande Salle Niv. 1.",
+  "mode.unlock.blitz": "Débloqué à la Grande Salle Niv. 1 ou après 3 victoires.",
+  "mode.unlock.raids": "Débloqué à la Grande Salle Niv. 1 + 3 victoires (ou 50 Gloire).",
+  "mode.unlock.expedition": "Débloqué à la Grande Salle Niv. 2 ou après 5 victoires.",
+  "match3.ftue.first_swap": "Astuce : Glissez ou cliquez deux runes lumineuses pour en aligner 3+ !",
+  "match3.ftue.booster_trigger": "Astuce : Alignez ou échangez une rune Bonus pour déclencher une explosion !",
+  "match3.ftue.booster_combo": "Astuce : Échangez deux Bonus adjacents pour un Super-Combo !",
+  "match3.ftue.fury_ready": "Astuce : Fureur Divine prête ! Cliquez votre Dieu ou appuyez sur Espace / F !"
 }

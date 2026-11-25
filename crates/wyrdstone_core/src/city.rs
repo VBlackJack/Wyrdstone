@@ -25,7 +25,7 @@ use crate::board::ActiveTool;
 use crate::boss::{BossDef, GAUNTLET_CLEAR_GLORY, GAUNTLET_STAGE_PARTIAL_GLORY};
 use crate::patron::PatronGod;
 use crate::retention::{
-    DailyBountyBoard, OfflineVaultSummary, SkaldPassState, ValhallaFlameTier,
+    DailyBountyBoard, OfflineVaultSummary, PlayMode, SkaldPassState, ValhallaFlameTier,
     OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
     OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS,
 };
@@ -738,6 +738,46 @@ impl CityState {
     /// Returns the active Valhalla Flame win-streak tier.
     pub fn valhalla_flame_tier(&self) -> ValhallaFlameTier {
         ValhallaFlameTier::from_streak(self.stats.win_streak)
+    }
+
+    /// Returns true once the player reaches the milestone for the given secondary play mode.
+    pub fn is_mode_unlocked(&self, mode: PlayMode) -> bool {
+        let hall_tier = self.building_tier(HUB_BUILDING_ID);
+        match mode {
+            PlayMode::DailyTrial => {
+                self.stats.total_victories >= 1
+                    || hall_tier >= 1
+                    || self.stats.daily_completions > 0
+            }
+            PlayMode::YggdrasilTrials => {
+                self.stats.total_victories >= 2
+                    || hall_tier >= 1
+                    || !self.completed_trials.is_empty()
+            }
+            PlayMode::ValhallaBlitz => {
+                hall_tier >= 1
+                    || self.stats.total_victories >= 3
+                    || self.stats.blitz_runs_completed > 0
+            }
+            PlayMode::BossRaids => {
+                (hall_tier >= 1 && self.stats.total_victories >= 3)
+                    || self.glory >= 50
+                    || !self.defeated_bosses.is_empty()
+            }
+            PlayMode::Expedition => {
+                hall_tier >= 2
+                    || self.stats.total_victories >= 5
+                    || self.stats.best_expedition_wave > 0
+            }
+        }
+    }
+
+    /// Counts how many secondary play modes are currently unlocked.
+    pub fn unlocked_mode_count(&self) -> usize {
+        PlayMode::ALL
+            .iter()
+            .filter(|&&m| self.is_mode_unlocked(m))
+            .count()
     }
 
     /// Returns the Offline Harvest Vault cap in hours (base 8h + 2h per Great Hall tier).

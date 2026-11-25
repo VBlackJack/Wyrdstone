@@ -3083,3 +3083,34 @@ fn retention_valhalla_flame_last_stand_offline_vault_and_bounties_work() {
     assert!(loaded.city.daily_bounties.bounties.is_empty());
     assert_eq!(loaded.city.skald_pass.xp, 0);
 }
+
+#[test]
+fn progressive_mode_unlocks_gate_early_modes_and_open_for_veterans() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    assert_eq!(city.unlocked_mode_count(), 0);
+    for mode in wyrdstone_core::PlayMode::ALL {
+        assert!(!city.is_mode_unlocked(mode));
+        assert_ne!(data.i18n.t(mode.name_key()), mode.name_key());
+        assert_ne!(data.i18n.t(mode.unlock_hint_key()), mode.unlock_hint_key());
+    }
+
+    city.stats.total_victories = 1;
+    assert!(city.is_mode_unlocked(wyrdstone_core::PlayMode::DailyTrial));
+    assert!(!city.is_mode_unlocked(wyrdstone_core::PlayMode::YggdrasilTrials));
+
+    city.stats.total_victories = 2;
+    assert!(city.is_mode_unlocked(wyrdstone_core::PlayMode::YggdrasilTrials));
+
+    city.building_tiers.insert("great_hall".to_string(), 1);
+    city.stats.total_victories = 3;
+    assert!(city.is_mode_unlocked(wyrdstone_core::PlayMode::ValhallaBlitz));
+    assert!(city.is_mode_unlocked(wyrdstone_core::PlayMode::BossRaids));
+    assert!(!city.is_mode_unlocked(wyrdstone_core::PlayMode::Expedition));
+
+    city.building_tiers.insert("great_hall".to_string(), 2);
+    assert_eq!(
+        city.unlocked_mode_count(),
+        wyrdstone_core::PlayMode::ALL.len()
+    );
+}

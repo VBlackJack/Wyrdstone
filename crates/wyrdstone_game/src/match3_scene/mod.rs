@@ -2541,7 +2541,7 @@ pub fn sync_match3_visuals(
         let new_shape = ctx
             .active_session
             .as_ref()
-            .map(|s| hud::hud_shape(s, &ctx.data.balance.session));
+            .map(|s| hud::hud_shape(s, &ctx.data.balance.session, ctx.city.stats.total_victories));
         match new_shape {
             Some(shape) if hud::can_update_in_place(input_state.hud_shape.as_ref(), &shape) => {
                 hud_texts.refresh(&ctx, input_state.is_compact_hud());
@@ -2555,7 +2555,7 @@ pub fn sync_match3_visuals(
         input_state.hud_shape = ctx
             .active_session
             .as_ref()
-            .map(|s| hud::hud_shape(s, &ctx.data.balance.session));
+            .map(|s| hud::hud_shape(s, &ctx.data.balance.session, ctx.city.stats.total_victories));
         for e in &huds {
             commands.entity(e).despawn_recursive();
         }

@@ -203,6 +203,22 @@ pub struct HudShape {
     blitz_frozen: bool,
     blitz_medal: BlitzMedal,
     objectives_complete: Vec<bool>,
+    ftue_coach_key: Option<&'static str>,
+}
+
+fn ftue_coach_key(total_victories: u32, session: &LevelSession) -> Option<&'static str> {
+    if total_victories > 0 || session.is_trial || session.is_blitz {
+        return None;
+    }
+    if session.can_trigger_fury() {
+        Some("match3.ftue.fury_ready")
+    } else if !session.board.find_booster_combo_pairs().is_empty() {
+        Some("match3.ftue.booster_combo")
+    } else if !session.board.find_remaining_boosters().is_empty() {
+        Some("match3.ftue.booster_trigger")
+    } else {
+        Some("match3.ftue.first_swap")
+    }
 }
 
 pub(super) fn projected_stars(
@@ -226,6 +242,7 @@ pub(super) fn projected_stars(
 pub(super) fn hud_shape(
     session: &LevelSession,
     tuning: &wyrdstone_core::SessionTuning,
+    total_victories: u32,
 ) -> HudShape {
     let banner = if session.last_frost_spread.is_some() {
         HudBanner::FrostSpread
@@ -260,6 +277,7 @@ pub(super) fn hud_shape(
             BlitzMedal::None
         },
         objectives_complete: session.objectives.iter().map(|o| o.is_complete()).collect(),
+        ftue_coach_key: ftue_coach_key(total_victories, session),
     }
 }
 
@@ -858,6 +876,46 @@ fn spawn_objectives_or_boss(
             });
         }
     }
+}
+
+fn spawn_ftue_coach_pill(
+    parent: &mut ChildBuilder,
+    i18n: &I18nCatalog,
+    total_victories: u32,
+    session: &LevelSession,
+    full_width_row: bool,
+) {
+    let Some(key) = ftue_coach_key(total_victories, session) else {
+        return;
+    };
+    parent
+        .spawn((
+            Node {
+                width: if full_width_row {
+                    Val::Percent(100.0)
+                } else {
+                    Val::Auto
+                },
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                border: UiRect::all(Val::Px(1.5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(COLOR_PANEL_CARD),
+            BorderColor(COLOR_ACCENT_GOLD),
+            BorderRadius::all(Val::Px(8.0)),
+        ))
+        .with_children(|pill| {
+            pill.spawn((
+                Text::new(i18n.t(key)),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+            ));
+        });
 }
 
 fn spawn_status_banner(parent: &mut ChildBuilder, i18n: &I18nCatalog, session: &LevelSession) {
@@ -1491,6 +1549,13 @@ pub(super) fn spawn_match3_hud(
                         ..default()
                     })
                     .with_children(|status_col| {
+                        spawn_ftue_coach_pill(
+                            status_col,
+                            i18n,
+                            ctx.city.stats.total_victories,
+                            session,
+                            true,
+                        );
                         spawn_status_banner(status_col, i18n, session);
                     });
                 });
@@ -1651,6 +1716,8 @@ pub(super) fn spawn_match3_hud(
                         spawn_status_banner(right, i18n, session);
                         spawn_utility_buttons(right, i18n, can_undo, undo_used, confirm_retreat);
                     });
+
+                    spawn_ftue_coach_pill(top, i18n, ctx.city.stats.total_victories, session, true);
                 });
 
                 // Bottom active tools bar (Compact & Portrait layouts)
@@ -2100,6 +2167,7 @@ mod tests {
             blitz_frozen: false,
             blitz_medal: BlitzMedal::None,
             objectives_complete: vec![false, false],
+            ftue_coach_key: None,
         }
     }
 

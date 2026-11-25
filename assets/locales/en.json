@@ -660,5 +660,15 @@
   "bounty.kind.trigger_fury": "Unleash Patron Divine Fury {target} times",
   "bounty.kind.reach_combo": "Reach a x{target} cascade combo",
   "bounty.kind.clear_obstacles": "Break {target} Ice, Chain, or Crate obstacles",
-  "bounty.kind.earn_score": "Score {target} total points"
+  "bounty.kind.earn_score": "Score {target} total points",
+  "mode.locked.button": "Locked",
+  "mode.unlock.daily": "Unlocks after 1 victory or Great Hall Tier 1.",
+  "mode.unlock.trials": "Unlocks after 2 victories or Great Hall Tier 1.",
+  "mode.unlock.blitz": "Unlocks at Great Hall Tier 1 or 3 victories.",
+  "mode.unlock.raids": "Unlocks at Great Hall Tier 1 + 3 victories (or 50 Glory).",
+  "mode.unlock.expedition": "Unlocks at Great Hall Tier 2 or 5 victories.",
+  "match3.ftue.first_swap": "Tip: Drag or click two glowing runes to match 3 or more!",
+  "match3.ftue.booster_trigger": "Tip: Match or swap a glowing Booster rune to unleash a blast!",
+  "match3.ftue.booster_combo": "Tip: Swap two adjacent Boosters together for a Super-Combo!",
+  "match3.ftue.fury_ready": "Tip: Divine Fury is full! Tap your Patron or press Space / F!"
 }

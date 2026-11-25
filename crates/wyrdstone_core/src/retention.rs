@@ -472,6 +472,46 @@ impl SkaldPassState {
     }
 }
 
+/// Secondary game modes unlocked progressively as the player advances through early Fjord milestones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PlayMode {
+    DailyTrial,
+    YggdrasilTrials,
+    ValhallaBlitz,
+    BossRaids,
+    Expedition,
+}
+
+impl PlayMode {
+    pub const ALL: [Self; 5] = [
+        Self::DailyTrial,
+        Self::YggdrasilTrials,
+        Self::ValhallaBlitz,
+        Self::BossRaids,
+        Self::Expedition,
+    ];
+
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            Self::DailyTrial => "city.panel.daily.button",
+            Self::YggdrasilTrials => "city.panel.trials.title",
+            Self::ValhallaBlitz => "city.panel.blitz.button",
+            Self::BossRaids => "city.panel.raids.button",
+            Self::Expedition => "city.panel.expedition.button",
+        }
+    }
+
+    pub const fn unlock_hint_key(self) -> &'static str {
+        match self {
+            Self::DailyTrial => "mode.unlock.daily",
+            Self::YggdrasilTrials => "mode.unlock.trials",
+            Self::ValhallaBlitz => "mode.unlock.blitz",
+            Self::BossRaids => "mode.unlock.raids",
+            Self::Expedition => "mode.unlock.expedition",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

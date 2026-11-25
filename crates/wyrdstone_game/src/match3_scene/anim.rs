@@ -1004,8 +1004,18 @@ pub fn tick_board_animation(
                     }
                 }
             }
+            const FTUE_HINT_IDLE_SECS: f32 = 0.65;
+            let ftue_fast_hint = ctx.city.stats.total_victories == 0
+                && ctx.active_session.as_ref().is_some_and(|s| {
+                    !s.is_trial && !s.is_blitz && s.initial_moves.saturating_sub(s.moves_left) < 3
+                });
+            let hint_delay = if ftue_fast_hint {
+                FTUE_HINT_IDLE_SECS
+            } else {
+                HINT_IDLE_SECS
+            };
             input_state.idle_secs += dt;
-            if input_state.idle_secs >= HINT_IDLE_SECS {
+            if input_state.idle_secs >= hint_delay {
                 if !input_state.hint_checked {
                     input_state.hint_checked = true;
                     input_state.hint_pair = ctx

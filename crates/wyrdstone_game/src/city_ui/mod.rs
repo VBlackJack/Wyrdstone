@@ -40,7 +40,7 @@ use bevy::ui::FocusPolicy;
 use bevy::window::{PrimaryWindow, WindowResized};
 use wyrdstone_core::{
     format_building_bonus, format_rank_perk, ActiveTool, BuildingDef, I18nCatalog, PatronGod,
-    QuestCondition,
+    PlayMode, QuestCondition,
 };
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
@@ -2831,54 +2831,89 @@ pub fn handle_city_buttons(
                     rebuild = true;
                 }
             }
-            CityAction::StartExpedition => match ctx.start_or_resume_expedition() {
-                Ok(true) => {
-                    next_state.set(AppState::Match3);
-                    return;
-                }
-                Ok(false) => {
-                    scroll_mem.modal_offset_y = 0.0;
-                    rebuild = true;
-                }
-                Err(err_key) => {
-                    ctx.status_notice_key = Some(err_key.to_string());
+            CityAction::StartExpedition => {
+                if !ctx.city.is_mode_unlocked(PlayMode::Expedition) {
+                    ctx.status_notice_key =
+                        Some(PlayMode::Expedition.unlock_hint_key().to_string());
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     rebuild = true;
+                    continue;
                 }
-            },
-            CityAction::StartValhallaBlitz => match ctx.start_valhalla_blitz() {
-                Ok(()) => {
-                    next_state.set(AppState::Match3);
-                    return;
+                match ctx.start_or_resume_expedition() {
+                    Ok(true) => {
+                        next_state.set(AppState::Match3);
+                        return;
+                    }
+                    Ok(false) => {
+                        scroll_mem.modal_offset_y = 0.0;
+                        rebuild = true;
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        rebuild = true;
+                    }
                 }
-                Err(err_key) => {
-                    ctx.status_notice_key = Some(err_key.to_string());
+            }
+            CityAction::StartValhallaBlitz => {
+                if !ctx.city.is_mode_unlocked(PlayMode::ValhallaBlitz) {
+                    ctx.status_notice_key =
+                        Some(PlayMode::ValhallaBlitz.unlock_hint_key().to_string());
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     rebuild = true;
+                    continue;
                 }
-            },
-            CityAction::StartTrial(trial_id) => match ctx.start_trial(trial_id) {
-                Ok(()) => {
-                    next_state.set(AppState::Match3);
-                    return;
+                match ctx.start_valhalla_blitz() {
+                    Ok(()) => {
+                        next_state.set(AppState::Match3);
+                        return;
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        rebuild = true;
+                    }
                 }
-                Err(err_key) => {
-                    ctx.status_notice_key = Some(err_key.to_string());
+            }
+            CityAction::StartTrial(trial_id) => {
+                if !ctx.city.is_mode_unlocked(PlayMode::YggdrasilTrials) {
+                    ctx.status_notice_key =
+                        Some(PlayMode::YggdrasilTrials.unlock_hint_key().to_string());
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     rebuild = true;
+                    continue;
                 }
-            },
-            CityAction::StartGauntlet => match ctx.start_gauntlet() {
-                Ok(()) => {
-                    next_state.set(AppState::Match3);
-                    return;
+                match ctx.start_trial(trial_id) {
+                    Ok(()) => {
+                        next_state.set(AppState::Match3);
+                        return;
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        rebuild = true;
+                    }
                 }
-                Err(err_key) => {
-                    ctx.status_notice_key = Some(err_key.to_string());
+            }
+            CityAction::StartGauntlet => {
+                if !ctx.city.is_mode_unlocked(PlayMode::BossRaids) {
+                    ctx.status_notice_key = Some(PlayMode::BossRaids.unlock_hint_key().to_string());
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     rebuild = true;
+                    continue;
                 }
-            },
+                match ctx.start_gauntlet() {
+                    Ok(()) => {
+                        next_state.set(AppState::Match3);
+                        return;
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        rebuild = true;
+                    }
+                }
+            }
             CityAction::PickExpeditionBoon(idx) => match ctx.continue_expedition_with_boon(*idx) {
                 Ok(()) => {
                     next_state.set(AppState::Match3);
@@ -2916,17 +2951,25 @@ pub fn handle_city_buttons(
                 ctx.persist();
                 rebuild = true;
             }
-            CityAction::FightBoss(boss_id) => match ctx.start_boss_raid(boss_id) {
-                Ok(()) => {
-                    next_state.set(AppState::Match3);
-                    return;
-                }
-                Err(err_key) => {
-                    ctx.status_notice_key = Some(err_key.to_string());
+            CityAction::FightBoss(boss_id) => {
+                if !ctx.city.is_mode_unlocked(PlayMode::BossRaids) {
+                    ctx.status_notice_key = Some(PlayMode::BossRaids.unlock_hint_key().to_string());
                     play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                     rebuild = true;
+                    continue;
                 }
-            },
+                match ctx.start_boss_raid(boss_id) {
+                    Ok(()) => {
+                        next_state.set(AppState::Match3);
+                        return;
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        rebuild = true;
+                    }
+                }
+            }
             CityAction::SelectPatron(god) => {
                 ctx.city.selected_patron = *god;
                 ctx.persist();
@@ -3019,7 +3062,10 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::PlayDailyTrial => {
-                if ctx.city.is_daily_available(today_day_index()) {
+                if !ctx.city.is_mode_unlocked(PlayMode::DailyTrial) {
+                    ctx.status_notice_key =
+                        Some(PlayMode::DailyTrial.unlock_hint_key().to_string());
+                } else if ctx.city.is_daily_available(today_day_index()) {
                     match ctx.start_daily_trial() {
                         Ok(()) => {
                             next_state.set(AppState::Match3);
@@ -3143,6 +3189,19 @@ pub fn handle_city_buttons(
                 rebuild = true;
             }
             CityAction::ToggleModal(modal) => {
+                let gated_mode = match modal {
+                    ActiveModal::Raids => Some(PlayMode::BossRaids),
+                    ActiveModal::Trials => Some(PlayMode::YggdrasilTrials),
+                    _ => None,
+                };
+                if let Some(mode) = gated_mode {
+                    if !ctx.city.is_mode_unlocked(mode) {
+                        ctx.status_notice_key = Some(mode.unlock_hint_key().to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        rebuild = true;
+                        continue;
+                    }
+                }
                 if ctx.active_modal == ActiveModal::ChapterDialogue {
                     ctx.pending_dialogue = None;
                 }
