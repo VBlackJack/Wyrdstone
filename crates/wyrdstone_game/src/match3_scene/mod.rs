@@ -1077,7 +1077,7 @@ fn update_selection_marker(
     markers: &Query<Entity, With<SelectionMarker>>,
 ) {
     for e in markers {
-        commands.entity(e).despawn();
+        commands.entity(e).try_despawn();
     }
     if let Some(sel) = layout.selected {
         let w = cell_to_world(sel, layout);
@@ -1101,7 +1101,7 @@ fn update_kbd_cursor_marker(
     markers: &Query<Entity, With<KeyboardCursorMarker>>,
 ) {
     for e in markers {
-        commands.entity(e).despawn();
+        commands.entity(e).try_despawn();
     }
     if let Some(cur) = layout.kbd_cursor {
         let w = cell_to_world(cur, layout);
@@ -1926,10 +1926,10 @@ pub fn handle_board_pointer_input(
     }
     if !input_state.is_idle() || ctx.active_modal == ActiveModal::Help {
         for e in &hover_overlays {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
         }
         for e in &drag_highlights {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
         }
         input_state.hover_cell = None;
         input_state.drag_highlight_cell = None;
@@ -2069,13 +2069,13 @@ pub fn handle_board_pointer_input(
     let overlays_stale = std::mem::take(&mut input_state.overlays_stale);
     if overlays_stale {
         for e in &drag_highlights {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
         }
     }
     if hovered != input_state.hover_cell || overlays_stale {
         input_state.hover_cell = hovered;
         for e in &hover_overlays {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
         }
         if let (Some(tool), Some(cell), Some(session)) =
             (ctx.armed_tool, hovered, &ctx.active_session)
@@ -2377,10 +2377,47 @@ pub fn handle_board_pointer_input(
             None
         };
 
-        if candidate_target != input_state.drag_highlight_cell {
+        if delta.length() >= swipe_threshold {
+            input_state.drag_cancelled = false;
+            input_state.drag_origin_cell = None;
+            input_state.drag_origin_screen = None;
+            input_state.drag_highlight_cell = None;
+            for e in &drag_highlights {
+                commands.entity(e).try_despawn();
+            }
+            if ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
+                for (mut t, mut node) in &mut tooltip_q {
+                    t.0.clear();
+                    node.display = Display::None;
+                }
+            }
+            if let Some(nb) = candidate_target {
+                if start_swap_animation(origin_cell, nb, &ctx, &mut input_state) {
+                    update_selection_marker(
+                        &mut commands,
+                        &textures,
+                        &input_state,
+                        &selection_markers,
+                    );
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    haptics.send(HapticEvent(HapticKind::LightTap));
+                } else {
+                    update_selection_marker(
+                        &mut commands,
+                        &textures,
+                        &input_state,
+                        &selection_markers,
+                    );
+                    spawn_invalid_cell_flash(&mut commands, origin_cell, &input_state);
+                    spawn_invalid_cell_flash(&mut commands, nb, &input_state);
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    haptics.send(HapticEvent(HapticKind::Error));
+                }
+            }
+        } else if candidate_target != input_state.drag_highlight_cell {
             input_state.drag_highlight_cell = candidate_target;
             for e in &drag_highlights {
-                commands.entity(e).despawn();
+                commands.entity(e).try_despawn();
             }
             if let Some(hl) = candidate_target {
                 let fusion = ctx
@@ -2432,45 +2469,6 @@ pub fn handle_board_pointer_input(
                 }
             }
         }
-
-        if delta.length() >= swipe_threshold {
-            input_state.drag_cancelled = false;
-            input_state.drag_origin_cell = None;
-            input_state.drag_origin_screen = None;
-            input_state.drag_highlight_cell = None;
-            for e in &drag_highlights {
-                commands.entity(e).despawn();
-            }
-            if ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
-                for (mut t, mut node) in &mut tooltip_q {
-                    t.0.clear();
-                    node.display = Display::None;
-                }
-            }
-            if let Some(nb) = candidate_target {
-                if start_swap_animation(origin_cell, nb, &ctx, &mut input_state) {
-                    update_selection_marker(
-                        &mut commands,
-                        &textures,
-                        &input_state,
-                        &selection_markers,
-                    );
-                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
-                    haptics.send(HapticEvent(HapticKind::LightTap));
-                } else {
-                    update_selection_marker(
-                        &mut commands,
-                        &textures,
-                        &input_state,
-                        &selection_markers,
-                    );
-                    spawn_invalid_cell_flash(&mut commands, origin_cell, &input_state);
-                    spawn_invalid_cell_flash(&mut commands, nb, &input_state);
-                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
-                    haptics.send(HapticEvent(HapticKind::Error));
-                }
-            }
-        }
     }
 
     if released {
@@ -2482,7 +2480,7 @@ pub fn handle_board_pointer_input(
         input_state.drag_origin_screen = None;
         input_state.drag_highlight_cell = None;
         for e in &drag_highlights {
-            commands.entity(e).despawn();
+            commands.entity(e).try_despawn();
         }
         if ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
             for (mut t, mut node) in &mut tooltip_q {

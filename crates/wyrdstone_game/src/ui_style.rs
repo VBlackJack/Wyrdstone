@@ -202,7 +202,7 @@ pub fn tick_screen_fades(
     for (entity, mut fade, mut bg) in &mut fades {
         fade.elapsed += dt;
         if fade.elapsed >= fade.duration {
-            commands.entity(entity).despawn();
+            commands.entity(entity).try_despawn();
             continue;
         }
         let t = (fade.elapsed / fade.duration).clamp(0.0, 1.0);

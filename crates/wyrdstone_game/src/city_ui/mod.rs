@@ -4255,7 +4255,7 @@ pub fn animate_city_ambience(
         ring.elapsed += dt;
         let u = (ring.elapsed / ring.duration).clamp(0.0, 1.0);
         if u >= 1.0 || ctx.reduced_motion {
-            commands.entity(entity).despawn();
+            commands.entity(entity).try_despawn();
         } else {
             let eased = 1.0 - (1.0 - u) * (1.0 - u);
             tf.scale = Vec3::splat(0.35 + eased * 1.45);

@@ -214,7 +214,7 @@ fn replace_bgm(
     bgm_volume: f32,
 ) {
     for entity in tracks {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).try_despawn_recursive();
     }
     commands.spawn((
         BgmTrack,
