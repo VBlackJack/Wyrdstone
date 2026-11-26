@@ -315,9 +315,9 @@ checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "bevy"
-version = "0.15.3"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eaad7fe854258047680c51c3cacb804468553c04241912f6254c841c67c0198"
+checksum = "3f7715ae81a5b4b0839d5d515db2bbadb09abf1bb5ac5c721aa6a6edc06d7f33"
 dependencies = [
  "bevy_internal",
 ]
@@ -638,9 +638,9 @@ dependencies = [
 
 [[package]]
 name = "bevy_internal"
-version = "0.15.3"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1e0c1d980d276e11558184d0627c8967ad8b70dab3e54a0f377bb53b98515b6"
+checksum = "855d919ea737d7ff90b5225662ae8fb6294ab5fec587658e2ecd557149ca8a31"
 dependencies = [
  "bevy_a11y",
  "bevy_app",
@@ -1097,9 +1097,9 @@ dependencies = [
 
 [[package]]
 name = "bevy_winit"
-version = "0.15.3"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e158a73d6d896b1600a61bc115017707ecb467d1a5ad49231c5e58294f6f6e13"
+checksum = "d17bb9a8635b492882d9bb50d1cca76980d00073d634deb6da61746c52294307"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -4984,6 +4984,7 @@ name = "wyrdstone_game"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_winit",
  "directories",
  "rand",
  "winit",

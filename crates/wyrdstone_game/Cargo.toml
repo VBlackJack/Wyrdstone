@@ -24,7 +24,8 @@ path = "src/main.rs"
 [dependencies]
 wyrdstone_core = { path = "../wyrdstone_core" }
 rand.workspace = true
-bevy = { version = "0.15", default-features = false, features = [
+# Pin Bevy 0.15.2: 0.15.3 gates about_to_wait redraws on Windows (#17488/#18065), freezing resizes.
+bevy = { version = "=0.15.2", default-features = false, features = [
     "bevy_winit",
     "bevy_render",
     "bevy_core_pipeline",
@@ -39,6 +40,7 @@ bevy = { version = "0.15", default-features = false, features = [
     "multi_threaded",
     "tonemapping_luts",
 ] }
+bevy_winit = { version = "=0.15.2", default-features = false }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 directories = "5.0"
@@ -48,7 +50,7 @@ winit = "0.30"
 winresource = "0.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
-bevy = { version = "0.15", default-features = false, features = ["android-native-activity"] }
+bevy = { version = "=0.15.2", default-features = false, features = ["android-native-activity"] }
 
 [package.metadata.android]
 package = "com.julienbombled.wyrdstone"
