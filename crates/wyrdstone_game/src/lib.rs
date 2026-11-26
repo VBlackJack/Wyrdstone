@@ -145,8 +145,19 @@ pub fn run_app() {
         ),
     )
     .add_systems(Startup, enter_title_after_boot)
-    .add_systems(PreUpdate, map_back_key_to_escape.after(InputSystem))
-    .add_systems(
+    .add_systems(PreUpdate, map_back_key_to_escape.after(InputSystem));
+    #[cfg(target_os = "android")]
+    {
+        app.add_systems(
+            Startup,
+            platform::sync_android_safe_area.before(enter_title_after_boot),
+        )
+        .add_systems(
+            PreUpdate,
+            platform::sync_android_safe_area.before(InputSystem),
+        );
+    }
+    app.add_systems(
         Update,
         (
             tick_energy_regen,
@@ -240,8 +251,8 @@ pub fn run_app() {
         )
             .run_if(in_state(AppState::LevelResult)),
     )
-    .add_systems(OnExit(AppState::LevelResult), result_ui::cleanup_result_ui)
-    .run();
+    .add_systems(OnExit(AppState::LevelResult), result_ui::cleanup_result_ui);
+    app.run();
 }
 
 fn setup_camera(

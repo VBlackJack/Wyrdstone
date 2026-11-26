@@ -1774,10 +1774,10 @@ pub(super) fn spawn_match3_hud(
                 },
                 padding: if is_mobile {
                     UiRect {
-                        left: Val::Px(6.0 + safe.left),
-                        right: Val::Px(6.0 + safe.right),
-                        top: Val::Px(6.0 + safe.top),
-                        bottom: Val::Px(6.0 + safe.bottom),
+                        left: Val::Px(4.0 + safe.left),
+                        right: Val::Px(4.0 + safe.right),
+                        top: Val::Px(4.0 + safe.top),
+                        bottom: Val::Px(4.0 + safe.bottom),
                     }
                 } else {
                     UiRect {
@@ -3059,8 +3059,8 @@ fn spawn_portrait_top_bar(
         Node {
             width: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(4.0),
-            padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
+            row_gap: Val::Px(3.0),
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
             ..default()
         },
         panel_shadow(),
@@ -3134,8 +3134,8 @@ fn spawn_portrait_bottom_dock(
             width: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Stretch,
-            row_gap: Val::Px(4.0),
-            padding: UiRect::axes(Val::Px(6.0), Val::Px(5.0)),
+            row_gap: Val::Px(3.0),
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
             ..default()
         },
         panel_shadow(),

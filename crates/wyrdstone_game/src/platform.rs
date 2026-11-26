@@ -17,13 +17,31 @@
 //! Responsive layout breakpoints, mobile safe-area insets, and platform haptic feedback events.
 
 use bevy::prelude::*;
+#[cfg(target_os = "android")]
+use bevy::window::PrimaryWindow;
+
+/// Android portrait safe-area top status bar clearance in logical px.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub const ANDROID_PORTRAIT_SAFE_TOP_PX: f32 = 28.0;
+/// Android portrait gesture bar clearance in logical px.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub const ANDROID_PORTRAIT_SAFE_BOTTOM_PX: f32 = 20.0;
+/// Android landscape immersive top clearance in logical px.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub const ANDROID_LANDSCAPE_SAFE_TOP_PX: f32 = 4.0;
+/// Android landscape gesture bar clearance in logical px.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub const ANDROID_LANDSCAPE_SAFE_BOTTOM_PX: f32 = 8.0;
+/// Symmetric Android landscape display cutout clearance on left/right edges in logical px.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub const ANDROID_LANDSCAPE_SAFE_X_PX: f32 = 24.0;
 
 /// Responsive layout mode shared between PC desktop and mobile viewports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HudLayoutMode {
     /// Narrow or vertical screen (e.g. smartphone portrait).
     Portrait,
-    /// Wide, short landscape phone screen (e.g. `667x375` or `844x390`).
+    /// Wide, short landscape phone screen (e.g. `667x375`, `844x390`, `1090x490`).
     PhoneLandscape,
     /// Medium landscape screen (tablet or small desktop window).
     Compact,
@@ -37,14 +55,19 @@ impl HudLayoutMode {
     pub const PORTRAIT_MAX_WIDTH: f32 = 760.0;
     pub const PHONE_LANDSCAPE_MAX_HEIGHT: f32 = 560.0;
     pub const PHONE_LANDSCAPE_MIN_ASPECT: f32 = 1.25;
+    /// Short wide phones (`>= 1060px` logical width, `< 500px` logical height) use PhoneLandscape.
+    pub const WIDE_PHONE_LANDSCAPE_MAX_HEIGHT: f32 = 500.0;
+    pub const WIDE_PHONE_LANDSCAPE_MIN_ASPECT: f32 = 1.6;
 
     /// Classifies a logical viewport size into the best-fit ergonomics mode.
     pub fn from_viewport(win_w: f32, win_h: f32) -> Self {
         if win_h > win_w {
             Self::Portrait
-        } else if win_h < Self::PHONE_LANDSCAPE_MAX_HEIGHT
+        } else if (win_h < Self::PHONE_LANDSCAPE_MAX_HEIGHT
             && win_w < Self::DESKTOP_WIDE_MIN_WIDTH
-            && win_w >= win_h * Self::PHONE_LANDSCAPE_MIN_ASPECT
+            && win_w >= win_h * Self::PHONE_LANDSCAPE_MIN_ASPECT)
+            || (win_h < Self::WIDE_PHONE_LANDSCAPE_MAX_HEIGHT
+                && win_w >= win_h * Self::WIDE_PHONE_LANDSCAPE_MIN_ASPECT)
         {
             Self::PhoneLandscape
         } else if win_w < Self::PORTRAIT_MAX_WIDTH {
@@ -82,7 +105,7 @@ impl HudLayoutMode {
 }
 
 /// Safe-area padding in logical pixels to clear notches, status bars, and gesture bars.
-#[derive(Resource, Debug, Clone, Copy)]
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
 pub struct SafeAreaInsets {
     pub top: f32,
     pub bottom: f32,
@@ -90,13 +113,35 @@ pub struct SafeAreaInsets {
     pub right: f32,
 }
 
+impl SafeAreaInsets {
+    /// Returns orientation-aware Android safe-area insets for a logical viewport size.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn for_android_viewport(win_w: f32, win_h: f32) -> Self {
+        if win_w > win_h {
+            Self {
+                top: ANDROID_LANDSCAPE_SAFE_TOP_PX,
+                bottom: ANDROID_LANDSCAPE_SAFE_BOTTOM_PX,
+                left: ANDROID_LANDSCAPE_SAFE_X_PX,
+                right: ANDROID_LANDSCAPE_SAFE_X_PX,
+            }
+        } else {
+            Self {
+                top: ANDROID_PORTRAIT_SAFE_TOP_PX,
+                bottom: ANDROID_PORTRAIT_SAFE_BOTTOM_PX,
+                left: 0.0,
+                right: 0.0,
+            }
+        }
+    }
+}
+
 impl Default for SafeAreaInsets {
     fn default() -> Self {
         #[cfg(target_os = "android")]
         {
             Self {
-                top: 28.0,
-                bottom: 20.0,
+                top: ANDROID_PORTRAIT_SAFE_TOP_PX,
+                bottom: ANDROID_PORTRAIT_SAFE_BOTTOM_PX,
                 left: 0.0,
                 right: 0.0,
             }
@@ -110,6 +155,21 @@ impl Default for SafeAreaInsets {
                 right: 0.0,
             }
         }
+    }
+}
+
+/// Keeps `SafeAreaInsets` aligned with portrait/landscape orientation on Android before Update UI systems run.
+#[cfg(target_os = "android")]
+pub fn sync_android_safe_area(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut safe_area: ResMut<SafeAreaInsets>,
+) {
+    let Ok(win) = windows.get_single() else {
+        return;
+    };
+    let next = SafeAreaInsets::for_android_viewport(win.width(), win.height());
+    if *safe_area != next {
+        *safe_area = next;
     }
 }
 
@@ -288,9 +348,15 @@ mod tests {
             HudLayoutMode::from_viewport(500.0, 500.0),
             HudLayoutMode::Portrait
         );
-        for &(w, h) in &[(667.0, 375.0), (844.0, 390.0), (915.0, 412.0)] {
+        for &(w, h) in &[
+            (667.0, 375.0),
+            (844.0, 390.0),
+            (915.0, 412.0),
+            (1090.0, 490.0),
+            (1180.0, 480.0),
+        ] {
             let m = HudLayoutMode::from_viewport(w, h);
-            assert_eq!(m, HudLayoutMode::PhoneLandscape);
+            assert_eq!(m, HudLayoutMode::PhoneLandscape, "viewport {w}x{h}");
             assert!(m.is_phone_landscape());
             assert!(m.is_mobile());
             assert!(m.uses_side_rails());
@@ -307,6 +373,10 @@ mod tests {
         assert!(HudLayoutMode::Portrait.is_compact());
         assert!(HudLayoutMode::Portrait.is_mobile());
         assert_eq!(
+            HudLayoutMode::from_viewport(1100.0, 500.0),
+            HudLayoutMode::DesktopWide
+        );
+        assert_eq!(
             HudLayoutMode::from_viewport(1280.0, 540.0),
             HudLayoutMode::DesktopWide
         );
@@ -322,5 +392,20 @@ mod tests {
             HudLayoutMode::from_viewport(3440.0, 1440.0),
             HudLayoutMode::DesktopWide
         );
+    }
+
+    #[test]
+    fn android_safe_area_adapts_symmetrically_for_landscape_and_portrait() {
+        let portrait = SafeAreaInsets::for_android_viewport(390.0, 844.0);
+        assert_eq!(portrait.top, ANDROID_PORTRAIT_SAFE_TOP_PX);
+        assert_eq!(portrait.bottom, ANDROID_PORTRAIT_SAFE_BOTTOM_PX);
+        assert_eq!(portrait.left, 0.0);
+        assert_eq!(portrait.right, 0.0);
+
+        let landscape = SafeAreaInsets::for_android_viewport(844.0, 390.0);
+        assert_eq!(landscape.top, ANDROID_LANDSCAPE_SAFE_TOP_PX);
+        assert_eq!(landscape.bottom, ANDROID_LANDSCAPE_SAFE_BOTTOM_PX);
+        assert_eq!(landscape.left, ANDROID_LANDSCAPE_SAFE_X_PX);
+        assert_eq!(landscape.left, landscape.right);
     }
 }

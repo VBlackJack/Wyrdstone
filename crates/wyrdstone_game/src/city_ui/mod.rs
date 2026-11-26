@@ -228,11 +228,15 @@ pub(super) enum InspectorTab {
     Upgrade,
 }
 
+/// Width threshold in PhoneLandscape below which the top bar hides the title column to fit on one row.
+const PHONE_LANDSCAPE_COMPACT_BAR_WIDTH_PX: f32 = 760.0;
+
 /// Tracks City layout mode, displayed endurance, audio state, and periodic harvest readiness checks.
 #[derive(Resource)]
 pub struct CityLayoutMode {
     pub hud_mode: HudLayoutMode,
     pub is_portrait: bool,
+    pub last_hide_landscape_title: bool,
     #[cfg(not(target_os = "android"))]
     pub last_fullscreen: bool,
     pub active_drawer: CityDrawer,
@@ -387,6 +391,8 @@ pub fn setup_city_ui(
     commands.insert_resource(CityLayoutMode {
         hud_mode,
         is_portrait,
+        last_hide_landscape_title: hud_mode.is_phone_landscape()
+            && win_w < PHONE_LANDSCAPE_COMPACT_BAR_WIDTH_PX,
         #[cfg(not(target_os = "android"))]
         last_fullscreen: _is_fullscreen,
         active_drawer: CityDrawer::None,
@@ -613,7 +619,14 @@ fn spawn_city_tree(
             BackgroundColor(COLOR_BG_DEEP),
         ))
         .with_children(|viewport| {
-            // 0. Dimmed cover backdrop behind the exact-aspect interactive Fjord canvas.
+            let map_tint = match ctx.city.realm_theme() {
+                RealmTheme::Midgard => Color::WHITE,
+                RealmTheme::Jotunheim => Color::srgba(0.88, 0.95, 1.04, 1.0),
+                RealmTheme::Nidavellir => Color::srgba(1.04, 0.88, 0.80, 1.0),
+                RealmTheme::Vanaheim => Color::srgba(0.90, 1.04, 0.90, 1.0),
+                RealmTheme::Asgard => Color::srgba(1.00, 0.94, 1.06, 1.0),
+            };
+            // 0. Cover-scaled Fjord backdrop behind interactive map canvas (directly carries Portrait art without 16:9 stretch).
             viewport
                 .spawn((
                     Node {
@@ -631,12 +644,16 @@ fn spawn_city_tree(
                     PickingBehavior::IGNORE,
                 ))
                 .with_children(|bg_wrap| {
-                    let backdrop_tint = match ctx.city.realm_theme() {
-                        RealmTheme::Midgard => Color::srgba(0.28, 0.34, 0.44, 1.0),
-                        RealmTheme::Jotunheim => Color::srgba(0.20, 0.34, 0.50, 1.0),
-                        RealmTheme::Nidavellir => Color::srgba(0.38, 0.24, 0.22, 1.0),
-                        RealmTheme::Vanaheim => Color::srgba(0.20, 0.36, 0.28, 1.0),
-                        RealmTheme::Asgard => Color::srgba(0.30, 0.26, 0.46, 1.0),
+                    let backdrop_tint = if is_portrait {
+                        map_tint
+                    } else {
+                        match ctx.city.realm_theme() {
+                            RealmTheme::Midgard => Color::srgba(0.28, 0.34, 0.44, 1.0),
+                            RealmTheme::Jotunheim => Color::srgba(0.20, 0.34, 0.50, 1.0),
+                            RealmTheme::Nidavellir => Color::srgba(0.38, 0.24, 0.22, 1.0),
+                            RealmTheme::Vanaheim => Color::srgba(0.20, 0.36, 0.28, 1.0),
+                            RealmTheme::Asgard => Color::srgba(0.30, 0.26, 0.46, 1.0),
+                        }
                     };
                     bg_wrap.spawn((
                         FjordMapBackdrop,
@@ -651,13 +668,6 @@ fn spawn_city_tree(
                     ));
                 });
 
-            let map_tint = match ctx.city.realm_theme() {
-                RealmTheme::Midgard => Color::WHITE,
-                RealmTheme::Jotunheim => Color::srgba(0.88, 0.95, 1.04, 1.0),
-                RealmTheme::Nidavellir => Color::srgba(1.04, 0.88, 0.80, 1.0),
-                RealmTheme::Vanaheim => Color::srgba(0.90, 1.04, 0.90, 1.0),
-                RealmTheme::Asgard => Color::srgba(1.00, 0.94, 1.06, 1.0),
-            };
             // 1. Centered 16:9 Interactive Fjord Map Canvas (pins stay pixel-locked across resolutions).
             viewport
                 .spawn((
@@ -675,154 +685,156 @@ fn spawn_city_tree(
                     PickingBehavior::IGNORE,
                 ))
                 .with_children(|stage| {
-                    stage
-                        .spawn((
-                            FjordMapContainer,
-                            Button,
-                            NoButtonScale,
-                            CityAction::CloseInspector,
+                    let mut map_cmd = stage.spawn((
+                        FjordMapContainer,
+                        Button,
+                        NoButtonScale,
+                        CityAction::CloseInspector,
+                        Node {
+                            width: Val::Px(canvas_w),
+                            height: Val::Px(canvas_h),
+                            flex_shrink: 0.0,
+                            border: UiRect::all(Val::Px(if is_mobile { 0.0 } else { 1.5 })),
+                            overflow: Overflow::clip(),
+                            ..default()
+                        },
+                        BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.28)),
+                        BorderRadius::all(Val::Px(if is_mobile { 0.0 } else { 10.0 })),
+                    ));
+                    if is_portrait {
+                        map_cmd.insert(BackgroundColor(Color::NONE));
+                    } else {
+                        map_cmd.insert((
                             ImageNode::new(fjord_art.fjord_map.clone()).with_color(map_tint),
-                            Node {
-                                width: Val::Px(canvas_w),
-                                height: Val::Px(canvas_h),
-                                flex_shrink: 0.0,
-                                border: UiRect::all(Val::Px(if is_mobile { 0.0 } else { 1.5 })),
-                                overflow: Overflow::clip(),
-                                ..default()
-                            },
-                            BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.28)),
-                            BorderRadius::all(Val::Px(if is_mobile { 0.0 } else { 10.0 })),
                             panel_shadow(),
-                        ))
-                        .with_children(|map| {
-                            // Animated Aurora Borealis ribbons glowing brighter with Clan Glory.
-                            let aurora_intensity =
-                                (0.14 + (ctx.city.glory as f32 / 1200.0)).min(0.38);
-                            let (aur0, aur1, aur2, wat0, wat1, wat2) = match ctx.city.realm_theme()
-                            {
-                                RealmTheme::Midgard => (
-                                    Color::srgba(0.18, 0.92, 0.68, aurora_intensity),
-                                    Color::srgba(0.24, 0.72, 0.98, aurora_intensity * 0.85),
-                                    Color::srgba(0.62, 0.36, 0.94, aurora_intensity * 0.75),
-                                    Color::srgba(0.22, 0.90, 0.78, 0.24),
-                                    Color::srgba(0.32, 0.80, 0.98, 0.20),
-                                    Color::srgba(0.24, 0.92, 0.74, 0.18),
-                                ),
-                                RealmTheme::Jotunheim => (
-                                    Color::srgba(0.28, 0.92, 1.00, aurora_intensity),
-                                    Color::srgba(0.36, 0.68, 1.00, aurora_intensity * 0.85),
-                                    Color::srgba(0.64, 0.88, 1.00, aurora_intensity * 0.75),
-                                    Color::srgba(0.34, 0.90, 1.00, 0.24),
-                                    Color::srgba(0.42, 0.76, 1.00, 0.20),
-                                    Color::srgba(0.30, 0.94, 0.96, 0.18),
-                                ),
-                                RealmTheme::Nidavellir => (
-                                    Color::srgba(1.00, 0.56, 0.20, aurora_intensity),
-                                    Color::srgba(0.96, 0.34, 0.24, aurora_intensity * 0.85),
-                                    Color::srgba(1.00, 0.78, 0.28, aurora_intensity * 0.75),
-                                    Color::srgba(1.00, 0.58, 0.24, 0.24),
-                                    Color::srgba(0.96, 0.42, 0.22, 0.20),
-                                    Color::srgba(1.00, 0.72, 0.28, 0.18),
-                                ),
-                                RealmTheme::Vanaheim => (
-                                    Color::srgba(0.32, 0.94, 0.54, aurora_intensity),
-                                    Color::srgba(0.66, 0.96, 0.38, aurora_intensity * 0.85),
-                                    Color::srgba(0.98, 0.82, 0.34, aurora_intensity * 0.75),
-                                    Color::srgba(0.34, 0.92, 0.58, 0.24),
-                                    Color::srgba(0.60, 0.94, 0.46, 0.20),
-                                    Color::srgba(0.92, 0.82, 0.36, 0.18),
-                                ),
-                                RealmTheme::Asgard => (
-                                    Color::srgba(0.98, 0.82, 0.34, aurora_intensity),
-                                    Color::srgba(0.66, 0.46, 0.98, aurora_intensity * 0.85),
-                                    Color::srgba(0.36, 0.88, 1.00, aurora_intensity * 0.75),
-                                    Color::srgba(0.98, 0.84, 0.40, 0.24),
-                                    Color::srgba(0.68, 0.52, 0.98, 0.20),
-                                    Color::srgba(0.40, 0.90, 1.00, 0.18),
-                                ),
-                            };
-                            let aurora_defs = [
-                                (8.0, 2.0, 48.0, 14.0, aur0, 0.0),
-                                (38.0, 5.0, 52.0, 12.0, aur1, 2.1),
-                                (18.0, 8.0, 44.0, 10.0, aur2, 4.2),
-                            ];
-                            for (left_p, top_p, w_p, h_p, col, phase) in aurora_defs {
-                                map.spawn((
-                                    FjordAurora {
-                                        base_left_pct: left_p,
-                                        phase,
-                                        base_alpha: col.alpha(),
-                                    },
-                                    ImageNode::new(vfx.aurora_ribbon.clone()).with_color(col),
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        left: Val::Percent(left_p),
-                                        top: Val::Percent(top_p),
-                                        width: Val::Percent(w_p),
-                                        height: Val::Percent(h_p + 4.0),
-                                        ..default()
-                                    },
-                                    PickingBehavior::IGNORE,
-                                ));
-                            }
+                        ));
+                    }
+                    map_cmd.with_children(|map| {
+                        // Animated Aurora Borealis ribbons glowing brighter with Clan Glory.
+                        let aurora_intensity = (0.14 + (ctx.city.glory as f32 / 1200.0)).min(0.38);
+                        let (aur0, aur1, aur2, wat0, wat1, wat2) = match ctx.city.realm_theme() {
+                            RealmTheme::Midgard => (
+                                Color::srgba(0.18, 0.92, 0.68, aurora_intensity),
+                                Color::srgba(0.24, 0.72, 0.98, aurora_intensity * 0.85),
+                                Color::srgba(0.62, 0.36, 0.94, aurora_intensity * 0.75),
+                                Color::srgba(0.22, 0.90, 0.78, 0.24),
+                                Color::srgba(0.32, 0.80, 0.98, 0.20),
+                                Color::srgba(0.24, 0.92, 0.74, 0.18),
+                            ),
+                            RealmTheme::Jotunheim => (
+                                Color::srgba(0.28, 0.92, 1.00, aurora_intensity),
+                                Color::srgba(0.36, 0.68, 1.00, aurora_intensity * 0.85),
+                                Color::srgba(0.64, 0.88, 1.00, aurora_intensity * 0.75),
+                                Color::srgba(0.34, 0.90, 1.00, 0.24),
+                                Color::srgba(0.42, 0.76, 1.00, 0.20),
+                                Color::srgba(0.30, 0.94, 0.96, 0.18),
+                            ),
+                            RealmTheme::Nidavellir => (
+                                Color::srgba(1.00, 0.56, 0.20, aurora_intensity),
+                                Color::srgba(0.96, 0.34, 0.24, aurora_intensity * 0.85),
+                                Color::srgba(1.00, 0.78, 0.28, aurora_intensity * 0.75),
+                                Color::srgba(1.00, 0.58, 0.24, 0.24),
+                                Color::srgba(0.96, 0.42, 0.22, 0.20),
+                                Color::srgba(1.00, 0.72, 0.28, 0.18),
+                            ),
+                            RealmTheme::Vanaheim => (
+                                Color::srgba(0.32, 0.94, 0.54, aurora_intensity),
+                                Color::srgba(0.66, 0.96, 0.38, aurora_intensity * 0.85),
+                                Color::srgba(0.98, 0.82, 0.34, aurora_intensity * 0.75),
+                                Color::srgba(0.34, 0.92, 0.58, 0.24),
+                                Color::srgba(0.60, 0.94, 0.46, 0.20),
+                                Color::srgba(0.92, 0.82, 0.36, 0.18),
+                            ),
+                            RealmTheme::Asgard => (
+                                Color::srgba(0.98, 0.82, 0.34, aurora_intensity),
+                                Color::srgba(0.66, 0.46, 0.98, aurora_intensity * 0.85),
+                                Color::srgba(0.36, 0.88, 1.00, aurora_intensity * 0.75),
+                                Color::srgba(0.98, 0.84, 0.40, 0.24),
+                                Color::srgba(0.68, 0.52, 0.98, 0.20),
+                                Color::srgba(0.40, 0.90, 1.00, 0.18),
+                            ),
+                        };
+                        let aurora_defs = [
+                            (8.0, 2.0, 48.0, 14.0, aur0, 0.0),
+                            (38.0, 5.0, 52.0, 12.0, aur1, 2.1),
+                            (18.0, 8.0, 44.0, 10.0, aur2, 4.2),
+                        ];
+                        for (left_p, top_p, w_p, h_p, col, phase) in aurora_defs {
+                            map.spawn((
+                                FjordAurora {
+                                    base_left_pct: left_p,
+                                    phase,
+                                    base_alpha: col.alpha(),
+                                },
+                                ImageNode::new(vfx.aurora_ribbon.clone()).with_color(col),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Percent(left_p),
+                                    top: Val::Percent(top_p),
+                                    width: Val::Percent(w_p),
+                                    height: Val::Percent(h_p + 4.0),
+                                    ..default()
+                                },
+                                PickingBehavior::IGNORE,
+                            ));
+                        }
 
-                            // Rippling aurora reflections across the central Fjord bay water.
-                            let water_defs = [
-                                (34.0, 31.0, 26.0, 12.0, wat0, 0.4),
-                                (42.0, 37.0, 24.0, 11.0, wat1, 2.3),
-                                (48.0, 44.0, 20.0, 9.0, wat2, 4.1),
-                            ];
-                            for (left_p, top_p, w_p, h_p, col, phase) in water_defs {
-                                map.spawn((
-                                    FjordWaterShimmer {
-                                        base_left_pct: left_p,
-                                        phase,
-                                        base_alpha: col.alpha(),
-                                    },
-                                    ImageNode::new(vfx.water_glint.clone()).with_color(col),
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        left: Val::Percent(left_p),
-                                        top: Val::Percent(top_p),
-                                        width: Val::Percent(w_p),
-                                        height: Val::Percent(h_p),
-                                        ..default()
-                                    },
-                                    PickingBehavior::IGNORE,
-                                ));
-                            }
+                        // Rippling aurora reflections across the central Fjord bay water.
+                        let water_defs = [
+                            (34.0, 31.0, 26.0, 12.0, wat0, 0.4),
+                            (42.0, 37.0, 24.0, 11.0, wat1, 2.3),
+                            (48.0, 44.0, 20.0, 9.0, wat2, 4.1),
+                        ];
+                        for (left_p, top_p, w_p, h_p, col, phase) in water_defs {
+                            map.spawn((
+                                FjordWaterShimmer {
+                                    base_left_pct: left_p,
+                                    phase,
+                                    base_alpha: col.alpha(),
+                                },
+                                ImageNode::new(vfx.water_glint.clone()).with_color(col),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Percent(left_p),
+                                    top: Val::Percent(top_p),
+                                    width: Val::Percent(w_p),
+                                    height: Val::Percent(h_p),
+                                    ..default()
+                                },
+                                PickingBehavior::IGNORE,
+                            ));
+                        }
 
-                            for i in 0..SNOWFLAKE_COUNT {
-                                let x_pct = ((i * 37 + 11) % 96) as f32 + 2.0;
-                                let y_pct = ((i * 53 + 7) % 94) as f32 + 2.0;
-                                let size = if i % 3 == 0 { 7.0 } else { 4.5 };
-                                map.spawn((
-                                    FjordSnowflake {
-                                        base_x_pct: x_pct,
-                                        base_y_pct: y_pct,
-                                        x_pct,
-                                        y_pct,
-                                        speed_y: 4.5 + (i % 5) as f32 * 1.4,
-                                        phase: i as f32 * 0.9,
-                                    },
-                                    ImageNode::new(vfx.soft_orb.clone())
-                                        .with_color(Color::srgba(0.92, 0.97, 1.0, 0.62)),
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        left: Val::Percent(x_pct),
-                                        top: Val::Percent(y_pct),
-                                        width: Val::Px(size),
-                                        height: Val::Px(size),
-                                        ..default()
-                                    },
-                                    PickingBehavior::IGNORE,
-                                ));
-                            }
+                        for i in 0..SNOWFLAKE_COUNT {
+                            let x_pct = ((i * 37 + 11) % 96) as f32 + 2.0;
+                            let y_pct = ((i * 53 + 7) % 94) as f32 + 2.0;
+                            let size = if i % 3 == 0 { 7.0 } else { 4.5 };
+                            map.spawn((
+                                FjordSnowflake {
+                                    base_x_pct: x_pct,
+                                    base_y_pct: y_pct,
+                                    x_pct,
+                                    y_pct,
+                                    speed_y: 4.5 + (i % 5) as f32 * 1.4,
+                                    phase: i as f32 * 0.9,
+                                },
+                                ImageNode::new(vfx.soft_orb.clone())
+                                    .with_color(Color::srgba(0.92, 0.97, 1.0, 0.62)),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Percent(x_pct),
+                                    top: Val::Percent(y_pct),
+                                    width: Val::Px(size),
+                                    height: Val::Px(size),
+                                    ..default()
+                                },
+                                PickingBehavior::IGNORE,
+                            ));
+                        }
 
-                            let quest_target_bldg = ctx
-                                .city
-                                .active_quest(&ctx.data.quests)
-                                .and_then(|q| match &q.condition {
+                        let quest_target_bldg =
+                            ctx.city.active_quest(&ctx.data.quests).and_then(|q| {
+                                match &q.condition {
                                     QuestCondition::WinBuildingLevel { building_id, .. }
                                     | QuestCondition::ReachBuildingTier { building_id, .. } => {
                                         Some(building_id.as_str())
@@ -836,37 +848,38 @@ fn spawn_city_tree(
                                     | QuestCondition::CompleteDailyTrials { .. }
                                     | QuestCondition::DefeatBosses { .. }
                                     | QuestCondition::ReachExpeditionWave { .. } => None,
-                                });
-                            for b in &ctx.data.buildings {
-                                let is_quest_target = quest_target_bldg == Some(b.id.as_str());
-                                let is_just_built = just_built_id == Some(b.id.as_str());
-                                spawn_map_building_pin(
-                                    map,
-                                    b,
-                                    ctx,
-                                    fjord_art,
-                                    vfx,
-                                    is_quest_target,
-                                    is_just_built,
-                                    is_portrait,
-                                    is_mobile,
-                                    canvas_w,
-                                    canvas_h,
-                                    now,
-                                );
-                            }
-                            if ctx.city.is_wonder_unlocked(&ctx.data.buildings) {
-                                spawn_wonder_map_pin(
-                                    map,
-                                    ctx,
-                                    vfx,
-                                    is_portrait,
-                                    is_mobile,
-                                    canvas_w,
-                                    canvas_h,
-                                );
-                            }
-                        });
+                                }
+                            });
+                        for b in &ctx.data.buildings {
+                            let is_quest_target = quest_target_bldg == Some(b.id.as_str());
+                            let is_just_built = just_built_id == Some(b.id.as_str());
+                            spawn_map_building_pin(
+                                map,
+                                b,
+                                ctx,
+                                fjord_art,
+                                vfx,
+                                is_quest_target,
+                                is_just_built,
+                                is_portrait,
+                                is_mobile,
+                                canvas_w,
+                                canvas_h,
+                                now,
+                            );
+                        }
+                        if ctx.city.is_wonder_unlocked(&ctx.data.buildings) {
+                            spawn_wonder_map_pin(
+                                map,
+                                ctx,
+                                vfx,
+                                is_portrait,
+                                is_mobile,
+                                canvas_w,
+                                canvas_h,
+                            );
+                        }
+                    });
                 });
 
             // 2. Slim Floating Top HUD Bar + Contextual Banners (pass-through column wrapper).
@@ -901,11 +914,7 @@ fn spawn_city_tree(
                             sliced_panel_image(vfx),
                             Node {
                                 width: Val::Percent(100.0),
-                                flex_wrap: if is_phone_landscape {
-                                    FlexWrap::NoWrap
-                                } else {
-                                    FlexWrap::Wrap
-                                },
+                                flex_wrap: FlexWrap::Wrap,
                                 justify_content: JustifyContent::SpaceBetween,
                                 align_items: AlignItems::Center,
                                 padding: if is_phone_landscape {
@@ -922,95 +931,100 @@ fn spawn_city_tree(
                             panel_shadow(),
                         ))
                         .with_children(|bar| {
-                            // Left: Clan Identity & Rank
-                            bar.spawn(Node {
-                                flex_direction: FlexDirection::Column,
-                                align_items: AlignItems::FlexStart,
-                                row_gap: Val::Px(2.0),
-                                flex_shrink: 1.0,
-                                ..default()
-                            })
-                            .with_children(|col| {
-                                col.spawn((
-                                    Text::new(i18n.t("city.header.title")),
-                                    display_font(
-                                        fjord_art,
-                                        if is_phone_landscape {
-                                            FONT_SMALL + 1.5
-                                        } else if is_portrait {
-                                            FONT_BODY
-                                        } else {
-                                            FONT_HEADING - 2.0
-                                        },
-                                    ),
-                                    TextColor(COLOR_ACCENT_GOLD),
-                                ));
-                                if !is_phone_landscape {
-                                    let rank = ctx.city.clan_rank_with_balance(&ctx.data.balance);
-                                    let legend = ctx.city.legend_level(&ctx.data.balance);
-                                    let rank_label = if legend > 0 {
-                                        i18n.t_fmt(
-                                            "city.header.legend_rank",
-                                            &[
-                                                ("rank", i18n.t(rank.i18n_key()).to_string()),
-                                                ("level", legend.to_string()),
-                                            ],
-                                        )
-                                    } else {
-                                        i18n.t(rank.i18n_key()).to_string()
-                                    };
-                                    let mastery_label = i18n.t_fmt(
-                                        "city.header.mastery",
-                                        &[("glory", ctx.city.glory.to_string())],
-                                    );
-                                    let subtitle_line = if is_portrait {
-                                        i18n.t_fmt(
-                                            "city.header.subtitle_compact",
-                                            &[("rank", rank_label), ("mastery", mastery_label)],
-                                        )
-                                    } else {
-                                        let perk_label =
-                                            format_rank_perk(i18n, rank, &ctx.data.balance);
-                                        i18n.t_fmt(
-                                            "city.header.subtitle_full",
-                                            &[
-                                                ("rank", rank_label),
-                                                ("mastery", mastery_label),
-                                                ("perk", perk_label),
-                                            ],
-                                        )
-                                    };
+                            // Left: Clan Identity & Rank (hidden on very narrow PhoneLandscape so pills + nav fit cleanly on one row)
+                            let hide_landscape_title =
+                                is_phone_landscape && win_w < PHONE_LANDSCAPE_COMPACT_BAR_WIDTH_PX;
+                            if !hide_landscape_title {
+                                bar.spawn(Node {
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::FlexStart,
+                                    row_gap: Val::Px(2.0),
+                                    flex_shrink: 1.0,
+                                    ..default()
+                                })
+                                .with_children(|col| {
                                     col.spawn((
-                                        Text::new(subtitle_line),
-                                        TextFont {
-                                            font_size: FONT_SMALL,
-                                            ..default()
-                                        },
-                                        TextColor(COLOR_TEXT_MUTED),
+                                        Text::new(i18n.t("city.header.title")),
+                                        display_font(
+                                            fjord_art,
+                                            if is_phone_landscape {
+                                                FONT_SMALL + 1.5
+                                            } else if is_portrait {
+                                                FONT_BODY
+                                            } else {
+                                                FONT_HEADING - 2.0
+                                            },
+                                        ),
+                                        TextColor(COLOR_ACCENT_GOLD),
                                     ));
-                                }
-                                if ctx.city.realm_era > 0 && !is_phone_landscape {
-                                    let realm_lbl = i18n.t_fmt(
-                                        "city.header.realm_badge",
-                                        &[
-                                            (
-                                                "realm",
-                                                i18n.t(ctx.city.realm_theme().name_key())
-                                                    .to_string(),
-                                            ),
-                                            ("era", (ctx.city.realm_era + 1).to_string()),
-                                        ],
-                                    );
-                                    spawn_small_button_colored(
-                                        col,
-                                        &realm_lbl,
-                                        CityAction::ToggleModal(ActiveModal::Ascension),
-                                        COLOR_PANEL_CARD,
-                                        COLOR_ACCENT_TEAL_TEXT,
-                                        true,
-                                    );
-                                }
-                            });
+                                    if !is_phone_landscape {
+                                        let rank =
+                                            ctx.city.clan_rank_with_balance(&ctx.data.balance);
+                                        let legend = ctx.city.legend_level(&ctx.data.balance);
+                                        let rank_label = if legend > 0 {
+                                            i18n.t_fmt(
+                                                "city.header.legend_rank",
+                                                &[
+                                                    ("rank", i18n.t(rank.i18n_key()).to_string()),
+                                                    ("level", legend.to_string()),
+                                                ],
+                                            )
+                                        } else {
+                                            i18n.t(rank.i18n_key()).to_string()
+                                        };
+                                        let mastery_label = i18n.t_fmt(
+                                            "city.header.mastery",
+                                            &[("glory", ctx.city.glory.to_string())],
+                                        );
+                                        let subtitle_line = if is_portrait {
+                                            i18n.t_fmt(
+                                                "city.header.subtitle_compact",
+                                                &[("rank", rank_label), ("mastery", mastery_label)],
+                                            )
+                                        } else {
+                                            let perk_label =
+                                                format_rank_perk(i18n, rank, &ctx.data.balance);
+                                            i18n.t_fmt(
+                                                "city.header.subtitle_full",
+                                                &[
+                                                    ("rank", rank_label),
+                                                    ("mastery", mastery_label),
+                                                    ("perk", perk_label),
+                                                ],
+                                            )
+                                        };
+                                        col.spawn((
+                                            Text::new(subtitle_line),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(COLOR_TEXT_MUTED),
+                                        ));
+                                    }
+                                    if ctx.city.realm_era > 0 && !is_phone_landscape {
+                                        let realm_lbl = i18n.t_fmt(
+                                            "city.header.realm_badge",
+                                            &[
+                                                (
+                                                    "realm",
+                                                    i18n.t(ctx.city.realm_theme().name_key())
+                                                        .to_string(),
+                                                ),
+                                                ("era", (ctx.city.realm_era + 1).to_string()),
+                                            ],
+                                        );
+                                        spawn_small_button_colored(
+                                            col,
+                                            &realm_lbl,
+                                            CityAction::ToggleModal(ActiveModal::Ascension),
+                                            COLOR_PANEL_CARD,
+                                            COLOR_ACCENT_TEAL_TEXT,
+                                            true,
+                                        );
+                                    }
+                                });
+                            }
                             let compact_pill_h = if is_portrait { 36.0 } else { 32.0 };
                             let compact_btn_h = if is_phone_landscape {
                                 36.0
@@ -3792,9 +3806,12 @@ pub fn handle_city_buttons(
         }
         layout_mode.window_size = Vec2::new(ev.width, ev.height);
         let now_mode = HudLayoutMode::from_viewport(ev.width, ev.height);
-        if now_mode != layout_mode.hud_mode {
+        let hide_title =
+            now_mode.is_phone_landscape() && ev.width < PHONE_LANDSCAPE_COMPACT_BAR_WIDTH_PX;
+        if now_mode != layout_mode.hud_mode || hide_title != layout_mode.last_hide_landscape_title {
             layout_mode.hud_mode = now_mode;
             layout_mode.is_portrait = now_mode.is_portrait();
+            layout_mode.last_hide_landscape_title = hide_title;
             layout_mode.last_map_size = Vec2::ZERO;
             layout_mode.last_top_bar_height = 0.0;
             rebuild = true;

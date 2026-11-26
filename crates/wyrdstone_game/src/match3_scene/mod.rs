@@ -635,12 +635,32 @@ pub fn cleanup_match3_scene(
     commands.remove_resource::<Match3InputState>();
 }
 
+const BOARD_FRAME_PAD_DESKTOP_PX: f32 = 28.0;
+const BOARD_FRAME_PAD_MOBILE_PX: f32 = 16.0;
+const PORTRAIT_SIDE_MARGIN_PX: f32 = 4.0;
+const PHONE_LANDSCAPE_VERT_MARGIN_PX: f32 = 4.0;
+const PHONE_LANDSCAPE_RAIL_GAP_PX: f32 = 10.0;
+const PHONE_LANDSCAPE_RAIL_MIN_PX: f32 = 122.0;
+const PHONE_LANDSCAPE_RAIL_MAX_PX: f32 = 210.0;
+
+pub(super) fn board_frame_pad_px(hud_mode: HudLayoutMode) -> f32 {
+    if hud_mode.is_mobile() {
+        BOARD_FRAME_PAD_MOBILE_PX
+    } else {
+        BOARD_FRAME_PAD_DESKTOP_PX
+    }
+}
+
 pub(super) fn compute_phone_landscape_rail_width(
     win_w: f32,
     win_h: f32,
     safe: SafeAreaInsets,
 ) -> f32 {
-    ((win_w - win_h - safe.left - safe.right - 24.0) * 0.46).clamp(138.0, 214.0)
+    let safe_x = safe.left.max(safe.right);
+    let target_board_outer =
+        (win_h - PHONE_LANDSCAPE_VERT_MARGIN_PX * 2.0 - safe.top - safe.bottom).max(180.0);
+    ((win_w - target_board_outer - safe_x * 2.0 - PHONE_LANDSCAPE_RAIL_GAP_PX * 2.0) * 0.5)
+        .clamp(PHONE_LANDSCAPE_RAIL_MIN_PX, PHONE_LANDSCAPE_RAIL_MAX_PX)
 }
 
 pub(super) fn compute_board_layout(
@@ -653,45 +673,46 @@ pub(super) fn compute_board_layout(
 ) {
     let hud_mode = HudLayoutMode::from_viewport(win_w, win_h);
     layout.hud_mode = hud_mode;
-    const BOARD_FRAME_PAD_PX: f32 = 28.0;
+    let frame_pad = board_frame_pad_px(hud_mode);
+    let safe_x = safe.left.max(safe.right);
     let (avail_w, avail_h, top_reserved, bottom_reserved) = match hud_mode {
         HudLayoutMode::DesktopWide => {
             layout.side_rail_width_px = DESKTOP_SIDE_RAIL_WIDTH_PX;
-            let rail_total = (DESKTOP_SIDE_RAIL_WIDTH_PX + 24.0) * 2.0 + safe.left + safe.right;
+            let rail_total = (DESKTOP_SIDE_RAIL_WIDTH_PX + 24.0) * 2.0 + safe_x * 2.0;
             let top_res = DESKTOP_BOARD_VERTICAL_MARGIN_PX + safe.top;
             let bot_res = DESKTOP_BOARD_VERTICAL_MARGIN_PX + safe.bottom;
-            let aw = (win_w - rail_total - BOARD_FRAME_PAD_PX).max(180.0);
-            let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
+            let aw = (win_w - rail_total - frame_pad).max(180.0);
+            let ah = (win_h - top_res - bot_res - frame_pad).max(180.0);
             (aw, ah, top_res, bot_res)
         }
         HudLayoutMode::PhoneLandscape => {
             let rail_w = compute_phone_landscape_rail_width(win_w, win_h, safe);
             layout.side_rail_width_px = rail_w;
-            let rail_total = (rail_w + 14.0) * 2.0 + safe.left + safe.right;
-            let top_res = 8.0 + safe.top;
-            let bot_res = 8.0 + safe.bottom;
-            let aw = (win_w - rail_total - BOARD_FRAME_PAD_PX).max(160.0);
-            let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(160.0);
+            let rail_total = (rail_w + PHONE_LANDSCAPE_RAIL_GAP_PX) * 2.0 + safe_x * 2.0;
+            let top_res = PHONE_LANDSCAPE_VERT_MARGIN_PX + safe.top;
+            let bot_res = PHONE_LANDSCAPE_VERT_MARGIN_PX + safe.bottom;
+            let aw = (win_w - rail_total - frame_pad).max(160.0);
+            let ah = (win_h - top_res - bot_res - frame_pad).max(160.0);
             (aw, ah, top_res, bot_res)
         }
         HudLayoutMode::Compact => {
             let top_res = (BOARD_TOP_RESERVED_PX + safe.top).max(layout.measured_top_hud_px);
             let bot_res =
                 (BOARD_BOTTOM_RESERVED_PX + safe.bottom).max(layout.measured_bottom_hud_px);
-            let side_margin = BOARD_SIDE_MARGIN_PX + safe.left.max(safe.right);
-            let aw = (win_w - side_margin * 2.0 - BOARD_FRAME_PAD_PX).max(180.0);
-            let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
+            let side_margin = BOARD_SIDE_MARGIN_PX + safe_x;
+            let aw = (win_w - side_margin * 2.0 - frame_pad).max(180.0);
+            let ah = (win_h - top_res - bot_res - frame_pad).max(180.0);
             (aw, ah, top_res, bot_res)
         }
         HudLayoutMode::Portrait => {
             let narrow = win_w < 500.0;
-            let base_top = (if narrow { 104.0 } else { 96.0 }) + safe.top;
-            let base_bot = (if narrow { 78.0 } else { 74.0 }) + safe.bottom;
+            let base_top = (if narrow { 92.0 } else { 88.0 }) + safe.top;
+            let base_bot = (if narrow { 70.0 } else { 68.0 }) + safe.bottom;
             let top_res = base_top.max(layout.measured_top_hud_px);
             let bot_res = base_bot.max(layout.measured_bottom_hud_px);
-            let side_margin = 12.0 + safe.left.max(safe.right);
-            let aw = (win_w - side_margin * 2.0 - BOARD_FRAME_PAD_PX).max(180.0);
-            let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
+            let side_margin = PORTRAIT_SIDE_MARGIN_PX + safe_x;
+            let aw = (win_w - side_margin * 2.0 - frame_pad).max(180.0);
+            let ah = (win_h - top_res - bot_res - frame_pad).max(180.0);
             (aw, ah, top_res, bot_res)
         }
     };
@@ -759,8 +780,14 @@ pub(super) fn spawn_board_static_sprites(
 ) {
     let cols = session.board.cols();
     let rows = session.board.rows();
-    let board_w = cols as f32 * layout.cell_step + 28.0;
-    let board_h = rows as f32 * layout.cell_step + 28.0;
+    let frame_pad = board_frame_pad_px(layout.hud_mode);
+    let shadow_pad = if layout.hud_mode.is_mobile() {
+        10.0
+    } else {
+        18.0
+    };
+    let board_w = cols as f32 * layout.cell_step + frame_pad;
+    let board_h = rows as f32 * layout.cell_step + frame_pad;
     let center_y = layout.board_center_y;
 
     // Soft ambient shadow behind the sculpted stone board frame.
@@ -769,7 +796,7 @@ pub(super) fn spawn_board_static_sprites(
         BoardStaticEntity,
         Sprite {
             color: Color::srgba(0.02, 0.03, 0.06, 0.58),
-            custom_size: Some(Vec2::new(board_w + 18.0, board_h + 18.0)),
+            custom_size: Some(Vec2::new(board_w + shadow_pad, board_h + shadow_pad)),
             ..default()
         },
         Transform::from_xyz(0.0, center_y - 5.0, Z_BOARD_BG - 0.2),
@@ -2903,15 +2930,23 @@ pub fn sync_match3_visuals(
     {
         let (top_bar_q, bottom_bar_q, tooltip_vis_q) = &hud_measure_q;
         let mut needs_board_refit = false;
-        const HUD_OUTER_PAD_PX: f32 = 12.0;
-        const HUD_CLEARANCE_PX: f32 = 8.0;
+        let hud_outer_pad_px = if input_state.hud_mode.is_mobile() {
+            4.0
+        } else {
+            12.0
+        };
+        let hud_clearance_px = if input_state.hud_mode.is_mobile() {
+            4.0
+        } else {
+            8.0
+        };
         const HUD_REFIT_EPSILON_PX: f32 = 4.0;
         if let Ok(top_c) = top_bar_q.get_single() {
             let inv = top_c.inverse_scale_factor();
             if inv.is_finite() && inv > 0.0 {
                 let bar_h = top_c.size().y * inv;
                 if bar_h.is_finite() && bar_h > 1.0 {
-                    let needed = bar_h + HUD_OUTER_PAD_PX + safe_area.top + HUD_CLEARANCE_PX;
+                    let needed = bar_h + hud_outer_pad_px + safe_area.top + hud_clearance_px;
                     if input_state.measured_top_hud_px == 0.0
                         || (needed - input_state.measured_top_hud_px).abs() >= HUD_REFIT_EPSILON_PX
                     {
@@ -2931,7 +2966,7 @@ pub fn sync_match3_visuals(
                 if inv.is_finite() && inv > 0.0 {
                     let bar_h = bot_c.size().y * inv;
                     if bar_h.is_finite() && bar_h > 1.0 {
-                        let needed = bar_h + HUD_OUTER_PAD_PX + safe_area.bottom + HUD_CLEARANCE_PX;
+                        let needed = bar_h + hud_outer_pad_px + safe_area.bottom + hud_clearance_px;
                         if input_state.measured_bottom_hud_px == 0.0
                             || (needed - input_state.measured_bottom_hud_px).abs()
                                 >= HUD_REFIT_EPSILON_PX
@@ -3019,18 +3054,18 @@ mod tests {
     #[test]
     fn portrait_board_fits_phone_viewport_with_safe_area() {
         let mut state = Match3InputState::default();
-        let safe = SafeAreaInsets {
-            top: 28.0,
-            bottom: 20.0,
-            left: 0.0,
-            right: 0.0,
-        };
+        let safe = SafeAreaInsets::for_android_viewport(360.0, 780.0);
         compute_board_layout(360.0, 780.0, 8, 8, safe, &mut state);
         assert_eq!(state.hud_mode, HudLayoutMode::Portrait);
         assert!(state.is_compact_hud());
-        let board_w = state.cell_step * 8.0 + 28.0;
-        assert!(board_w <= 360.0 - 24.0 + 0.5);
-        assert!(state.cell_step >= MIN_TILE_SIZE_PX);
+        let frame_pad = board_frame_pad_px(state.hud_mode);
+        let board_w = state.cell_step * 8.0 + frame_pad;
+        assert!(board_w <= 360.0 - PORTRAIT_SIDE_MARGIN_PX * 2.0 + 0.5);
+        assert!(
+            state.cell_step >= 42.0,
+            "portrait tile step should fill maximized width, got {}",
+            state.cell_step
+        );
     }
 
     #[test]
@@ -3064,6 +3099,7 @@ mod tests {
             (360.0_f32, 640.0_f32, 96.0_f32, 70.0_f32),
             (384.0, 690.0, 96.0, 70.0),
             (390.0, 844.0, 102.0, 74.0),
+            (412.0, 915.0, 102.0, 74.0),
             (360.0, 560.0, 220.0, 130.0),
         ] {
             let mut state = Match3InputState {
@@ -3073,7 +3109,7 @@ mod tests {
             };
             compute_board_layout(w, h, 8, 8, safe, &mut state);
             assert_eq!(state.hud_mode, HudLayoutMode::Portrait);
-            let board_h = state.cell_step * 8.0 + 28.0;
+            let board_h = state.cell_step * 8.0 + board_frame_pad_px(state.hud_mode);
             let top_edge_px = h * 0.5 - (state.board_center_y + board_h * 0.5);
             let bottom_edge_px = h * 0.5 + (state.board_center_y - board_h * 0.5);
             assert!(
@@ -3089,27 +3125,49 @@ mod tests {
 
     #[test]
     fn phone_landscape_match3_board_uses_side_rails_and_fits_comfortably() {
-        let safe = SafeAreaInsets::default();
-        for &(w, h) in &[(667.0_f32, 375.0_f32), (844.0, 390.0), (915.0, 412.0)] {
-            let mut state = Match3InputState::default();
-            compute_board_layout(w, h, 8, 8, safe, &mut state);
-            assert_eq!(state.hud_mode, HudLayoutMode::PhoneLandscape);
-            assert!(
-                state.cell_step >= MIN_TILE_SIZE_PX,
-                "cell_step ({}) too small on {w}x{h}",
-                state.cell_step
-            );
-            let board_w = state.cell_step * 8.0 + 28.0;
-            let board_h = state.cell_step * 8.0 + 28.0;
-            let rail_clearance = w - (state.side_rail_width_px + 14.0) * 2.0;
-            assert!(
-                board_w <= rail_clearance + 0.5,
-                "board_w ({board_w}) overlaps side rails (clearance={rail_clearance}) at {w}x{h}"
-            );
-            assert!(
-                board_h <= h - 16.0 + 0.5,
-                "board_h ({board_h}) clips vertically at {w}x{h}"
-            );
+        for &(w, h, safe) in &[
+            (640.0_f32, 360.0_f32, SafeAreaInsets::default()),
+            (667.0, 375.0, SafeAreaInsets::default()),
+            (844.0, 390.0, SafeAreaInsets::default()),
+            (915.0, 412.0, SafeAreaInsets::default()),
+            (1090.0, 490.0, SafeAreaInsets::default()),
+            (
+                640.0,
+                360.0,
+                SafeAreaInsets::for_android_viewport(640.0, 360.0),
+            ),
+            (
+                844.0,
+                390.0,
+                SafeAreaInsets::for_android_viewport(844.0, 390.0),
+            ),
+        ] {
+            for &dim in &[8usize, 6usize] {
+                let mut state = Match3InputState::default();
+                compute_board_layout(w, h, dim, dim, safe, &mut state);
+                assert_eq!(state.hud_mode, HudLayoutMode::PhoneLandscape);
+                assert!(
+                    state.cell_step >= MIN_TILE_SIZE_PX,
+                    "cell_step ({}) too small for {dim}x{dim} on {w}x{h}",
+                    state.cell_step
+                );
+                let frame_pad = board_frame_pad_px(state.hud_mode);
+                let board_w = state.cell_step * dim as f32 + frame_pad;
+                let board_h = state.cell_step * dim as f32 + frame_pad;
+                let safe_x = safe.left.max(safe.right);
+                let rail_clearance = w
+                    - (state.side_rail_width_px + PHONE_LANDSCAPE_RAIL_GAP_PX) * 2.0
+                    - safe_x * 2.0;
+                assert!(
+                    board_w <= rail_clearance + 0.5,
+                    "board_w ({board_w}) overlaps side rails (clearance={rail_clearance}) at {w}x{h}"
+                );
+                assert!(
+                    board_h
+                        <= h - PHONE_LANDSCAPE_VERT_MARGIN_PX * 2.0 - safe.top - safe.bottom + 0.5,
+                    "board_h ({board_h}) clips vertically at {w}x{h}"
+                );
+            }
         }
     }
 }

@@ -36,6 +36,11 @@
       position: relative;
       background: #0d1117;
     }
+    :fullscreen #wyrdstone-stage,
+    :-webkit-full-screen #wyrdstone-stage {
+      width: 100vw !important;
+      height: 100vh !important;
+    }
     #wyrdstone-canvas {
       width: 100%;
       height: 100%;
@@ -184,7 +189,25 @@
       window.dispatchEvent(new Event("resize"));
     }
 
+    function syncStageViewport() {
+      if (!stageEl) return;
+      if (window.wyrdstoneIsFullscreen && window.wyrdstoneIsFullscreen()) {
+        stageEl.style.width = "";
+        stageEl.style.height = "";
+        return;
+      }
+      const vv = window.visualViewport;
+      if (vv && (vv.scale || 1) <= 1.01 && vv.width > 0 && vv.height > 0) {
+        stageEl.style.width = Math.round(vv.width) + "px";
+        stageEl.style.height = Math.round(vv.height) + "px";
+      } else {
+        stageEl.style.width = "";
+        stageEl.style.height = "";
+      }
+    }
+
     function scheduleCanvasResize() {
+      syncStageViewport();
       if (resizeRaf) {
         cancelAnimationFrame(resizeRaf);
       }
@@ -199,6 +222,8 @@
       resizeTimers.push(setTimeout(dispatchResize, 120));
       resizeTimers.push(setTimeout(dispatchResize, 320));
     }
+
+    syncStageViewport();
 
     if (typeof ResizeObserver === "function" && stageEl) {
       const stageObserver = new ResizeObserver((entries) => {
@@ -230,6 +255,7 @@
     }
     if (window.visualViewport) {
       window.visualViewport.addEventListener("resize", scheduleCanvasResize);
+      window.visualViewport.addEventListener("scroll", syncStageViewport);
     }
 
     window.wyrdstoneFullscreenSupported = function () {
