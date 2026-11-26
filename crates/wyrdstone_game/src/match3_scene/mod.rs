@@ -2615,7 +2615,16 @@ pub(super) fn start_swap_animation(
 type HudBarMeasureQueries<'w, 's> = (
     Query<'w, 's, &'static ComputedNode, With<Match3TopHudBar>>,
     Query<'w, 's, &'static ComputedNode, With<Match3BottomHudBar>>,
-    Query<'w, 's, &'static Node, With<Match3TooltipText>>,
+    Query<
+        'w,
+        's,
+        &'static Node,
+        (
+            With<Match3TooltipText>,
+            Without<Match3BossHpFill>,
+            Without<Match3FuryFill>,
+        ),
+    >,
 );
 
 /// Rebuilds static/dynamic board sprites and/or HUD when dirty flags are raised.

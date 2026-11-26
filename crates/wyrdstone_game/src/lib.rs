@@ -295,3 +295,58 @@ fn map_back_key_to_escape(
         }
     }
 }
+
+#[cfg(test)]
+mod system_param_tests {
+    use super::*;
+
+    fn assert_system_valid<M>(sys: impl IntoSystem<(), (), M>) {
+        let mut world = World::new();
+        let mut system = IntoSystem::into_system(sys);
+        system.initialize(&mut world);
+    }
+
+    #[test]
+    fn all_registered_systems_initialize_without_b0001_conflicts() {
+        // Shared Update & PreUpdate systems
+        assert_system_valid(enter_title_after_boot);
+        assert_system_valid(map_back_key_to_escape);
+        assert_system_valid(tick_energy_regen);
+        assert_system_valid(handle_global_shortcuts);
+        assert_system_valid(audio::handle_app_lifecycle);
+        assert_system_valid(scroll::handle_ui_scroll);
+        assert_system_valid(ui_style::tick_screen_fades);
+        assert_system_valid(ui_style::animate_button_feedback);
+        assert_system_valid(platform::handle_haptic_events);
+
+        // Title systems
+        assert_system_valid(title_ui::setup_title_ui);
+        assert_system_valid(title_ui::handle_title_buttons);
+        assert_system_valid(title_ui::animate_title_ambience);
+        assert_system_valid(title_ui::cleanup_title_ui);
+
+        // Fjord City systems
+        assert_system_valid(city_ui::setup_city_ui);
+        assert_system_valid(city_ui::handle_city_buttons);
+        assert_system_valid(city_ui::update_city_hover_tooltip);
+        assert_system_valid(city_ui::sync_map_building_layout);
+        assert_system_valid(city_ui::animate_fjord_harvest_orbs);
+        assert_system_valid(city_ui::animate_city_ambience);
+        assert_system_valid(city_ui::cleanup_city_ui);
+
+        // Match-3 systems
+        assert_system_valid(match3_scene::setup_match3_scene);
+        assert_system_valid(match3_scene::handle_match3_hud_buttons);
+        assert_system_valid(match3_scene::handle_board_pointer_input);
+        assert_system_valid(match3_scene::tick_board_animation);
+        assert_system_valid(match3_scene::sync_match3_visuals);
+        assert_system_valid(match3_scene::animate_particles);
+        assert_system_valid(match3_scene::cleanup_match3_scene);
+
+        // Level Result systems
+        assert_system_valid(result_ui::setup_result_ui);
+        assert_system_valid(result_ui::handle_result_buttons);
+        assert_system_valid(result_ui::animate_result_stars);
+        assert_system_valid(result_ui::cleanup_result_ui);
+    }
+}
