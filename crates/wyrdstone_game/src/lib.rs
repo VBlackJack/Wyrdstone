@@ -47,6 +47,11 @@ fn main() {
     run_app();
 }
 
+#[cfg(target_os = "windows")]
+const ENV_WGPU_BACKEND: &str = "WGPU_BACKEND";
+#[cfg(target_os = "windows")]
+const ENV_WGPU_DX12_COMPILER: &str = "WGPU_DX12_COMPILER";
+
 /// Configures and launches the Wyrdstone Bevy application.
 pub fn run_app() {
     let ctx = GameContext::initialize();
@@ -69,13 +74,30 @@ pub fn run_app() {
         ..default()
     };
 
-    // Keep Vulkan-first (with automatic fallback and WGPU_BACKEND env override), while disabling
-    // pipelined rendering on Windows so swapchain recreation runs on the main thread instead of
-    // deadlocking against vkCreateSwapchainKHR on resize/unmaximize.
+    // Default to DX12 with FXC and single-threaded rendering on Windows to avoid
+    // NVIDIA Vulkan swapchain freezes during window resize/unmaximize, while still
+    // honoring explicit WGPU_BACKEND / WGPU_DX12_COMPILER environment overrides.
     #[cfg(target_os = "windows")]
-    let plugins = DefaultPlugins
-        .set(window_plugin)
-        .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
+    let plugins = {
+        use bevy::render::settings::{Backends, Dx12Compiler, RenderCreation, WgpuSettings};
+        use bevy::render::RenderPlugin;
+
+        let mut wgpu_settings = WgpuSettings::default();
+        if std::env::var_os(ENV_WGPU_BACKEND).is_none() {
+            wgpu_settings.backends = Some(Backends::DX12);
+        }
+        if std::env::var_os(ENV_WGPU_DX12_COMPILER).is_none() {
+            wgpu_settings.dx12_shader_compiler = Dx12Compiler::Fxc;
+        }
+
+        DefaultPlugins
+            .set(window_plugin)
+            .set(RenderPlugin {
+                render_creation: RenderCreation::Automatic(wgpu_settings),
+                ..default()
+            })
+            .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
+    };
     #[cfg(not(target_os = "windows"))]
     let plugins = DefaultPlugins.set(window_plugin);
 
