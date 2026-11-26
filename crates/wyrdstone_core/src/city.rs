@@ -1146,6 +1146,26 @@ impl CityState {
             .try_claim_tier(tier, &mut self.resources, &mut self.tools, &mut self.glory)
     }
 
+    /// Claims every currently unlocked and unclaimed Skald's Path tier, returning
+    /// `(claimed_count, total_resources, granted_tools, total_glory)`.
+    pub fn try_claim_all_skald_tiers(&mut self) -> (usize, ResourceBundle, Vec<ActiveTool>, u32) {
+        let mut count = 0usize;
+        let mut total_res = ResourceBundle::default();
+        let mut tools = Vec::new();
+        let mut total_glory = 0u32;
+        for tier in 1..=crate::retention::SKALD_PASS_TIERS {
+            if let Some((res, tool_opt, glory)) = self.try_claim_skald_tier(tier) {
+                count += 1;
+                total_res.add(&res);
+                if let Some(tool) = tool_opt {
+                    tools.push(tool);
+                }
+                total_glory = total_glory.saturating_add(glory);
+            }
+        }
+        (count, total_res, tools, total_glory)
+    }
+
     /// Total claimable Daily Bounties and Skald's Path tiers.
     pub fn claimable_bounties_and_pass_count(&self) -> usize {
         self.daily_bounties

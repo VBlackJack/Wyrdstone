@@ -150,6 +150,10 @@ pub struct BoardTileVisual {
 #[derive(Component)]
 pub struct SelectionMarker;
 
+/// Static high-contrast hint ring marker placed on hinted cells (critical for reduced-motion mode).
+#[derive(Component)]
+pub struct HintRingMarker;
+
 /// Visible focus ring for keyboard grid navigation (Arrow keys + Enter).
 #[derive(Component)]
 pub struct KeyboardCursorMarker;
@@ -249,6 +253,7 @@ pub struct ToolHoverOverlay;
 pub enum Match3UiAction {
     Retreat,
     Undo,
+    RequestHint,
     ToggleHelp,
     SelectTool(ActiveTool),
     CancelTool,
@@ -514,6 +519,39 @@ pub fn setup_match3_scene(
                 None,
                 ctx.colorblind_mode,
             );
+            if !session.is_trial {
+                let mid = [CellPos::new(
+                    session.board.cols() / 2,
+                    session.board.rows() / 2,
+                )];
+                if session.active_valkyrie_aid != wyrdstone_core::ValkyrieAidTier::None {
+                    anim::spawn_floating_score(
+                        &mut commands,
+                        &mid,
+                        ctx.data.i18n.t("match3.callout.valkyrie_aid").to_string(),
+                        COLOR_ACCENT_GOLD,
+                        28.0,
+                        &input_state,
+                    );
+                }
+                if let Some(draught) = session.active_war_draught {
+                    let msg = ctx.data.i18n.t_fmt(
+                        "match3.callout.war_draught",
+                        &[("name", ctx.data.i18n.t(draught.name_key()).to_string())],
+                    );
+                    anim::spawn_floating_score(
+                        &mut commands,
+                        &[CellPos::new(
+                            session.board.cols() / 2,
+                            (session.board.rows() / 2).saturating_sub(1),
+                        )],
+                        msg,
+                        COLOR_ACCENT_TEAL_TEXT,
+                        24.0,
+                        &input_state,
+                    );
+                }
+            }
         }
     }
 
@@ -1324,8 +1362,19 @@ fn execute_patron_fury(
     }
 }
 
+fn request_board_hint(ctx: &GameContext, input_state: &mut Match3InputState) -> bool {
+    input_state.clear_hint();
+    input_state.idle_secs = HINT_IDLE_SECS;
+    input_state.hint_checked = true;
+    input_state.hint_pair = ctx
+        .active_session
+        .as_ref()
+        .and_then(|s| s.board.find_best_hint_move());
+    input_state.hint_pair.is_some()
+}
+
 /// Handles HUD button interactions and keyboard shortcuts (`1-6`, `Space`/`F`, `H`, `Backspace` Undo, Arrows+`Enter`, `Escape`).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn handle_match3_hud_buttons(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -1340,8 +1389,15 @@ pub fn handle_match3_hud_buttons(
     selection_markers: Query<Entity, With<SelectionMarker>>,
     kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
     mut tooltip_q: Query<(&mut Text, &mut Node), With<Match3TooltipText>>,
-    (touches, mut press_arm): (Res<Touches>, Local<crate::scroll::PressArm>),
-    buttons: Query<(Entity, &Interaction, &Match3UiAction), Changed<Interaction>>,
+    (touches, mut press_arm, mut prev_hover_tip): (
+        Res<Touches>,
+        Local<crate::scroll::PressArm>,
+        Local<Option<String>>,
+    ),
+    (buttons, all_buttons): (
+        Query<(Entity, &Interaction, &Match3UiAction), Changed<Interaction>>,
+        Query<(&Interaction, &Match3UiAction)>,
+    ),
 ) {
     // Allow players to fast-forward the Valhalla Bonus or Defeat beat with Space/Enter/Escape.
     if matches!(
@@ -1557,12 +1613,7 @@ pub fn handle_match3_hud_buttons(
         && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
     {
-        input_state.clear_hint();
-        input_state.idle_secs = HINT_IDLE_SECS;
-        input_state.hint_pair = ctx
-            .active_session
-            .as_ref()
-            .and_then(|s| s.board.find_hint_move());
+        let _ = request_board_hint(&ctx, &mut input_state);
         return;
     }
 
@@ -1636,41 +1687,38 @@ pub fn handle_match3_hud_buttons(
 
     let help_open = ctx.active_modal == ActiveModal::Help;
 
-    for (_, interaction, action) in &buttons {
-        // Live in-place tooltip on hover for tools and Patron Divine Fury (no HUD rebuild).
-        if !help_open && ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
-            match *interaction {
-                Interaction::Hovered => {
-                    let tip_txt = match *action {
-                        Match3UiAction::SelectTool(tool) => {
-                            Some(ctx.data.i18n.t(tool_hint_key(tool)).to_string())
-                        }
-                        Match3UiAction::TriggerFury => ctx.active_session.as_ref().map(|s| {
-                            format_patron_desc(&ctx.data.i18n, s.patron, &ctx.data.balance.session)
-                        }),
-                        _ => None,
-                    };
-                    if let Some(txt) = tip_txt {
-                        for (mut t, mut node) in &mut tooltip_q {
-                            t.0 = txt.clone();
-                            node.display = Display::Flex;
-                        }
-                    }
+    // Live in-place tooltip scan over full button state so moving across adjacent buttons never flickers.
+    if !help_open && ctx.armed_tool.is_none() && !input_state.confirm_loki_shuffle {
+        let current_hover_tip = all_buttons.iter().find_map(|(interaction, action)| {
+            if *interaction != Interaction::Hovered {
+                return None;
+            }
+            match *action {
+                Match3UiAction::SelectTool(tool) => {
+                    Some(ctx.data.i18n.t(tool_hint_key(tool)).to_string())
                 }
-                Interaction::None => {
-                    if matches!(
-                        action,
-                        Match3UiAction::SelectTool(_) | Match3UiAction::TriggerFury
-                    ) {
-                        for (mut t, mut node) in &mut tooltip_q {
-                            t.0.clear();
-                            node.display = Display::None;
-                        }
-                    }
+                Match3UiAction::TriggerFury => ctx.active_session.as_ref().map(|s| {
+                    format_patron_desc(&ctx.data.i18n, s.patron, &ctx.data.balance.session)
+                }),
+                _ => None,
+            }
+        });
+        if current_hover_tip != *prev_hover_tip {
+            *prev_hover_tip = current_hover_tip.clone();
+            if let Some(txt) = current_hover_tip {
+                for (mut t, mut node) in &mut tooltip_q {
+                    t.0 = txt.clone();
+                    node.display = Display::Flex;
                 }
-                Interaction::Pressed => {}
+            } else if input_state.drag_highlight_cell.is_none() {
+                for (mut t, mut node) in &mut tooltip_q {
+                    t.0.clear();
+                    node.display = Display::None;
+                }
             }
         }
+    } else if prev_hover_tip.is_some() {
+        *prev_hover_tip = None;
     }
 
     // Actions fire on release so a touch that starts a scroll in Help never triggers a HUD button.
@@ -1688,6 +1736,7 @@ pub fn handle_match3_hud_buttons(
                 action,
                 Match3UiAction::Retreat
                     | Match3UiAction::Undo
+                    | Match3UiAction::RequestHint
                     | Match3UiAction::SelectTool(_)
                     | Match3UiAction::CancelTool
                     | Match3UiAction::TriggerFury
@@ -1740,6 +1789,26 @@ pub fn handle_match3_hud_buttons(
                 input_state.confirm_retreat = false;
                 input_state.confirm_loki_shuffle = false;
                 execute_undo(&mut commands, &mut ctx, &sound_bank, &mut input_state);
+            }
+            Match3UiAction::RequestHint => {
+                if !input_state.is_idle() {
+                    continue;
+                }
+                input_state.confirm_retreat = false;
+                input_state.confirm_loki_shuffle = false;
+                let found = request_board_hint(&ctx, &mut input_state);
+                play_sfx(
+                    &mut commands,
+                    &sound_bank,
+                    if found {
+                        SfxKind::Swap
+                    } else {
+                        SfxKind::Invalid
+                    },
+                );
+                if found {
+                    haptics.send(HapticEvent(HapticKind::LightTap));
+                }
             }
             Match3UiAction::ToggleHelp => {
                 input_state.confirm_retreat = false;

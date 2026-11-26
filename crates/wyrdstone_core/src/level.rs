@@ -607,6 +607,9 @@ pub struct LevelSession {
     pub trial_par_moves: u32,
     pub expedition_relics: Vec<ExpeditionRelic>,
     pub daily_blessing: Option<DailyBlessing>,
+    pub active_flame_tier: ValhallaFlameTier,
+    pub active_valkyrie_aid: ValkyrieAidTier,
+    pub active_war_draught: Option<WarDraught>,
     pub boss: Option<BossState>,
     pub last_stand_used: bool,
 }
@@ -930,6 +933,9 @@ impl LevelSession {
             trial_par_moves: 0,
             expedition_relics: Vec::new(),
             daily_blessing: None,
+            active_flame_tier: ValhallaFlameTier::None,
+            active_valkyrie_aid: ValkyrieAidTier::None,
+            active_war_draught: None,
             boss,
             last_stand_used: false,
         }
@@ -1013,6 +1019,9 @@ impl LevelSession {
             trial_par_moves: trial.par_moves,
             expedition_relics: Vec::new(),
             daily_blessing: None,
+            active_flame_tier: ValhallaFlameTier::None,
+            active_valkyrie_aid: ValkyrieAidTier::None,
+            active_war_draught: None,
             boss: None,
             last_stand_used: false,
         })
@@ -1023,6 +1032,7 @@ impl LevelSession {
         if self.is_trial || tier == ValhallaFlameTier::None {
             return;
         }
+        self.active_flame_tier = tier;
         let booster = match tier {
             ValhallaFlameTier::None => return,
             ValhallaFlameTier::Ember => {
@@ -1087,6 +1097,7 @@ impl LevelSession {
         if self.is_trial || self.is_blitz || tier == ValkyrieAidTier::None {
             return;
         }
+        self.active_valkyrie_aid = tier;
         let extra_moves = tier.extra_moves();
         self.initial_moves = self.initial_moves.saturating_add(extra_moves);
         self.moves_left = self.moves_left.saturating_add(extra_moves);
@@ -1269,6 +1280,7 @@ impl LevelSession {
 
     /// Applies a single-raid Runeforge War Draught onto an active session.
     pub fn apply_war_draught<R: Rng>(&mut self, draught: WarDraught, rng: &mut R) {
+        self.active_war_draught = Some(draught);
         match draught {
             WarDraught::MeadOfPoetry => {
                 self.fury = self.fury_max;

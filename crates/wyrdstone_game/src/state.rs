@@ -1137,6 +1137,10 @@ impl GameContext {
             &mut self.rng,
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
+        let flame = self.city.valhalla_flame_tier();
+        if flame != wyrdstone_core::ValhallaFlameTier::None {
+            session.active_flame_tier = flame;
+        }
         if let Some(extra) = self.city.secondary_amulet_effect(&self.data.amulets) {
             if !matches!(extra, wyrdstone_core::AmuletEffect::ExtraMoves(_)) {
                 session.apply_extra_amulet_effect(extra, &mut self.rng);

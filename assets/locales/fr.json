@@ -63,7 +63,7 @@
   "city.panel.shop.craft": "Forger +1",
   "city.settings.display_fullscreen": "Affichage : Plein écran (F11)",
   "city.settings.display_windowed": "Affichage : Fenêtre (F11)",
-  "city.drawer.menu.shortcuts": "Raccourcis : Echap Fermer | M Muet | F11 Plein écran | 1-6 Outils",
+  "city.drawer.menu.shortcuts": "Raccourcis : 1-6 Bâtiments | Tab Suivant | Entrée Raid | Q Quêtes | E Expéd. | G Raids | C Reliques | F1 Aide | Échap Fermer",
   "city.panel.help.title": "Guide de Wyrdstone",
   "city.panel.help.boosters_title": "Boosters & Super-Combos",
   "city.panel.help.boosters_body": "Alignez 4 : Éclair de ligne. Forme en L ou T : Bombe 3x3. Alignez 5 : Éclat du Bifrost. Échangez un Éclat du Bifrost avec un Éclair ou une Bombe pour transformer toute la couleur en boosters !",
@@ -766,5 +766,12 @@
   "tip.defeat.score": "Astuce : Enchaîne les cascades pour activer Ragnarok (Score x2).",
   "city.inspector.tab_raid": "Raid",
   "city.inspector.tab_upgrade": "Améliorer",
-  "city.inspector.tab_upgrade_ready": "Améliorer (!)"
+  "city.inspector.tab_upgrade_ready": "Améliorer (!)",
+  "match3.hud.active_buffs": "Bonus actifs",
+  "match3.callout.valkyrie_aid": "Aide de la Valkyrie !",
+  "match3.callout.war_draught": "Breuvage : {name}",
+  "match3.hud.hint": "Indice",
+  "city.drawer.clan.action_open": "Ouvrir",
+  "city.drawer.clan.action_claim": "Réclamer ({count})",
+  "city.skald_pass.claimed_all_toast": "{count} paliers réclamés : {reward}"
 }

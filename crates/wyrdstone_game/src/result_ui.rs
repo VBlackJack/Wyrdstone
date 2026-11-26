@@ -269,6 +269,104 @@ fn spawn_result_ui(
                     card_shadow,
                 ))
                 .with_children(|shell| {
+                    // Build Victory ready badges up front so the top 2 urgent CTAs pin above the sticky footer.
+                    let mut pinned_ready_badges: Vec<(String, Color, Color, ResultAction)> =
+                        Vec::new();
+                    let mut overflow_ready_badges: Vec<(String, Color, Color, ResultAction)> =
+                        Vec::new();
+                    if is_victory {
+                        let quest_ready = ctx
+                            .city
+                            .active_quest(&ctx.data.quests)
+                            .map(|q| ctx.city.is_quest_ready(q))
+                            .unwrap_or(false);
+                        let claimable_feats = ctx.city.claimable_achievement_count(
+                            &ctx.data.achievements,
+                            &ctx.data.buildings,
+                            ctx.data.bosses.len(),
+                        );
+                        let first_upgradeable_id = ctx
+                            .data
+                            .buildings
+                            .iter()
+                            .find(|b| {
+                                ctx.city.is_building_unlocked(b)
+                                    && ctx
+                                        .city
+                                        .next_upgrade_cost(b)
+                                        .map(|c| ctx.city.resources.can_afford(c))
+                                        .unwrap_or(false)
+                            })
+                            .map(|b| b.id.clone());
+                        let mut ready_badges: Vec<(String, Color, Color, ResultAction)> =
+                            Vec::new();
+                        for &mode in &ctx.last_unlocked_modes {
+                            ready_badges.push((
+                                i18n.t_fmt(
+                                    "result.ready.mode_unlocked",
+                                    &[("mode", i18n.t(mode.name_key()).to_string())],
+                                ),
+                                COLOR_ACCENT_GOLD,
+                                COLOR_ACCENT_GOLD,
+                                ResultAction::ReturnToFjord,
+                            ));
+                        }
+                        if quest_ready {
+                            ready_badges.push((
+                                i18n.t("result.ready.quest").to_string(),
+                                COLOR_ACCENT_GOLD,
+                                COLOR_ACCENT_GOLD,
+                                ResultAction::ReturnToFjord,
+                            ));
+                        }
+                        if claimable_feats > 0 {
+                            ready_badges.push((
+                                i18n.t_fmt(
+                                    "result.ready.feats",
+                                    &[("count", claimable_feats.to_string())],
+                                ),
+                                COLOR_ACCENT_GREEN,
+                                COLOR_ACCENT_GREEN_TEXT,
+                                ResultAction::OpenFjordModal(ActiveModal::Achievements),
+                            ));
+                        }
+                        if let Some(bldg_id) = first_upgradeable_id {
+                            ready_badges.push((
+                                i18n.t("result.ready.upgrade").to_string(),
+                                COLOR_ACCENT_TEAL,
+                                COLOR_ACCENT_TEAL_TEXT,
+                                ResultAction::OpenUpgradeBuilding(bldg_id),
+                            ));
+                        }
+                        let claimable_bounties = ctx.city.claimable_bounties_and_pass_count();
+                        if claimable_bounties > 0 {
+                            ready_badges.push((
+                                i18n.t_fmt(
+                                    "result.ready.bounties",
+                                    &[("count", claimable_bounties.to_string())],
+                                ),
+                                COLOR_ACCENT_GOLD,
+                                COLOR_ACCENT_GOLD,
+                                ResultAction::OpenFjordModal(ActiveModal::Bounties),
+                            ));
+                        }
+                        let claimable_cols =
+                            ctx.city.claimable_collection_count(&ctx.data.collections);
+                        if claimable_cols > 0 {
+                            ready_badges.push((
+                                i18n.t_fmt(
+                                    "result.ready.collection",
+                                    &[("count", claimable_cols.to_string())],
+                                ),
+                                COLOR_ACCENT_GREEN,
+                                COLOR_ACCENT_GREEN_TEXT,
+                                ResultAction::OpenFjordModal(ActiveModal::Collections),
+                            ));
+                        }
+                        let split_at = ready_badges.len().min(2);
+                        overflow_ready_badges = ready_badges.split_off(split_at);
+                        pinned_ready_badges = ready_badges;
+                    }
                     shell
                         .spawn(Node {
                             flex_direction: FlexDirection::Row,
@@ -743,6 +841,23 @@ fn spawn_result_ui(
                                                 ));
                                             }
                                         }
+                                        // Subtle divider between Run Rewards and Progression Unlocks.
+                                        if ctx.last_mastery_rank_up.is_some()
+                                            || ctx.last_discovered_relic_key.is_some()
+                                            || ctx.last_skald_xp_gained > 0
+                                        {
+                                            card.spawn((
+                                                Node {
+                                                    width: Val::Percent(92.0),
+                                                    height: Val::Px(1.0),
+                                                    margin: UiRect::vertical(Val::Px(2.0)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(Color::srgba(
+                                                    0.93, 0.74, 0.29, 0.28,
+                                                )),
+                                            ));
+                                        }
                                         if let Some((bldg_id, new_stars, tool_opt)) =
                                             &ctx.last_mastery_rank_up
                                         {
@@ -1018,109 +1133,8 @@ fn spawn_result_ui(
                                                 });
                                             });
                                         }
-                                        // Highlight any newly claimable Fjord progression (Quest, Feats, Building Upgrade).
-                                        let quest_ready = ctx
-                                            .city
-                                            .active_quest(&ctx.data.quests)
-                                            .map(|q| ctx.city.is_quest_ready(q))
-                                            .unwrap_or(false);
-                                        let claimable_feats = ctx.city.claimable_achievement_count(
-                                            &ctx.data.achievements,
-                                            &ctx.data.buildings,
-                                            ctx.data.bosses.len(),
-                                        );
-                                        let first_upgradeable_id = ctx
-                                            .data
-                                            .buildings
-                                            .iter()
-                                            .find(|b| {
-                                                ctx.city.is_building_unlocked(b)
-                                                    && ctx
-                                                        .city
-                                                        .next_upgrade_cost(b)
-                                                        .map(|c| ctx.city.resources.can_afford(c))
-                                                        .unwrap_or(false)
-                                            })
-                                            .map(|b| b.id.clone());
-                                        let mut ready_badges: Vec<(
-                                            String,
-                                            Color,
-                                            Color,
-                                            ResultAction,
-                                        )> = Vec::new();
-                                        for &mode in &ctx.last_unlocked_modes {
-                                            ready_badges.push((
-                                                i18n.t_fmt(
-                                                    "result.ready.mode_unlocked",
-                                                    &[(
-                                                        "mode",
-                                                        i18n.t(mode.name_key()).to_string(),
-                                                    )],
-                                                ),
-                                                COLOR_ACCENT_GOLD,
-                                                COLOR_ACCENT_GOLD,
-                                                ResultAction::ReturnToFjord,
-                                            ));
-                                        }
-                                        if quest_ready {
-                                            ready_badges.push((
-                                                i18n.t("result.ready.quest").to_string(),
-                                                COLOR_ACCENT_GOLD,
-                                                COLOR_ACCENT_GOLD,
-                                                ResultAction::ReturnToFjord,
-                                            ));
-                                        }
-                                        if claimable_feats > 0 {
-                                            ready_badges.push((
-                                                i18n.t_fmt(
-                                                    "result.ready.feats",
-                                                    &[("count", claimable_feats.to_string())],
-                                                ),
-                                                COLOR_ACCENT_GREEN,
-                                                COLOR_ACCENT_GREEN_TEXT,
-                                                ResultAction::OpenFjordModal(
-                                                    ActiveModal::Achievements,
-                                                ),
-                                            ));
-                                        }
-                                        if let Some(bldg_id) = first_upgradeable_id {
-                                            ready_badges.push((
-                                                i18n.t("result.ready.upgrade").to_string(),
-                                                COLOR_ACCENT_TEAL,
-                                                COLOR_ACCENT_TEAL_TEXT,
-                                                ResultAction::OpenUpgradeBuilding(bldg_id),
-                                            ));
-                                        }
-                                        let claimable_bounties =
-                                            ctx.city.claimable_bounties_and_pass_count();
-                                        if claimable_bounties > 0 {
-                                            ready_badges.push((
-                                                i18n.t_fmt(
-                                                    "result.ready.bounties",
-                                                    &[("count", claimable_bounties.to_string())],
-                                                ),
-                                                COLOR_ACCENT_GOLD,
-                                                COLOR_ACCENT_GOLD,
-                                                ResultAction::OpenFjordModal(ActiveModal::Bounties),
-                                            ));
-                                        }
-                                        let claimable_cols = ctx
-                                            .city
-                                            .claimable_collection_count(&ctx.data.collections);
-                                        if claimable_cols > 0 {
-                                            ready_badges.push((
-                                                i18n.t_fmt(
-                                                    "result.ready.collection",
-                                                    &[("count", claimable_cols.to_string())],
-                                                ),
-                                                COLOR_ACCENT_GREEN,
-                                                COLOR_ACCENT_GREEN_TEXT,
-                                                ResultAction::OpenFjordModal(
-                                                    ActiveModal::Collections,
-                                                ),
-                                            ));
-                                        }
-                                        if !ready_badges.is_empty() {
+                                        // Any overflow ready badges beyond the top 2 pinned CTAs stay reachable in scroll body.
+                                        if !overflow_ready_badges.is_empty() {
                                             card.spawn(Node {
                                                 flex_wrap: FlexWrap::Wrap,
                                                 justify_content: JustifyContent::Center,
@@ -1130,7 +1144,8 @@ fn spawn_result_ui(
                                                 ..default()
                                             })
                                             .with_children(|brow| {
-                                                for (lbl, border_col, text_col, act) in ready_badges
+                                                for (lbl, border_col, text_col, act) in
+                                                    overflow_ready_badges
                                                 {
                                                     brow.spawn((
                                                         Button,
@@ -1338,67 +1353,6 @@ fn spawn_result_ui(
                                                 }
                                             },
                                         );
-                                        let aid_eligible = session.level.building_id
-                                            == wyrdstone_core::BOSS_RAID_BUILDING_ID
-                                            || ctx.data.level_by_id(&session.level.id).is_some();
-                                        if aid_eligible {
-                                            if let Some(aid_key) = ctx
-                                                .city
-                                                .valkyrie_aid_for_level(&session.level.id)
-                                                .desc_key()
-                                            {
-                                                card.spawn((
-                                                    Node {
-                                                        padding: UiRect::axes(
-                                                            Val::Px(12.0),
-                                                            Val::Px(7.0),
-                                                        ),
-                                                        border: UiRect::all(Val::Px(1.5)),
-                                                        ..default()
-                                                    },
-                                                    BackgroundColor(Color::srgba(
-                                                        0.18, 0.13, 0.07, 0.92,
-                                                    )),
-                                                    BorderColor(COLOR_ACCENT_GOLD),
-                                                    BorderRadius::all(Val::Px(8.0)),
-                                                ))
-                                                .with_children(|abox| {
-                                                    abox.spawn((
-                                                        Text::new(i18n.t_fmt(
-                                                            "result.valkyrie.ready",
-                                                            &[("aid", i18n.t(aid_key).to_string())],
-                                                        )),
-                                                        TextFont {
-                                                            font_size: FONT_SMALL,
-                                                            ..default()
-                                                        },
-                                                        TextColor(COLOR_ACCENT_GOLD),
-                                                    ));
-                                                });
-                                            }
-                                        }
-                                        card.spawn((
-                                            Node {
-                                                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                                                border: UiRect::all(Val::Px(1.0)),
-                                                ..default()
-                                            },
-                                            BackgroundColor(Color::srgba(0.08, 0.14, 0.20, 0.90)),
-                                            BorderColor(COLOR_ACCENT_TEAL),
-                                            BorderRadius::all(Val::Px(8.0)),
-                                        ))
-                                        .with_children(
-                                            |tbox| {
-                                                tbox.spawn((
-                                                    Text::new(i18n.t(session.defeat_tip_key())),
-                                                    TextFont {
-                                                        font_size: FONT_SMALL,
-                                                        ..default()
-                                                    },
-                                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
-                                                ));
-                                            },
-                                        );
                                         if session.can_use_last_stand() {
                                             let ls_cost = last_stand_cost();
                                             let can_afford_ls =
@@ -1495,6 +1449,67 @@ fn spawn_result_ui(
                                                 );
                                             });
                                         }
+                                        let aid_eligible = session.level.building_id
+                                            == wyrdstone_core::BOSS_RAID_BUILDING_ID
+                                            || ctx.data.level_by_id(&session.level.id).is_some();
+                                        if aid_eligible {
+                                            if let Some(aid_key) = ctx
+                                                .city
+                                                .valkyrie_aid_for_level(&session.level.id)
+                                                .desc_key()
+                                            {
+                                                card.spawn((
+                                                    Node {
+                                                        padding: UiRect::axes(
+                                                            Val::Px(12.0),
+                                                            Val::Px(7.0),
+                                                        ),
+                                                        border: UiRect::all(Val::Px(1.5)),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(
+                                                        0.18, 0.13, 0.07, 0.92,
+                                                    )),
+                                                    BorderColor(COLOR_ACCENT_GOLD),
+                                                    BorderRadius::all(Val::Px(8.0)),
+                                                ))
+                                                .with_children(|abox| {
+                                                    abox.spawn((
+                                                        Text::new(i18n.t_fmt(
+                                                            "result.valkyrie.ready",
+                                                            &[("aid", i18n.t(aid_key).to_string())],
+                                                        )),
+                                                        TextFont {
+                                                            font_size: FONT_SMALL,
+                                                            ..default()
+                                                        },
+                                                        TextColor(COLOR_ACCENT_GOLD),
+                                                    ));
+                                                });
+                                            }
+                                        }
+                                        card.spawn((
+                                            Node {
+                                                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::srgba(0.08, 0.14, 0.20, 0.90)),
+                                            BorderColor(COLOR_ACCENT_TEAL),
+                                            BorderRadius::all(Val::Px(8.0)),
+                                        ))
+                                        .with_children(
+                                            |tbox| {
+                                                tbox.spawn((
+                                                    Text::new(i18n.t(session.defeat_tip_key())),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                                ));
+                                            },
+                                        );
                                     }
 
                                     // Footer CTAs live in the sticky section below so primary actions
@@ -1526,6 +1541,50 @@ fn spawn_result_ui(
                                 TextColor(COLOR_TEXT_MUTED),
                             ));
                         });
+
+                    if !pinned_ready_badges.is_empty() {
+                        shell
+                            .spawn(Node {
+                                flex_shrink: 0.0,
+                                width: Val::Percent(100.0),
+                                flex_wrap: FlexWrap::Wrap,
+                                justify_content: JustifyContent::Center,
+                                column_gap: Val::Px(8.0),
+                                row_gap: Val::Px(6.0),
+                                padding: UiRect::top(Val::Px(6.0)),
+                                ..default()
+                            })
+                            .with_children(|brow| {
+                                for (lbl, border_col, text_col, act) in pinned_ready_badges {
+                                    brow.spawn((
+                                        Button,
+                                        act,
+                                        BaseBorderColor(border_col),
+                                        Node {
+                                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(Val::Px(1.5)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(COLOR_PANEL_CARD),
+                                        BorderColor(border_col),
+                                        BorderRadius::all(Val::Px(8.0)),
+                                    ))
+                                    .with_children(|pill| {
+                                        pill.spawn((
+                                            Text::new(lbl),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(text_col),
+                                        ));
+                                    });
+                                }
+                            });
+                    }
 
                     let energy_cost = ctx.data.balance.energy_cost_per_level;
                     let has_energy = ctx.city.energy >= energy_cost;

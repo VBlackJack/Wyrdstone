@@ -669,14 +669,40 @@ fn spawn_objectives_or_boss(
                             BorderRadius::all(Val::Px(RADIUS_MD)),
                         ))
                         .with_children(|wbox| {
-                            wbox.spawn((
-                                ImageNode::new(weak_icon),
-                                Node {
-                                    width: Val::Px(26.0),
-                                    height: Val::Px(26.0),
-                                    ..default()
-                                },
-                            ));
+                            wbox.spawn(Node {
+                                width: Val::Px(26.0),
+                                height: Val::Px(26.0),
+                                ..default()
+                            })
+                            .with_children(|icon_wrap| {
+                                icon_wrap.spawn((
+                                    ImageNode::new(weak_icon),
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Percent(100.0),
+                                        ..default()
+                                    },
+                                ));
+                                if ctx.colorblind_mode {
+                                    if let Some(badge) = textures
+                                        .colorblind_badges
+                                        .get(&boss.active_weakness())
+                                        .cloned()
+                                    {
+                                        icon_wrap.spawn((
+                                            ImageNode::new(badge),
+                                            Node {
+                                                position_type: PositionType::Absolute,
+                                                left: Val::Px(0.0),
+                                                top: Val::Px(0.0),
+                                                width: Val::Percent(100.0),
+                                                height: Val::Percent(100.0),
+                                                ..default()
+                                            },
+                                        ));
+                                    }
+                                }
+                            });
                         });
                 }
             });
@@ -968,13 +994,101 @@ fn spawn_status_banner(parent: &mut ChildBuilder, i18n: &I18nCatalog, session: &
     }
 }
 
+fn spawn_active_buffs_card(parent: &mut ChildBuilder, i18n: &I18nCatalog, session: &LevelSession) {
+    if session.is_trial {
+        return;
+    }
+    let mut entries: Vec<(String, Color)> = Vec::new();
+    if let Some(blessing) = session.daily_blessing {
+        entries.push((
+            i18n.t(blessing.name_key()).to_string(),
+            COLOR_ACCENT_TEAL_TEXT,
+        ));
+    }
+    if session.active_flame_tier != wyrdstone_core::ValhallaFlameTier::None {
+        entries.push((
+            i18n.t(session.active_flame_tier.name_key()).to_string(),
+            COLOR_ACCENT_GOLD,
+        ));
+    }
+    if let Some(aid_key) = session.active_valkyrie_aid.desc_key() {
+        entries.push((i18n.t(aid_key).to_string(), COLOR_ACCENT_GREEN_TEXT));
+    }
+    if let Some(draught) = session.active_war_draught {
+        entries.push((i18n.t(draught.name_key()).to_string(), COLOR_TEXT_PRIMARY));
+    }
+    if entries.is_empty() {
+        return;
+    }
+    parent
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(3.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(COLOR_PANEL_CARD),
+            BorderColor(COLOR_ACCENT_GOLD),
+            BorderRadius::all(Val::Px(RADIUS_SM)),
+        ))
+        .with_children(|card| {
+            card.spawn((
+                Text::new(i18n.t("match3.hud.active_buffs")),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+            ));
+            for (line, col) in entries {
+                card.spawn((
+                    Text::new(line),
+                    TextFont {
+                        font_size: FONT_SMALL - 1.0,
+                        ..default()
+                    },
+                    TextColor(col),
+                ));
+            }
+        });
+}
+
 fn spawn_utility_buttons(
     row: &mut ChildBuilder,
     i18n: &I18nCatalog,
     can_undo: bool,
     undo_used: bool,
     confirm_retreat: bool,
+    show_hint_btn: bool,
 ) {
+    if show_hint_btn {
+        row.spawn((
+            Button,
+            Match3UiAction::RequestHint,
+            Node {
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(COLOR_PANEL_CARD),
+            BorderRadius::all(Val::Px(6.0)),
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new(i18n.t("match3.hud.hint")),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_TEAL_TEXT),
+            ));
+        });
+    }
     let mut undo_btn = row.spawn((
         Button,
         Match3UiAction::Undo,
@@ -1084,6 +1198,7 @@ fn spawn_fury_card(
     fjord_art: &FjordTextures,
     textures: &RuneTextures,
     hud_mode: HudLayoutMode,
+    colorblind_mode: bool,
 ) {
     let is_compact = hud_mode.is_compact();
     let is_wide = hud_mode.is_desktop_wide();
@@ -1163,15 +1278,41 @@ fn spawn_fury_card(
                 }
                 if let Some(fav_img) = textures.runes.get(&session.patron.favored_rune()).cloned() {
                     let fav_px = if is_compact { 14.0 } else { 18.0 };
-                    left.spawn((
-                        ImageNode::new(fav_img),
-                        Node {
-                            width: Val::Px(fav_px),
-                            height: Val::Px(fav_px),
-                            flex_shrink: 0.0,
-                            ..default()
-                        },
-                    ));
+                    left.spawn(Node {
+                        width: Val::Px(fav_px),
+                        height: Val::Px(fav_px),
+                        flex_shrink: 0.0,
+                        ..default()
+                    })
+                    .with_children(|fbox| {
+                        fbox.spawn((
+                            ImageNode::new(fav_img),
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                        ));
+                        if colorblind_mode {
+                            if let Some(badge) = textures
+                                .colorblind_badges
+                                .get(&session.patron.favored_rune())
+                                .cloned()
+                            {
+                                fbox.spawn((
+                                    ImageNode::new(badge),
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: Val::Px(0.0),
+                                        top: Val::Px(0.0),
+                                        width: Val::Percent(100.0),
+                                        height: Val::Percent(100.0),
+                                        ..default()
+                                    },
+                                ));
+                            }
+                        }
+                    });
                 }
                 left.spawn((
                     Match3FuryText,
@@ -1294,7 +1435,15 @@ fn spawn_tools_section(
     }
 
     if !is_wide {
-        spawn_fury_card(row, i18n, session, fjord_art, textures, hud_mode);
+        spawn_fury_card(
+            row,
+            i18n,
+            session,
+            fjord_art,
+            textures,
+            hud_mode,
+            ctx.colorblind_mode,
+        );
     }
 
     let tools = [
@@ -1629,6 +1778,7 @@ pub(super) fn spawn_match3_hud(
                                             objs, ctx, session, fjord_art, textures, vfx, hud_mode,
                                         );
                                     });
+                                spawn_active_buffs_card(top_sec, i18n, session);
                             });
                         spawn_scrollbar_track(scroll_row, ScrollPanelKind::LeftRail);
                     });
@@ -1696,6 +1846,7 @@ pub(super) fn spawn_match3_hud(
                                     can_undo,
                                     undo_used,
                                     confirm_retreat,
+                                    !in_valhalla,
                                 );
                             });
                             spawn_hud_divider(hdr);
@@ -1736,7 +1887,13 @@ pub(super) fn spawn_match3_hud(
                                 .with_children(|top_sec| {
                                     if !session.is_trial {
                                         spawn_fury_card(
-                                            top_sec, i18n, session, fjord_art, textures, hud_mode,
+                                            top_sec,
+                                            i18n,
+                                            session,
+                                            fjord_art,
+                                            textures,
+                                            hud_mode,
+                                            ctx.colorblind_mode,
                                         );
                                         spawn_hud_divider(top_sec);
                                     }
@@ -1845,7 +2002,14 @@ pub(super) fn spawn_match3_hud(
                     })
                     .with_children(|right| {
                         spawn_status_banner(right, i18n, session);
-                        spawn_utility_buttons(right, i18n, can_undo, undo_used, confirm_retreat);
+                        spawn_utility_buttons(
+                            right,
+                            i18n,
+                            can_undo,
+                            undo_used,
+                            confirm_retreat,
+                            !in_valhalla,
+                        );
                     });
 
                     spawn_ftue_coach_pill(top, i18n, ctx.city.stats.total_victories, session, true);
@@ -2135,6 +2299,8 @@ pub(super) fn spawn_match3_hud(
                                         },
                                     );
 
+                                    spawn_active_buffs_card(body, i18n, session);
+
                                     // Quick Pause Settings (Audio + Colorblind) right inside Match-3
                                     body.spawn((
                                         Text::new(i18n.t("match3.pause.settings_title")),
@@ -2261,45 +2427,9 @@ pub(super) fn spawn_match3_hud(
                                         }
                                     });
 
-                                    for (t_key, b_key) in [
-                                        (
-                                            "city.panel.help.controls_title",
-                                            "city.panel.help.controls_body",
-                                        ),
-                                        (
-                                            "city.panel.help.boosters_title",
-                                            "city.panel.help.boosters_body",
-                                        ),
-                                        (
-                                            "city.panel.help.obstacles_title",
-                                            "city.panel.help.obstacles_body",
-                                        ),
-                                        (
-                                            "city.panel.help.fog_curse_title",
-                                            "city.panel.help.fog_curse_body",
-                                        ),
-                                        (
-                                            "city.panel.help.village_title",
-                                            "city.panel.help.village_body",
-                                        ),
-                                    ] {
-                                        body.spawn((
-                                            Text::new(i18n.t(t_key)),
-                                            TextFont {
-                                                font_size: FONT_BODY,
-                                                ..default()
-                                            },
-                                            TextColor(COLOR_ACCENT_GOLD),
-                                        ));
-                                        body.spawn((
-                                            Text::new(i18n.t(b_key)),
-                                            TextFont {
-                                                font_size: FONT_SMALL,
-                                                ..default()
-                                            },
-                                            TextColor(COLOR_TEXT_PRIMARY),
-                                        ));
-                                    }
+                                    crate::city_ui::modals::spawn_help_topic_cards(
+                                        body, i18n, fjord_art, vfx,
+                                    );
                                 });
                             spawn_scrollbar_track(scroll_row, ScrollPanelKind::Modal);
                         });

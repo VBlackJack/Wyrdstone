@@ -17,8 +17,7 @@
 //! Slide-out right drawers for Play Modes, Clan & Gear progression, and the Burger Menu.
 
 use super::{
-    badged_label, spawn_resource_pill, spawn_small_button, spawn_small_button_colored, CityAction,
-    CityDrawer,
+    spawn_resource_pill, spawn_small_button, spawn_small_button_colored, CityAction, CityDrawer,
 };
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
@@ -178,6 +177,93 @@ fn spawn_drawer_action_card(
             .with_children(|row| {
                 spawn_small_button_colored(row, btn_label, action, btn_bg, btn_fg, enabled);
             });
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_clan_card(
+    parent: &mut ChildBuilder,
+    i18n: &wyrdstone_core::I18nCatalog,
+    title: &str,
+    desc: &str,
+    claim_count: usize,
+    action: CityAction,
+    accent_bg: Color,
+    accent_fg: Color,
+    border_col: Color,
+) {
+    parent
+        .spawn((
+            Button,
+            action,
+            Node {
+                flex_direction: FlexDirection::Column,
+                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                row_gap: Val::Px(6.0),
+                padding: UiRect::all(Val::Px(10.0)),
+                border: UiRect::all(Val::Px(1.5)),
+                align_items: AlignItems::Stretch,
+                ..default()
+            },
+            BackgroundColor(COLOR_PANEL_CARD),
+            BorderColor(border_col),
+            BorderRadius::all(Val::Px(RADIUS_MD)),
+        ))
+        .with_children(|card| {
+            card.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(8.0),
+                ..default()
+            })
+            .with_children(|hdr| {
+                hdr.spawn((
+                    Text::new(title),
+                    TextFont {
+                        font_size: FONT_BODY,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_GOLD),
+                ));
+                let badge_lbl = if claim_count > 0 {
+                    i18n.t_fmt(
+                        "city.drawer.clan.action_claim",
+                        &[("count", claim_count.to_string())],
+                    )
+                } else {
+                    i18n.t("city.drawer.clan.action_open").to_string()
+                };
+                hdr.spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                    BackgroundColor(accent_bg),
+                    BorderColor(border_col),
+                    BorderRadius::all(Val::Px(RADIUS_SM)),
+                ))
+                .with_children(|pill| {
+                    pill.spawn((
+                        Text::new(badge_lbl),
+                        TextFont {
+                            font_size: FONT_SMALL - 1.0,
+                            ..default()
+                        },
+                        TextColor(accent_fg),
+                    ));
+                });
+            });
+            card.spawn((
+                Text::new(desc),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_PRIMARY),
+            ));
         });
 }
 
@@ -580,10 +666,10 @@ pub(super) fn spawn_clan_drawer(
         i18n.t("city.drawer.clan.title"),
         scroll_offset_y,
         |body| {
-            let bounties_lbl = badged_label(i18n, "city.panel.bounties.button", claimable_bounties);
-            spawn_drawer_action_card(
+            spawn_clan_card(
                 body,
-                &bounties_lbl,
+                i18n,
+                i18n.t("city.panel.bounties.button"),
                 &i18n.t_fmt(
                     "city.drawer.clan.bounties_desc",
                     &[
@@ -591,7 +677,7 @@ pub(super) fn spawn_clan_drawer(
                         ("max", wyrdstone_core::SKALD_PASS_TIERS.to_string()),
                     ],
                 ),
-                &bounties_lbl,
+                claimable_bounties,
                 CityAction::ToggleModal(ActiveModal::Bounties),
                 if claimable_bounties > 0 {
                     COLOR_ACCENT_GREEN
@@ -604,7 +690,6 @@ pub(super) fn spawn_clan_drawer(
                 } else {
                     COLOR_ACCENT_GOLD
                 },
-                true,
             );
             let am1 = ctx
                 .city
@@ -626,20 +711,21 @@ pub(super) fn spawn_clan_drawer(
             );
             spawn_resource_pill(body, &loadout_line, COLOR_ACCENT_GOLD);
 
-            spawn_drawer_action_card(
+            spawn_clan_card(
                 body,
+                i18n,
                 i18n.t("city.panel.patrons.button"),
                 i18n.t(ctx.city.selected_patron.name_key()),
-                i18n.t("city.panel.patrons.button"),
+                0,
                 CityAction::ToggleModal(ActiveModal::Patrons),
                 COLOR_ACCENT_TEAL,
                 COLOR_TEXT_ON_ACCENT,
                 COLOR_PANEL_BORDER,
-                true,
             );
 
-            spawn_drawer_action_card(
+            spawn_clan_card(
                 body,
+                i18n,
                 i18n.t("city.panel.amulets.button"),
                 &i18n.t_fmt(
                     "city.drawer.clan.amulets_desc",
@@ -648,7 +734,7 @@ pub(super) fn spawn_clan_drawer(
                         ("total", ctx.data.amulets.len().to_string()),
                     ],
                 ),
-                i18n.t("city.panel.amulets.button"),
+                0,
                 CityAction::ToggleModal(ActiveModal::Amulets),
                 if ctx.city.equipped_amulet.is_some() {
                     COLOR_ACCENT_TEAL
@@ -661,25 +747,24 @@ pub(super) fn spawn_clan_drawer(
                     COLOR_TEXT_PRIMARY
                 },
                 COLOR_PANEL_BORDER,
-                true,
             );
 
-            spawn_drawer_action_card(
+            spawn_clan_card(
                 body,
+                i18n,
                 i18n.t("city.panel.shop.button"),
                 i18n.t("city.drawer.clan.shop_desc"),
-                i18n.t("city.panel.shop.button"),
+                0,
                 CityAction::ToggleModal(ActiveModal::Shop),
                 COLOR_PANEL_DARK,
                 COLOR_TEXT_PRIMARY,
                 COLOR_PANEL_BORDER,
-                true,
             );
 
-            let feats_lbl = badged_label(i18n, "city.panel.feats.button", claimable_feats);
-            spawn_drawer_action_card(
+            spawn_clan_card(
                 body,
-                &feats_lbl,
+                i18n,
+                i18n.t("city.panel.feats.button"),
                 &i18n.t_fmt(
                     "city.drawer.clan.feats_desc",
                     &[
@@ -687,7 +772,7 @@ pub(super) fn spawn_clan_drawer(
                         ("total", ctx.data.achievements.len().to_string()),
                     ],
                 ),
-                &feats_lbl,
+                claimable_feats,
                 CityAction::ToggleModal(ActiveModal::Achievements),
                 if claimable_feats > 0 {
                     COLOR_ACCENT_GREEN
@@ -704,13 +789,12 @@ pub(super) fn spawn_clan_drawer(
                 } else {
                     COLOR_PANEL_BORDER
                 },
-                true,
             );
 
-            let cols_lbl = badged_label(i18n, "city.panel.collections.button", claimable_cols);
-            spawn_drawer_action_card(
+            spawn_clan_card(
                 body,
-                &cols_lbl,
+                i18n,
+                i18n.t("city.panel.collections.button"),
                 &i18n.t_fmt(
                     "city.drawer.clan.collections_desc",
                     &[
@@ -718,7 +802,7 @@ pub(super) fn spawn_clan_drawer(
                         ("total", ctx.data.collections.len().to_string()),
                     ],
                 ),
-                &cols_lbl,
+                claimable_cols,
                 CityAction::ToggleModal(ActiveModal::Collections),
                 if claimable_cols > 0 {
                     COLOR_ACCENT_GREEN
@@ -735,7 +819,6 @@ pub(super) fn spawn_clan_drawer(
                 } else {
                     COLOR_PANEL_BORDER
                 },
-                true,
             );
         },
     );

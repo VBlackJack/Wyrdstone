@@ -1567,6 +1567,93 @@ pub(super) fn spawn_settings_modal(
     );
 }
 
+pub(crate) fn spawn_help_topic_cards(
+    body: &mut ChildBuilder,
+    i18n: &I18nCatalog,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+) {
+    let topics: [(&str, &str, Option<Handle<Image>>); 5] = [
+        (
+            "city.panel.help.controls_title",
+            "city.panel.help.controls_body",
+            Some(vfx.icon_energy.clone()),
+        ),
+        (
+            "city.panel.help.boosters_title",
+            "city.panel.help.boosters_body",
+            fjord_art.tool_icon(wyrdstone_core::ActiveTool::Mjolnir),
+        ),
+        (
+            "city.panel.help.obstacles_title",
+            "city.panel.help.obstacles_body",
+            Some(vfx.icon_stone.clone()),
+        ),
+        (
+            "city.panel.help.fog_curse_title",
+            "city.panel.help.fog_curse_body",
+            fjord_art.tool_icon(wyrdstone_core::ActiveTool::SurtrEmber),
+        ),
+        (
+            "city.panel.help.village_title",
+            "city.panel.help.village_body",
+            Some(vfx.icon_gold.clone()),
+        ),
+    ];
+    for (t_key, b_key, icon_opt) in topics {
+        body.spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(4.0),
+                padding: UiRect::all(Val::Px(10.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(COLOR_PANEL_CARD),
+            BorderColor(COLOR_PANEL_BORDER),
+            BorderRadius::all(Val::Px(RADIUS_MD)),
+        ))
+        .with_children(|card| {
+            card.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(8.0),
+                ..default()
+            })
+            .with_children(|hdr| {
+                if let Some(icon) = icon_opt {
+                    hdr.spawn((
+                        ImageNode::new(icon),
+                        Node {
+                            width: Val::Px(20.0),
+                            height: Val::Px(20.0),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        BorderRadius::all(Val::Px(4.0)),
+                    ));
+                }
+                hdr.spawn((
+                    Text::new(i18n.t(t_key)),
+                    TextFont {
+                        font_size: FONT_BODY,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_GOLD),
+                ));
+            });
+            card.spawn((
+                Text::new(i18n.t(b_key)),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_PRIMARY),
+            ));
+        });
+    }
+}
+
 pub(super) fn spawn_help_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
@@ -1588,45 +1675,7 @@ pub(super) fn spawn_help_modal(
         safe,
         scroll_offset_y,
         |card| {
-            for (t_key, b_key) in [
-                (
-                    "city.panel.help.controls_title",
-                    "city.panel.help.controls_body",
-                ),
-                (
-                    "city.panel.help.boosters_title",
-                    "city.panel.help.boosters_body",
-                ),
-                (
-                    "city.panel.help.obstacles_title",
-                    "city.panel.help.obstacles_body",
-                ),
-                (
-                    "city.panel.help.fog_curse_title",
-                    "city.panel.help.fog_curse_body",
-                ),
-                (
-                    "city.panel.help.village_title",
-                    "city.panel.help.village_body",
-                ),
-            ] {
-                card.spawn((
-                    Text::new(i18n.t(t_key)),
-                    TextFont {
-                        font_size: FONT_BODY,
-                        ..default()
-                    },
-                    TextColor(COLOR_ACCENT_GOLD),
-                ));
-                card.spawn((
-                    Text::new(i18n.t(b_key)),
-                    TextFont {
-                        font_size: FONT_SMALL,
-                        ..default()
-                    },
-                    TextColor(COLOR_TEXT_PRIMARY),
-                ));
-            }
+            spawn_help_topic_cards(card, i18n, fjord_art, vfx);
         },
     );
 }
@@ -3391,21 +3440,60 @@ pub(super) fn spawn_bounties_modal(
 
             let cur_tier = ctx.city.skald_pass.current_tier();
             let xp_cap = u32::from(SKALD_PASS_TIERS) * SKALD_PASS_XP_PER_TIER;
-            modal.spawn((
-                Text::new(i18n.t_fmt(
-                    "city.skald_pass.header",
-                    &[
-                        ("tier", cur_tier.to_string()),
-                        ("max", SKALD_PASS_TIERS.to_string()),
-                        ("xp", ctx.city.skald_pass.xp.to_string()),
-                        ("xp_cap", xp_cap.to_string()),
-                    ],
-                )),
-                display_font(fjord_art, FONT_HEADING),
-                TextColor(COLOR_ACCENT_GOLD),
-            ));
+            let claimable_tiers = ctx.city.skald_pass.claimable_count();
+            modal
+                .spawn(Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                })
+                .with_children(|hdr| {
+                    hdr.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.skald_pass.header",
+                            &[
+                                ("tier", cur_tier.to_string()),
+                                ("max", SKALD_PASS_TIERS.to_string()),
+                                ("xp", ctx.city.skald_pass.xp.to_string()),
+                                ("xp_cap", xp_cap.to_string()),
+                            ],
+                        )),
+                        display_font(fjord_art, FONT_HEADING),
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    if claimable_tiers > 1 {
+                        spawn_small_button_colored(
+                            hdr,
+                            &i18n.t_fmt(
+                                "city.panel.claim_all",
+                                &[("count", claimable_tiers.to_string())],
+                            ),
+                            CityAction::ClaimAllSkaldTiers,
+                            COLOR_ACCENT_GOLD,
+                            COLOR_TEXT_DARK,
+                            true,
+                        );
+                    }
+                });
 
-            for tier in 1..=SKALD_PASS_TIERS {
+            let mut ordered_tiers: Vec<u8> = (1..=SKALD_PASS_TIERS).collect();
+            ordered_tiers.sort_by_key(|&tier| {
+                let unlocked = cur_tier >= tier;
+                let claimed = ctx.city.skald_pass.is_tier_claimed(tier);
+                let bucket = if unlocked && !claimed {
+                    0u8
+                } else if !unlocked {
+                    1u8
+                } else {
+                    2u8
+                };
+                (bucket, tier)
+            });
+
+            for tier in ordered_tiers {
                 let unlocked = cur_tier >= tier;
                 let claimed = ctx.city.skald_pass.is_tier_claimed(tier);
                 let claimable = unlocked && !claimed;

@@ -18,7 +18,7 @@
 
 mod drawers;
 mod inspector;
-mod modals;
+pub(crate) mod modals;
 
 use crate::audio::{
     cycle_bgm_volume, cycle_sfx_volume, play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank,
@@ -293,6 +293,8 @@ pub enum CityAction {
     ClaimBounty(usize),
     ClaimAllBounties,
     ClaimSkaldTier(u8),
+    ClaimAllSkaldTiers,
+    ShowFlameInfo,
     ToggleDrawer(CityDrawer),
     ToggleModal(ActiveModal),
     CloseModal,
@@ -939,6 +941,9 @@ fn spawn_city_tree(
                                     &res_lbl("resources.label.wood", res.wood),
                                     COLOR_RES_WOOD,
                                     Some(i18n.t("city.tooltip.wood").to_string()),
+                                    Some(CityAction::FocusResourceSource(
+                                        wyrdstone_core::ResourceKind::Wood,
+                                    )),
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -946,6 +951,9 @@ fn spawn_city_tree(
                                     &res_lbl("resources.label.stone", res.stone),
                                     COLOR_RES_STONE,
                                     Some(i18n.t("city.tooltip.stone").to_string()),
+                                    Some(CityAction::FocusResourceSource(
+                                        wyrdstone_core::ResourceKind::Stone,
+                                    )),
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -953,6 +961,9 @@ fn spawn_city_tree(
                                     &res_lbl("resources.label.gold", res.gold),
                                     COLOR_ACCENT_GOLD,
                                     Some(i18n.t("city.tooltip.gold").to_string()),
+                                    Some(CityAction::FocusResourceSource(
+                                        wyrdstone_core::ResourceKind::Gold,
+                                    )),
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -960,6 +971,9 @@ fn spawn_city_tree(
                                     &res_lbl("resources.label.mead", res.mead),
                                     COLOR_RES_MEAD,
                                     Some(i18n.t("city.tooltip.mead").to_string()),
+                                    Some(CityAction::FocusResourceSource(
+                                        wyrdstone_core::ResourceKind::Mead,
+                                    )),
                                 );
                                 pills
                                     .spawn((
@@ -1008,10 +1022,14 @@ fn spawn_city_tree(
                                     );
                                     pills
                                         .spawn((
-                                            Interaction::None,
+                                            Button,
+                                            CityAction::ShowFlameInfo,
                                             CityTooltipTarget(i18n.t(flame.desc_key()).to_string()),
                                             Node {
-                                                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                                padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
                                                 border: UiRect::all(Val::Px(1.0)),
                                                 ..default()
                                             },
@@ -1747,11 +1765,11 @@ fn spawn_city_tree(
                             position_type: PositionType::Absolute,
                             left: Val::Px(safe.left),
                             right: Val::Px(safe.right),
-                            bottom: Val::Px(14.0 + safe.bottom),
+                            bottom: Val::Px(96.0 + safe.bottom),
                             justify_content: JustifyContent::Center,
                             ..default()
                         },
-                        ZIndex(35),
+                        ZIndex(48),
                         PickingBehavior::IGNORE,
                     ))
                     .with_children(|row| {
@@ -2334,7 +2352,7 @@ pub(super) fn spawn_resource_pill_with_icon(
     text: &str,
     text_color: Color,
 ) {
-    spawn_resource_pill_with_icon_tip(parent, icon, text, text_color, None);
+    spawn_resource_pill_with_icon_tip(parent, icon, text, text_color, None, None);
 }
 
 fn spawn_resource_pill_with_icon_tip(
@@ -2343,11 +2361,18 @@ fn spawn_resource_pill_with_icon_tip(
     text: &str,
     text_color: Color,
     tooltip: Option<String>,
+    action: Option<CityAction>,
 ) {
     let mut cmd = parent.spawn((
         Node {
+            min_height: if action.is_some() {
+                Val::Px(MIN_TOUCH_TARGET_PX)
+            } else {
+                Val::Auto
+            },
             padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
             column_gap: Val::Px(5.0),
+            justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border: UiRect::all(Val::Px(1.0)),
             ..default()
@@ -2356,6 +2381,9 @@ fn spawn_resource_pill_with_icon_tip(
         BorderColor(COLOR_PANEL_BORDER),
         BorderRadius::all(Val::Px(6.0)),
     ));
+    if let Some(act) = action {
+        cmd.insert((Button, act));
+    }
     if let Some(tip) = tooltip {
         cmd.insert((Interaction::None, CityTooltipTarget(tip)));
     }
@@ -4132,6 +4160,41 @@ pub fn handle_city_buttons(
                     ctx.persist();
                     play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
                     haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            }
+            CityAction::ClaimAllSkaldTiers => {
+                let (count, total_res, _tools, total_glory) = ctx.city.try_claim_all_skald_tiers();
+                if count > 0 {
+                    let summary =
+                        modals::format_reward_summary(&ctx.data.i18n, total_res, total_glory);
+                    ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                        "city.skald_pass.claimed_all_toast",
+                        &[("count", count.to_string()), ("reward", summary)],
+                    ));
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    ctx.status_notice_key = None;
+                    ctx.persist();
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            }
+            CityAction::ShowFlameInfo => {
+                let flame = ctx.city.valhalla_flame_tier();
+                if flame != wyrdstone_core::ValhallaFlameTier::None {
+                    let title = ctx.data.i18n.t_fmt(
+                        "city.header.flame",
+                        &[
+                            ("tier", ctx.data.i18n.t(flame.name_key()).to_string()),
+                            ("streak", ctx.city.stats.win_streak.to_string()),
+                        ],
+                    );
+                    let desc = ctx.data.i18n.t(flame.desc_key()).to_string();
+                    ctx.celebration_message =
+                        Some(celebration_claim_line(&ctx.data.i18n, title, desc));
+                    ctx.celebration_timer_secs = 4.5;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     rebuild = true;
                 }
             }

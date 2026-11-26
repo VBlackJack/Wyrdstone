@@ -3597,3 +3597,24 @@ fn valkyrie_aid_threat_ratings_and_defeat_tips_work() {
     assert!(seen_threats.contains(&(ThreatRating::Fierce as u8)));
     assert!(seen_threats.contains(&(ThreatRating::Ragnarok as u8)));
 }
+
+#[test]
+fn claim_all_skald_tiers_claims_only_unlocked_tiers_once() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("bundled data loads");
+    let mut city = CityState::new(&data.balance);
+    city.skald_pass
+        .add_xp(wyrdstone_core::SKALD_PASS_XP_PER_TIER * 3);
+    let _ = city.try_claim_skald_tier(1);
+    let before_glory = city.glory;
+
+    let (count, res, tools, glory) = city.try_claim_all_skald_tiers();
+    assert_eq!(count, 2);
+    assert_eq!(tools.len(), 1);
+    assert!(res.gold > 0);
+    assert_eq!(city.glory, before_glory + glory);
+    assert_eq!(city.skald_pass.claimable_count(), 0);
+
+    let (second_count, _, _, second_glory) = city.try_claim_all_skald_tiers();
+    assert_eq!(second_count, 0);
+    assert_eq!(second_glory, 0);
+}

@@ -905,6 +905,7 @@ pub fn tick_board_animation(
     mut input_state: ResMut<Match3InputState>,
     mut next_state: ResMut<NextState<AppState>>,
     all_sprites: Query<Entity, With<Match3Entity>>,
+    hint_rings: Query<Entity, (With<super::HintRingMarker>, Without<BoardTileVisual>)>,
     mut tile_q: Query<(&BoardTileVisual, &mut Transform, &mut Sprite)>,
     mut timer_text_q: Query<(&mut Text, &mut TextColor), With<Match3TimerText>>,
 ) {
@@ -987,6 +988,11 @@ pub fn tick_board_animation(
         }
     }
 
+    if input_state.hint_pair.is_none() && !hint_rings.is_empty() {
+        for entity in &hint_rings {
+            commands.entity(entity).try_despawn();
+        }
+    }
     if ctx.active_modal == ActiveModal::Help {
         return;
     }
@@ -1029,6 +1035,23 @@ pub fn tick_board_animation(
                         .and_then(|s| s.board.find_best_hint_move());
                 }
                 if let Some((ha, hb)) = input_state.hint_pair {
+                    if hint_rings.is_empty() {
+                        for cell in [ha, hb] {
+                            let w = cell_to_world(cell, &input_state);
+                            commands.spawn((
+                                Match3Cleanup,
+                                Match3Entity,
+                                super::HintRingMarker,
+                                Sprite {
+                                    image: textures.selection_ring.clone(),
+                                    color: Color::srgba(0.32, 0.96, 1.0, 0.95),
+                                    custom_size: Some(Vec2::splat(input_state.cell_step * 0.98)),
+                                    ..default()
+                                },
+                                Transform::from_xyz(w.x, w.y, Z_SELECTION_RING - 0.05),
+                            ));
+                        }
+                    }
                     let pulse = if input_state.reduced_motion {
                         1.0
                     } else {
