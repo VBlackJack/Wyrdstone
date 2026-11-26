@@ -17,7 +17,7 @@
 //! Building inspector drawer with difficulty selector tabs, live board preview, and upgrade actions.
 
 use super::{
-    format_countdown, spawn_full_button, spawn_resource_pill, spawn_small_button, CityAction,
+    format_countdown, spawn_cost_pills, spawn_full_button, spawn_small_button, CityAction,
     InspectorHarvestTimerText,
 };
 use crate::fjord_art::FjordTextures;
@@ -27,7 +27,9 @@ use crate::theme::*;
 use crate::ui_style::{button_shadow, display_font};
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
-use wyrdstone_core::{format_building_bonus, BuildingDef, I18nCatalog, Objective, HUB_BUILDING_ID};
+use wyrdstone_core::{
+    format_building_bonus, BuildingDef, I18nCatalog, Objective, ValhallaFlameTier, HUB_BUILDING_ID,
+};
 
 pub(super) fn spawn_building_inspector(
     inspector: &mut ChildBuilder,
@@ -277,6 +279,46 @@ pub(super) fn spawn_building_inspector(
                             ));
                         }
                     });
+
+                    // Shortage Guidance callout when jumped from a missing resource pill
+                    if let Some((kind, g_bldg_id, g_diff, g_amt)) = &ctx.shortage_guidance {
+                        if g_bldg_id == &b.id && *g_diff == active_diff {
+                            let diff_key = match g_diff {
+                                2 => "city.difficulty.legendary",
+                                1 => "city.difficulty.mastery",
+                                _ => "city.difficulty.standard",
+                            };
+                            let banner = i18n.t_fmt(
+                                "city.shortage.banner",
+                                &[
+                                    ("resource", i18n.t(kind.label_key()).to_string()),
+                                    ("building", i18n.t(&b.name_key).to_string()),
+                                    ("diff", i18n.t(diff_key).to_string()),
+                                    ("amount", g_amt.to_string()),
+                                ],
+                            );
+                            top.spawn((
+                                Node {
+                                    padding: UiRect::axes(Val::Px(9.0), Val::Px(6.0)),
+                                    border: UiRect::all(Val::Px(1.5)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.10, 0.25, 0.30, 0.94)),
+                                BorderColor(COLOR_ACCENT_GOLD),
+                                BorderRadius::all(Val::Px(6.0)),
+                            ))
+                            .with_children(|call| {
+                                call.spawn((
+                                    Text::new(banner),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            });
+                        }
+                    }
 
                     // Difficulty selector tabs (always visible on unlocked buildings so Mastery/Legendary criteria are clear)
                     if unlocked && (b.mastery_level_id.is_some() || b.legendary_level_id.is_some())
@@ -549,6 +591,217 @@ pub(super) fn spawn_building_inspector(
                         });
                     }
 
+                    // Valhalla Flame 4-pip staging + Full Combat Loadout breakdown (scrollable on portrait)
+                    if unlocked {
+                        let streak = ctx.city.stats.win_streak;
+                        let flame = ctx.city.valhalla_flame_tier();
+                        let active_pips = flame.tier_index();
+                        top.spawn((
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                padding: UiRect::all(Val::Px(8.0)),
+                                row_gap: Val::Px(4.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.16, 0.11, 0.08, 0.90)),
+                            BorderColor(if active_pips > 0 {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_BORDER
+                            }),
+                            BorderRadius::all(Val::Px(8.0)),
+                        ))
+                        .with_children(|fbox| {
+                            let title = if streak >= 1 {
+                                i18n.t_fmt(
+                                    "city.loadout.flame_title",
+                                    &[
+                                        ("streak", streak.to_string()),
+                                        ("tier", i18n.t(flame.name_key()).to_string()),
+                                    ],
+                                )
+                            } else {
+                                i18n.t("city.loadout.flame_idle").to_string()
+                            };
+                            fbox.spawn((
+                                Text::new(title),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(if streak >= 1 {
+                                    COLOR_ACCENT_GOLD
+                                } else {
+                                    COLOR_TEXT_MUTED
+                                }),
+                            ));
+                            // 4-pip tier gauge (NO BoxShadow inside ScrollablePanel)
+                            fbox.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                column_gap: Val::Px(5.0),
+                                ..default()
+                            })
+                            .with_children(|pips| {
+                                for idx in 1u8..=4u8 {
+                                    let lit = idx <= active_pips;
+                                    pips.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            height: Val::Px(7.0),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(if lit {
+                                            COLOR_ACCENT_GOLD
+                                        } else {
+                                            COLOR_PANEL_DARK
+                                        }),
+                                        BorderColor(if lit {
+                                            COLOR_ACCENT_GOLD_HOVER
+                                        } else {
+                                            COLOR_PANEL_BORDER
+                                        }),
+                                        BorderRadius::all(Val::Px(3.0)),
+                                    ));
+                                }
+                            });
+                            if streak >= 1 {
+                                fbox.spawn((
+                                    Text::new(i18n.t(flame.desc_key())),
+                                    TextFont {
+                                        font_size: FONT_SMALL - 1.0,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_PRIMARY),
+                                ));
+                                let next_line =
+                                    match ValhallaFlameTier::streak_needed_for_next(streak) {
+                                        Some((next_tier, wins_left)) => i18n.t_fmt(
+                                            "city.loadout.flame_next",
+                                            &[
+                                                ("tier", i18n.t(next_tier.name_key()).to_string()),
+                                                ("wins", wins_left.to_string()),
+                                            ],
+                                        ),
+                                        None => i18n.t("city.loadout.flame_max").to_string(),
+                                    };
+                                fbox.spawn((
+                                    Text::new(next_line),
+                                    TextFont {
+                                        font_size: FONT_SMALL - 1.0,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                ));
+                            }
+                        });
+
+                        // Active Combat Loadout effects (Patron, Primary + Secondary Amulet, Synergies, War Draught)
+                        let patron_summary = wyrdstone_core::format_patron_desc(
+                            i18n,
+                            ctx.city.selected_patron,
+                            &ctx.data.balance.session,
+                        );
+                        let primary_amulet = ctx
+                            .city
+                            .equipped_amulet
+                            .as_deref()
+                            .and_then(|id| ctx.data.amulet_by_id(id));
+                        let secondary_amulet = ctx
+                            .city
+                            .equipped_amulet_secondary
+                            .as_deref()
+                            .and_then(|id| ctx.data.amulet_by_id(id));
+                        let synergies = ctx.city.active_synergies();
+                        top.spawn((
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                padding: UiRect::all(Val::Px(8.0)),
+                                row_gap: Val::Px(3.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderColor(COLOR_PANEL_BORDER),
+                            BorderRadius::all(Val::Px(8.0)),
+                        ))
+                        .with_children(|lbox| {
+                            lbox.spawn((
+                                Text::new(patron_summary),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_MUTED),
+                            ));
+                            if let Some(am) = primary_amulet {
+                                let am_eff = super::modals::format_amulet_effect(
+                                    i18n,
+                                    ctx.city.scaled_amulet_effect(am),
+                                );
+                                lbox.spawn((
+                                    Text::new(am_eff),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                ));
+                            }
+                            if let Some(sec) = secondary_amulet {
+                                let sec_eff = super::modals::format_amulet_effect(
+                                    i18n,
+                                    ctx.city.scaled_amulet_effect(sec),
+                                );
+                                lbox.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.loadout.secondary_amulet",
+                                        &[
+                                            ("name", i18n.t(&sec.name_key).to_string()),
+                                            ("effect", sec_eff),
+                                        ],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                ));
+                            }
+                            if !synergies.is_empty() {
+                                let names: Vec<String> = synergies
+                                    .iter()
+                                    .map(|s| i18n.t(s.name_key()).to_string())
+                                    .collect();
+                                lbox.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.loadout.synergies",
+                                        &[("names", names.join(i18n.t("ui.separator.comma")))],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            }
+                            if let Some(draught) = ctx.city.active_war_draught {
+                                lbox.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.header.war_draught",
+                                        &[("name", i18n.t(draught.name_key()).to_string())],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            }
+                        });
+                    }
+
                     // Upgrade cost breakdown
                     if unlocked {
                         if let Some(cost) = next_cost {
@@ -560,43 +813,7 @@ pub(super) fn spawn_building_inspector(
                                 },
                                 TextColor(COLOR_TEXT_MUTED),
                             ));
-                            top.spawn(Node {
-                                flex_wrap: FlexWrap::Wrap,
-                                column_gap: Val::Px(8.0),
-                                row_gap: Val::Px(4.0),
-                                ..default()
-                            })
-                            .with_children(|costs| {
-                                let res = ctx.city.resources;
-                                let entries = [
-                                    (i18n.t("resources.label.wood"), res.wood, cost.wood),
-                                    (i18n.t("resources.label.stone"), res.stone, cost.stone),
-                                    (i18n.t("resources.label.gold"), res.gold, cost.gold),
-                                    (i18n.t("resources.label.mead"), res.mead, cost.mead),
-                                ];
-                                for (label, have, need) in entries {
-                                    if need == 0 {
-                                        continue;
-                                    }
-                                    let ok = have >= need;
-                                    spawn_resource_pill(
-                                        costs,
-                                        &i18n.t_fmt(
-                                            "city.panel.building.cost_pill",
-                                            &[
-                                                ("label", label.to_string()),
-                                                ("have", have.to_string()),
-                                                ("need", need.to_string()),
-                                            ],
-                                        ),
-                                        if ok {
-                                            COLOR_ACCENT_GREEN_TEXT
-                                        } else {
-                                            COLOR_ACCENT_CRIMSON_TEXT
-                                        },
-                                    );
-                                }
-                            });
+                            spawn_cost_pills(top, i18n, ctx.city.resources, *cost);
                         }
                     }
                 });
@@ -796,33 +1013,6 @@ pub(super) fn spawn_building_inspector(
                                     ));
                                 });
                             });
-                        let patron_summary = wyrdstone_core::format_patron_desc(
-                            i18n,
-                            ctx.city.selected_patron,
-                            &ctx.data.balance.session,
-                        );
-                        loadout.spawn((
-                            Text::new(patron_summary),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_TEXT_MUTED),
-                        ));
-                        if let Some(am) = active_amulet {
-                            let am_eff = super::modals::format_amulet_effect(
-                                i18n,
-                                ctx.city.scaled_amulet_effect(am),
-                            );
-                            loadout.spawn((
-                                Text::new(am_eff),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_TEAL_TEXT),
-                            ));
-                        }
                     });
             }
             let (base_play_label, raw_play_bg, raw_play_fg) = match active_diff {

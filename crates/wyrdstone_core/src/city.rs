@@ -23,6 +23,7 @@ use crate::balance::{
 };
 use crate::board::ActiveTool;
 use crate::boss::{BossDef, GAUNTLET_CLEAR_GLORY, GAUNTLET_STAGE_PARTIAL_GLORY};
+use crate::level::LevelDef;
 use crate::patron::PatronGod;
 use crate::retention::{
     patron_devotion_upgrade_cost, DailyBountyBoard, OfflineVaultSummary, PlayMode, SkaldPassState,
@@ -92,6 +93,37 @@ impl ResourceBundle {
 
     pub fn is_zero(&self) -> bool {
         self.wood == 0 && self.stone == 0 && self.gold == 0 && self.mead == 0
+    }
+}
+
+/// Identifies one of the four village resource types for shortage guidance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResourceKind {
+    Wood,
+    Stone,
+    Gold,
+    Mead,
+}
+
+impl ResourceKind {
+    /// Returns the quantity of this resource inside `bundle`.
+    pub const fn amount_in(self, bundle: ResourceBundle) -> u32 {
+        match self {
+            Self::Wood => bundle.wood,
+            Self::Stone => bundle.stone,
+            Self::Gold => bundle.gold,
+            Self::Mead => bundle.mead,
+        }
+    }
+
+    /// Returns the localization key for this resource's display name.
+    pub const fn label_key(self) -> &'static str {
+        match self {
+            Self::Wood => "resources.label.wood",
+            Self::Stone => "resources.label.stone",
+            Self::Gold => "resources.label.gold",
+            Self::Mead => "resources.label.mead",
+        }
     }
 }
 
@@ -797,6 +829,94 @@ impl CityState {
             .count()
     }
 
+    /// Returns a 6-bit mask of unlocked secondary play modes indexed by `PlayMode::ALL`.
+    pub fn unlocked_modes_mask(&self) -> u8 {
+        let mut mask = 0u8;
+        for (idx, &mode) in PlayMode::ALL.iter().enumerate() {
+            if self.is_mode_unlocked(mode) {
+                mask |= 1u8 << idx;
+            }
+        }
+        mask
+    }
+
+    /// Returns the next locked secondary play mode in `PlayMode::ALL` order, if any.
+    pub fn next_locked_mode(&self) -> Option<PlayMode> {
+        PlayMode::ALL
+            .iter()
+            .copied()
+            .find(|&m| !self.is_mode_unlocked(m))
+    }
+
+    /// Finds the best unlocked `(building, level, difficulty)` source yielding the most `kind`.
+    ///
+    /// Difficulty tiers mirror inspector eligibility (`0` standard, `1` mastery at >=1 star,
+    /// `2` legendary at >=3 stars). Ties prefer `preferred_building_id`, lower difficulty,
+    /// and earlier building definition order.
+    pub fn best_source_for_resource<'a>(
+        &self,
+        kind: ResourceKind,
+        buildings: &'a [BuildingDef],
+        levels: &'a [LevelDef],
+        preferred_building_id: Option<&str>,
+    ) -> Option<(&'a BuildingDef, &'a LevelDef, u8)> {
+        let mut best: Option<(&'a BuildingDef, &'a LevelDef, u8, u32, usize)> = None;
+        for (b_idx, b) in buildings.iter().enumerate() {
+            if !self.is_building_unlocked(b) {
+                continue;
+            }
+            let stars = self.building_mastery_stars(&b.id);
+            let candidates = [
+                (0u8, Some(b.level_id.as_str())),
+                (
+                    1u8,
+                    if stars >= 1 {
+                        b.mastery_level_id.as_deref()
+                    } else {
+                        None
+                    },
+                ),
+                (
+                    2u8,
+                    if stars >= 3 {
+                        b.legendary_level_id.as_deref()
+                    } else {
+                        None
+                    },
+                ),
+            ];
+            for (diff, opt_id) in candidates {
+                let Some(lvl_id) = opt_id else {
+                    continue;
+                };
+                let Some(lvl) = levels.iter().find(|l| l.id == lvl_id) else {
+                    continue;
+                };
+                let amount = kind.amount_in(lvl.base_reward);
+                if amount == 0 {
+                    continue;
+                }
+                let is_better = match best {
+                    None => true,
+                    Some((best_b, _, best_diff, best_amt, best_idx)) => {
+                        let pref_cur = preferred_building_id == Some(b.id.as_str());
+                        let pref_best = preferred_building_id == Some(best_b.id.as_str());
+                        amount > best_amt
+                            || (amount == best_amt
+                                && ((pref_cur && !pref_best)
+                                    || (pref_cur == pref_best
+                                        && (diff < best_diff
+                                            || (diff == best_diff && b_idx < best_idx)))))
+                    }
+                };
+                if is_better {
+                    best = Some((b, lvl, diff, amount, b_idx));
+                }
+            }
+        }
+        best.map(|(b, lvl, diff, _, _)| (b, lvl, diff))
+    }
+
     /// Returns the Devotion Altar tier (`0..=5`) unlocked for a Patron God.
     pub fn patron_devotion_tier(&self, god: PatronGod) -> u8 {
         self.patron_devotion
@@ -1459,6 +1579,38 @@ impl CityState {
     /// Returns the first unclaimed Saga quest.
     pub fn active_quest<'a>(&self, quests: &'a [QuestDef]) -> Option<&'a QuestDef> {
         quests.iter().find(|q| !self.claimed_quests.contains(&q.id))
+    }
+
+    /// Returns `(current, target)` progress for `quest`, matching `is_quest_ready` semantics.
+    pub fn quest_progress(&self, quest: &QuestDef) -> (u32, u32) {
+        let (cur, target) = match &quest.condition {
+            QuestCondition::WinBuildingLevel { building_id, wins } => {
+                (self.building_wins(building_id), (*wins).max(1))
+            }
+            QuestCondition::WinSpecificLevel { level_id } => {
+                (u32::from(self.completed_levels.contains(level_id)), 1)
+            }
+            QuestCondition::ReachBuildingTier { building_id, tier } => {
+                (self.building_tier(building_id), (*tier).max(1))
+            }
+            QuestCondition::CraftAnyAmulet => (u32::from(!self.crafted_amulets.is_empty()), 1),
+            QuestCondition::ClaimAnyCollection => {
+                (u32::from(!self.claimed_collections.is_empty()), 1)
+            }
+            QuestCondition::CompleteDailyTrials { count } => {
+                (self.stats.daily_completions, (*count).max(1))
+            }
+            QuestCondition::DefeatBosses { count } => (
+                self.stats
+                    .bosses_defeated
+                    .max(self.defeated_bosses.len() as u32),
+                (*count).max(1),
+            ),
+            QuestCondition::ReachExpeditionWave { wave } => {
+                (self.stats.best_expedition_wave, (*wave).max(1))
+            }
+        };
+        (cur.min(target), target)
     }
 
     /// Claims a completed quest's reward.

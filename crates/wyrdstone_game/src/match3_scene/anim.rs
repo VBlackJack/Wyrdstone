@@ -2189,7 +2189,9 @@ fn finalize_level_transition(
         ctx.last_gauntlet_stages = None;
         ctx.last_defeat_out_of_time = outcome == LevelOutcome::Defeat && timed_out;
         ctx.city.stats.best_score = ctx.city.stats.best_score.max(score);
+        ctx.last_unlocked_modes.clear();
         if outcome == LevelOutcome::Victory {
+            let before_modes_mask = ctx.city.unlocked_modes_mask();
             if ctx.tutorial_step == 1 {
                 ctx.tutorial_step = 2;
             }
@@ -2275,6 +2277,10 @@ fn finalize_level_transition(
                 if let Some(run) = ctx.active_expedition.as_mut() {
                     run.roll_boon_choices_v2(&ctx.data.balance.expedition, &mut ctx.rng);
                 }
+                ctx.last_unlocked_modes = wyrdstone_core::newly_unlocked_modes(
+                    before_modes_mask,
+                    ctx.city.unlocked_modes_mask(),
+                );
                 ctx.active_modal = ActiveModal::ExpeditionBoons;
                 ctx.persist();
                 next_state.set(AppState::FjordCity);
@@ -2343,6 +2349,10 @@ fn finalize_level_transition(
             };
             ctx.city.skald_pass.add_xp(skald_xp);
             ctx.last_skald_xp_gained = skald_xp;
+            ctx.last_unlocked_modes = wyrdstone_core::newly_unlocked_modes(
+                before_modes_mask,
+                ctx.city.unlocked_modes_mask(),
+            );
         } else {
             ctx.last_skald_xp_gained = 0;
             if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {

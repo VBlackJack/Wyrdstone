@@ -222,294 +222,339 @@ pub(super) fn spawn_modes_drawer(
 
             let daily_unlocked = ctx.city.is_mode_unlocked(PlayMode::DailyTrial);
             let daily_ready = daily_unlocked && ctx.city.is_daily_available(today_day_index());
-            let daily_btn = if !daily_unlocked {
-                i18n.t("mode.locked.button").to_string()
-            } else if daily_ready {
-                if ctx.city.stats.daily_streak > 0 {
+            let render_mode_card = |body: &mut ChildBuilder, mode: PlayMode, next_locked: bool| {
+                let title = if next_locked {
                     i18n.t_fmt(
-                        "city.button.label_with_count",
-                        &[
-                            ("label", i18n.t("city.panel.daily.button").to_string()),
-                            (
-                                "count",
-                                i18n.t_fmt(
-                                    "city.panel.daily.streak",
-                                    &[("days", ctx.city.stats.daily_streak.to_string())],
-                                ),
-                            ),
-                        ],
+                        "city.drawer.modes.next_unlock",
+                        &[("mode", i18n.t(mode.name_key()).to_string())],
                     )
                 } else {
-                    i18n.t("city.panel.daily.button").to_string()
+                    i18n.t(mode.name_key()).to_string()
+                };
+                match mode {
+                    PlayMode::DailyTrial => {
+                        let daily_btn = if !daily_unlocked {
+                            i18n.t("mode.locked.button").to_string()
+                        } else if daily_ready {
+                            if ctx.city.stats.daily_streak > 0 {
+                                i18n.t_fmt(
+                                    "city.button.label_with_count",
+                                    &[
+                                        ("label", i18n.t("city.panel.daily.button").to_string()),
+                                        (
+                                            "count",
+                                            i18n.t_fmt(
+                                                "city.panel.daily.streak",
+                                                &[(
+                                                    "days",
+                                                    ctx.city.stats.daily_streak.to_string(),
+                                                )],
+                                            ),
+                                        ),
+                                    ],
+                                )
+                            } else {
+                                i18n.t("city.panel.daily.button").to_string()
+                            }
+                        } else {
+                            i18n.t("city.panel.daily.done").to_string()
+                        };
+                        let daily_desc = if daily_unlocked {
+                            i18n.t_fmt(
+                                "city.drawer.modes.daily_desc",
+                                &[("streak", ctx.city.stats.daily_streak.to_string())],
+                            )
+                        } else {
+                            i18n.t(mode.unlock_hint_key()).to_string()
+                        };
+                        spawn_drawer_action_card(
+                            body,
+                            &title,
+                            &daily_desc,
+                            &daily_btn,
+                            CityAction::PlayDailyTrial,
+                            if daily_ready {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            if daily_ready {
+                                COLOR_TEXT_DARK
+                            } else {
+                                COLOR_TEXT_MUTED
+                            },
+                            if daily_ready {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_BORDER
+                            },
+                            daily_ready,
+                        );
+                    }
+                    PlayMode::BossRaids => {
+                        let unlocked = ctx.city.is_mode_unlocked(mode);
+                        let raids_desc = if unlocked {
+                            i18n.t_fmt(
+                                "city.drawer.modes.raids_desc",
+                                &[
+                                    ("slain", ctx.city.defeated_bosses.len().to_string()),
+                                    ("total", ctx.data.bosses.len().to_string()),
+                                ],
+                            )
+                        } else {
+                            i18n.t(mode.unlock_hint_key()).to_string()
+                        };
+                        spawn_drawer_action_card(
+                            body,
+                            &title,
+                            &raids_desc,
+                            if unlocked {
+                                i18n.t("city.panel.raids.button")
+                            } else {
+                                i18n.t("mode.locked.button")
+                            },
+                            CityAction::ToggleModal(ActiveModal::Raids),
+                            if unlocked {
+                                COLOR_ACCENT_CRIMSON
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            if unlocked {
+                                COLOR_TEXT_PRIMARY
+                            } else {
+                                COLOR_TEXT_MUTED
+                            },
+                            if unlocked {
+                                COLOR_ACCENT_CRIMSON
+                            } else {
+                                COLOR_PANEL_BORDER
+                            },
+                            unlocked,
+                        );
+                    }
+                    PlayMode::Expedition => {
+                        let unlocked = ctx.city.is_mode_unlocked(mode);
+                        let exp_btn = if !unlocked {
+                            i18n.t("mode.locked.button").to_string()
+                        } else if let Some(run) = &ctx.active_expedition {
+                            i18n.t_fmt(
+                                "city.panel.expedition.resume",
+                                &[("wave", run.wave.to_string())],
+                            )
+                        } else {
+                            i18n.t_fmt(
+                                "city.button.play_cost",
+                                &[
+                                    ("label", i18n.t("city.panel.expedition.button").to_string()),
+                                    ("cost", energy_cost.to_string()),
+                                ],
+                            )
+                        };
+                        let exp_desc = if unlocked {
+                            i18n.t_fmt(
+                                "city.drawer.modes.expedition_desc",
+                                &[("best", ctx.city.stats.best_expedition_wave.to_string())],
+                            )
+                        } else {
+                            i18n.t(mode.unlock_hint_key()).to_string()
+                        };
+                        spawn_drawer_action_card(
+                            body,
+                            &title,
+                            &exp_desc,
+                            &exp_btn,
+                            CityAction::StartExpedition,
+                            if !unlocked {
+                                COLOR_BUTTON_DISABLED
+                            } else if ctx.active_expedition.is_some() {
+                                COLOR_ACCENT_GREEN
+                            } else {
+                                COLOR_ACCENT_TEAL
+                            },
+                            if unlocked {
+                                COLOR_TEXT_ON_ACCENT
+                            } else {
+                                COLOR_TEXT_MUTED
+                            },
+                            if unlocked {
+                                COLOR_ACCENT_TEAL
+                            } else {
+                                COLOR_PANEL_BORDER
+                            },
+                            unlocked,
+                        );
+                    }
+                    PlayMode::ValhallaBlitz => {
+                        let unlocked = ctx.city.is_mode_unlocked(mode);
+                        let blitz_btn = if unlocked {
+                            i18n.t_fmt(
+                                "city.button.play_cost",
+                                &[
+                                    ("label", i18n.t("city.panel.blitz.button").to_string()),
+                                    ("cost", energy_cost.to_string()),
+                                ],
+                            )
+                        } else {
+                            i18n.t("mode.locked.button").to_string()
+                        };
+                        let blitz_desc = if unlocked {
+                            i18n.t_fmt(
+                                "city.drawer.modes.blitz_desc",
+                                &[("best", ctx.city.stats.best_blitz_score.to_string())],
+                            )
+                        } else {
+                            i18n.t(mode.unlock_hint_key()).to_string()
+                        };
+                        spawn_drawer_action_card(
+                            body,
+                            &title,
+                            &blitz_desc,
+                            &blitz_btn,
+                            CityAction::StartValhallaBlitz,
+                            if unlocked {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            if unlocked {
+                                COLOR_TEXT_DARK
+                            } else {
+                                COLOR_TEXT_MUTED
+                            },
+                            if unlocked {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_BORDER
+                            },
+                            unlocked,
+                        );
+                    }
+                    PlayMode::WeeklyChallenge => {
+                        let unlocked = ctx.city.is_mode_unlocked(mode);
+                        let weekly_btn = if unlocked {
+                            i18n.t_fmt(
+                                "city.button.play_cost",
+                                &[
+                                    ("label", i18n.t("city.panel.weekly.button").to_string()),
+                                    ("cost", energy_cost.to_string()),
+                                ],
+                            )
+                        } else {
+                            i18n.t("mode.locked.button").to_string()
+                        };
+                        let weekly_desc = if unlocked {
+                            i18n.t_fmt(
+                                "city.drawer.modes.weekly_desc",
+                                &[
+                                    ("best", ctx.city.weekly_challenge.best_score.to_string()),
+                                    (
+                                        "medal",
+                                        i18n.t(weekly_medal_name_key(
+                                            ctx.city.weekly_challenge.claimed_medal,
+                                        ))
+                                        .to_string(),
+                                    ),
+                                ],
+                            )
+                        } else {
+                            i18n.t(mode.unlock_hint_key()).to_string()
+                        };
+                        spawn_drawer_action_card(
+                            body,
+                            &title,
+                            &weekly_desc,
+                            &weekly_btn,
+                            CityAction::StartWeeklyChallenge,
+                            if unlocked {
+                                COLOR_ACCENT_TEAL
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            if unlocked {
+                                COLOR_TEXT_ON_ACCENT
+                            } else {
+                                COLOR_TEXT_MUTED
+                            },
+                            if unlocked {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_BORDER
+                            },
+                            unlocked,
+                        );
+                    }
+                    PlayMode::YggdrasilTrials => {
+                        let unlocked = ctx.city.is_mode_unlocked(mode);
+                        let trials_btn = if unlocked {
+                            i18n.t_fmt(
+                                "city.panel.trials.button",
+                                &[
+                                    ("done", ctx.city.completed_trials.len().to_string()),
+                                    ("total", ctx.data.trials.len().to_string()),
+                                ],
+                            )
+                        } else {
+                            i18n.t("mode.locked.button").to_string()
+                        };
+                        let trials_desc = if unlocked {
+                            i18n.t_fmt(
+                                "city.drawer.modes.trials_desc",
+                                &[
+                                    ("par", ctx.city.par_trials.len().to_string()),
+                                    ("total", ctx.data.trials.len().to_string()),
+                                ],
+                            )
+                        } else {
+                            i18n.t(mode.unlock_hint_key()).to_string()
+                        };
+                        spawn_drawer_action_card(
+                            body,
+                            &title,
+                            &trials_desc,
+                            &trials_btn,
+                            CityAction::ToggleModal(ActiveModal::Trials),
+                            if unlocked {
+                                COLOR_ACCENT_TEAL
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            if unlocked {
+                                COLOR_TEXT_ON_ACCENT
+                            } else {
+                                COLOR_TEXT_MUTED
+                            },
+                            COLOR_PANEL_BORDER,
+                            unlocked,
+                        );
+                    }
                 }
-            } else {
-                i18n.t("city.panel.daily.done").to_string()
             };
-            let daily_desc = if daily_unlocked {
-                i18n.t_fmt(
-                    "city.drawer.modes.daily_desc",
-                    &[("streak", ctx.city.stats.daily_streak.to_string())],
-                )
-            } else {
-                i18n.t(PlayMode::DailyTrial.unlock_hint_key()).to_string()
-            };
-            spawn_drawer_action_card(
-                body,
-                i18n.t("city.panel.daily.button"),
-                &daily_desc,
-                &daily_btn,
-                CityAction::PlayDailyTrial,
-                if daily_ready {
-                    COLOR_ACCENT_GOLD
-                } else {
-                    COLOR_BUTTON_DISABLED
-                },
-                if daily_ready {
-                    COLOR_TEXT_DARK
-                } else {
-                    COLOR_TEXT_MUTED
-                },
-                if daily_ready {
-                    COLOR_ACCENT_GOLD
-                } else {
-                    COLOR_PANEL_BORDER
-                },
-                daily_ready,
-            );
 
-            let raids_unlocked = ctx.city.is_mode_unlocked(PlayMode::BossRaids);
-            let raids_desc = if raids_unlocked {
-                i18n.t_fmt(
-                    "city.drawer.modes.raids_desc",
-                    &[
-                        ("slain", ctx.city.defeated_bosses.len().to_string()),
-                        ("total", ctx.data.bosses.len().to_string()),
-                    ],
-                )
-            } else {
-                i18n.t(PlayMode::BossRaids.unlock_hint_key()).to_string()
-            };
-            spawn_drawer_action_card(
-                body,
-                i18n.t("city.panel.raids.button"),
-                &raids_desc,
-                if raids_unlocked {
-                    i18n.t("city.panel.raids.button")
-                } else {
-                    i18n.t("mode.locked.button")
-                },
-                CityAction::ToggleModal(ActiveModal::Raids),
-                if raids_unlocked {
-                    COLOR_ACCENT_CRIMSON
-                } else {
-                    COLOR_BUTTON_DISABLED
-                },
-                if raids_unlocked {
-                    COLOR_TEXT_PRIMARY
-                } else {
-                    COLOR_TEXT_MUTED
-                },
-                if raids_unlocked {
-                    COLOR_ACCENT_CRIMSON
-                } else {
-                    COLOR_PANEL_BORDER
-                },
-                raids_unlocked,
-            );
-
-            let exp_unlocked = ctx.city.is_mode_unlocked(PlayMode::Expedition);
-            let exp_btn = if !exp_unlocked {
-                i18n.t("mode.locked.button").to_string()
-            } else if let Some(run) = &ctx.active_expedition {
-                i18n.t_fmt(
-                    "city.panel.expedition.resume",
-                    &[("wave", run.wave.to_string())],
-                )
-            } else {
-                i18n.t_fmt(
-                    "city.button.play_cost",
-                    &[
-                        ("label", i18n.t("city.panel.expedition.button").to_string()),
-                        ("cost", energy_cost.to_string()),
-                    ],
-                )
-            };
-            let exp_desc = if exp_unlocked {
-                i18n.t_fmt(
-                    "city.drawer.modes.expedition_desc",
-                    &[("best", ctx.city.stats.best_expedition_wave.to_string())],
-                )
-            } else {
-                i18n.t(PlayMode::Expedition.unlock_hint_key()).to_string()
-            };
-            spawn_drawer_action_card(
-                body,
-                i18n.t("city.panel.expedition.button"),
-                &exp_desc,
-                &exp_btn,
-                CityAction::StartExpedition,
-                if !exp_unlocked {
-                    COLOR_BUTTON_DISABLED
-                } else if ctx.active_expedition.is_some() {
-                    COLOR_ACCENT_GREEN
-                } else {
-                    COLOR_ACCENT_TEAL
-                },
-                if exp_unlocked {
-                    COLOR_TEXT_ON_ACCENT
-                } else {
-                    COLOR_TEXT_MUTED
-                },
-                if exp_unlocked {
-                    COLOR_ACCENT_TEAL
-                } else {
-                    COLOR_PANEL_BORDER
-                },
-                exp_unlocked,
-            );
-
-            let blitz_unlocked = ctx.city.is_mode_unlocked(PlayMode::ValhallaBlitz);
-            let blitz_btn = if blitz_unlocked {
-                i18n.t_fmt(
-                    "city.button.play_cost",
-                    &[
-                        ("label", i18n.t("city.panel.blitz.button").to_string()),
-                        ("cost", energy_cost.to_string()),
-                    ],
-                )
-            } else {
-                i18n.t("mode.locked.button").to_string()
-            };
-            let blitz_desc = if blitz_unlocked {
-                i18n.t_fmt(
-                    "city.drawer.modes.blitz_desc",
-                    &[("best", ctx.city.stats.best_blitz_score.to_string())],
-                )
-            } else {
-                i18n.t(PlayMode::ValhallaBlitz.unlock_hint_key())
-                    .to_string()
-            };
-            spawn_drawer_action_card(
-                body,
-                i18n.t("city.panel.blitz.button"),
-                &blitz_desc,
-                &blitz_btn,
-                CityAction::StartValhallaBlitz,
-                if blitz_unlocked {
-                    COLOR_ACCENT_GOLD
-                } else {
-                    COLOR_BUTTON_DISABLED
-                },
-                if blitz_unlocked {
-                    COLOR_TEXT_DARK
-                } else {
-                    COLOR_TEXT_MUTED
-                },
-                if blitz_unlocked {
-                    COLOR_ACCENT_GOLD
-                } else {
-                    COLOR_PANEL_BORDER
-                },
-                blitz_unlocked,
-            );
-
-            let weekly_unlocked = ctx.city.is_mode_unlocked(PlayMode::WeeklyChallenge);
-            let weekly_btn = if weekly_unlocked {
-                i18n.t_fmt(
-                    "city.button.play_cost",
-                    &[
-                        ("label", i18n.t("city.panel.weekly.button").to_string()),
-                        ("cost", energy_cost.to_string()),
-                    ],
-                )
-            } else {
-                i18n.t("mode.locked.button").to_string()
-            };
-            let weekly_desc = if weekly_unlocked {
-                i18n.t_fmt(
-                    "city.drawer.modes.weekly_desc",
-                    &[
-                        ("best", ctx.city.weekly_challenge.best_score.to_string()),
-                        (
-                            "medal",
-                            i18n.t(weekly_medal_name_key(
-                                ctx.city.weekly_challenge.claimed_medal,
-                            ))
-                            .to_string(),
-                        ),
-                    ],
-                )
-            } else {
-                i18n.t(PlayMode::WeeklyChallenge.unlock_hint_key())
-                    .to_string()
-            };
-            spawn_drawer_action_card(
-                body,
-                i18n.t("city.panel.weekly.button"),
-                &weekly_desc,
-                &weekly_btn,
-                CityAction::StartWeeklyChallenge,
-                if weekly_unlocked {
-                    COLOR_ACCENT_TEAL
-                } else {
-                    COLOR_BUTTON_DISABLED
-                },
-                if weekly_unlocked {
-                    COLOR_TEXT_ON_ACCENT
-                } else {
-                    COLOR_TEXT_MUTED
-                },
-                if weekly_unlocked {
-                    COLOR_ACCENT_GOLD
-                } else {
-                    COLOR_PANEL_BORDER
-                },
-                weekly_unlocked,
-            );
-
-            let trials_unlocked = ctx.city.is_mode_unlocked(PlayMode::YggdrasilTrials);
-            let trials_btn = if trials_unlocked {
-                i18n.t_fmt(
-                    "city.panel.trials.button",
-                    &[
-                        ("done", ctx.city.completed_trials.len().to_string()),
-                        ("total", ctx.data.trials.len().to_string()),
-                    ],
-                )
-            } else {
-                i18n.t("mode.locked.button").to_string()
-            };
-            let trials_desc = if trials_unlocked {
-                i18n.t_fmt(
-                    "city.drawer.modes.trials_desc",
-                    &[
-                        ("par", ctx.city.par_trials.len().to_string()),
-                        ("total", ctx.data.trials.len().to_string()),
-                    ],
-                )
-            } else {
-                i18n.t(PlayMode::YggdrasilTrials.unlock_hint_key())
-                    .to_string()
-            };
-            spawn_drawer_action_card(
-                body,
-                i18n.t("city.panel.trials.title"),
-                &trials_desc,
-                &trials_btn,
-                CityAction::ToggleModal(ActiveModal::Trials),
-                if trials_unlocked {
-                    COLOR_ACCENT_TEAL
-                } else {
-                    COLOR_BUTTON_DISABLED
-                },
-                if trials_unlocked {
-                    COLOR_TEXT_ON_ACCENT
-                } else {
-                    COLOR_TEXT_MUTED
-                },
-                COLOR_PANEL_BORDER,
-                trials_unlocked,
-            );
+            // Render unlocked modes first, then only the single next locked mode milestone.
+            for mode in PlayMode::ALL {
+                if ctx.city.is_mode_unlocked(mode) {
+                    render_mode_card(body, mode, false);
+                }
+            }
+            if let Some(next_locked) = ctx.city.next_locked_mode() {
+                render_mode_card(body, next_locked, true);
+                let remaining = PlayMode::ALL
+                    .len()
+                    .saturating_sub(ctx.city.unlocked_mode_count() + 1);
+                if remaining > 0 {
+                    body.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.drawer.modes.locked_remaining",
+                            &[("count", remaining.to_string())],
+                        )),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_MUTED),
+                    ));
+                }
+            }
         },
     );
 }

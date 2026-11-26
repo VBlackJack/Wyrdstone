@@ -276,6 +276,7 @@ pub enum CityAction {
     ClaimQuest(String),
     FocusActiveQuest,
     FocusFjordMap,
+    FocusResourceSource(wyrdstone_core::ResourceKind),
     ClaimOfflineVault,
     ClaimBounty(usize),
     ClaimAllBounties,
@@ -343,6 +344,10 @@ pub fn setup_city_ui(
         } else if ctx.pending_dialogue.is_some() {
             ctx.active_modal = ActiveModal::ChapterDialogue;
         }
+    }
+    if ctx.active_modal == ActiveModal::None && !ctx.last_unlocked_modes.is_empty() {
+        let modes = std::mem::take(&mut ctx.last_unlocked_modes);
+        apply_mode_unlock_celebration(&mut ctx, &modes, 4.5);
     }
     let inspector_open = std::mem::take(&mut ctx.open_inspector_on_city_enter);
     let ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
@@ -419,6 +424,27 @@ fn celebration_claim_line(i18n: &I18nCatalog, title: String, summary: String) ->
         "city.celebration.claim_line",
         &[("title", title), ("summary", summary)],
     )
+}
+
+/// Announces newly unlocked play modes without overwriting an existing celebration banner.
+fn apply_mode_unlock_celebration(ctx: &mut GameContext, modes: &[PlayMode], duration_secs: f32) {
+    if modes.is_empty() {
+        return;
+    }
+    let sep = ctx.data.i18n.t("ui.separator.comma");
+    let names: Vec<String> = modes
+        .iter()
+        .map(|m| ctx.data.i18n.t(m.name_key()).to_string())
+        .collect();
+    let msg = ctx.data.i18n.t_fmt(
+        "city.celebration.mode_unlocked",
+        &[("modes", names.join(sep))],
+    );
+    ctx.celebration_message = Some(match ctx.celebration_message.take() {
+        Some(existing) if !existing.is_empty() => format!("{existing} | {msg}"),
+        _ => msg,
+    });
+    ctx.celebration_timer_secs = ctx.celebration_timer_secs.max(duration_secs);
 }
 
 /// Formats one resource pill text ("Wood: 120") through the shared locale template.
@@ -511,7 +537,9 @@ fn spawn_city_tree(
     let (cover_w, cover_h) = compute_backdrop_cover_size(win_w, win_h);
     let (canvas_w, canvas_h) = compute_fjord_canvas_size(win_w, win_h, is_portrait);
     let ready_harvests = count_ready_harvests(ctx, now);
-    let daily_ready = ctx.city.is_daily_available(today_day_index());
+    let has_unlocked_modes = ctx.city.unlocked_mode_count() > 0;
+    let daily_ready = ctx.city.is_mode_unlocked(PlayMode::DailyTrial)
+        && ctx.city.is_daily_available(today_day_index());
     let claimable_feats = ctx.city.claimable_achievement_count(
         &ctx.data.achievements,
         &ctx.data.buildings,
@@ -1039,33 +1067,35 @@ fn spawn_city_tree(
                                         );
                                     }
                                     if !is_portrait {
-                                        let modes_open = active_drawer == CityDrawer::Modes;
-                                        let modes_badge = usize::from(daily_ready);
-                                        let modes_lbl = badged_label(
-                                            i18n,
-                                            "city.drawer.modes.button",
-                                            modes_badge,
-                                        );
-                                        spawn_small_button_with_opts(
-                                            actions,
-                                            &modes_lbl,
-                                            CityAction::ToggleDrawer(CityDrawer::Modes),
-                                            if modes_open {
-                                                COLOR_ACCENT_TEAL
-                                            } else if daily_ready {
-                                                COLOR_ACCENT_GOLD
-                                            } else {
-                                                COLOR_PANEL_CARD
-                                            },
-                                            if !modes_open && daily_ready {
-                                                COLOR_TEXT_DARK
-                                            } else {
-                                                COLOR_TEXT_PRIMARY
-                                            },
-                                            true,
-                                            Some(i18n.t("city.tooltip.modes").to_string()),
-                                            0.0,
-                                        );
+                                        if has_unlocked_modes {
+                                            let modes_open = active_drawer == CityDrawer::Modes;
+                                            let modes_badge = usize::from(daily_ready);
+                                            let modes_lbl = badged_label(
+                                                i18n,
+                                                "city.drawer.modes.button",
+                                                modes_badge,
+                                            );
+                                            spawn_small_button_with_opts(
+                                                actions,
+                                                &modes_lbl,
+                                                CityAction::ToggleDrawer(CityDrawer::Modes),
+                                                if modes_open {
+                                                    COLOR_ACCENT_TEAL
+                                                } else if daily_ready {
+                                                    COLOR_ACCENT_GOLD
+                                                } else {
+                                                    COLOR_PANEL_CARD
+                                                },
+                                                if !modes_open && daily_ready {
+                                                    COLOR_TEXT_DARK
+                                                } else {
+                                                    COLOR_TEXT_PRIMARY
+                                                },
+                                                true,
+                                                Some(i18n.t("city.tooltip.modes").to_string()),
+                                                0.0,
+                                            );
+                                        }
 
                                         let clan_open = active_drawer == CityDrawer::Clan;
                                         let clan_lbl = badged_label(
@@ -1303,6 +1333,64 @@ fn spawn_city_tree(
                                         },
                                         TextColor(COLOR_TEXT_PRIMARY),
                                     ));
+                                    let (q_cur, q_target) = ctx.city.quest_progress(quest);
+                                    let q_pct = ((q_cur as f32 / q_target.max(1) as f32) * 100.0)
+                                        .clamp(0.0, 100.0);
+                                    info.spawn(Node {
+                                        flex_direction: FlexDirection::Row,
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(6.0),
+                                        margin: UiRect::top(Val::Px(2.0)),
+                                        width: Val::Percent(100.0),
+                                        ..default()
+                                    })
+                                    .with_children(|prow| {
+                                        prow.spawn((
+                                            Node {
+                                                flex_grow: 1.0,
+                                                min_width: Val::Px(110.0),
+                                                height: Val::Px(5.0),
+                                                overflow: Overflow::clip(),
+                                                ..default()
+                                            },
+                                            BackgroundColor(COLOR_PANEL_DARK),
+                                            BorderRadius::all(Val::Px(3.0)),
+                                        ))
+                                        .with_children(
+                                            |track| {
+                                                track.spawn((
+                                                    Node {
+                                                        width: Val::Percent(q_pct),
+                                                        height: Val::Percent(100.0),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(if ready {
+                                                        COLOR_ACCENT_GREEN
+                                                    } else {
+                                                        COLOR_ACCENT_TEAL
+                                                    }),
+                                                ));
+                                            },
+                                        );
+                                        prow.spawn((
+                                            Text::new(i18n.t_fmt(
+                                                "city.panel.quests.progress",
+                                                &[
+                                                    ("cur", q_cur.to_string()),
+                                                    ("target", q_target.to_string()),
+                                                ],
+                                            )),
+                                            TextFont {
+                                                font_size: FONT_SMALL - 1.5,
+                                                ..default()
+                                            },
+                                            TextColor(if ready {
+                                                COLOR_ACCENT_GOLD
+                                            } else {
+                                                COLOR_TEXT_MUTED
+                                            }),
+                                        ));
+                                    });
                                 });
                             });
 
@@ -1478,26 +1566,28 @@ fn spawn_city_tree(
                             None,
                             1.0,
                         );
-                        spawn_small_button_with_opts(
-                            nav,
-                            &badged_label(i18n, "city.drawer.modes.button", modes_badge),
-                            CityAction::ToggleDrawer(CityDrawer::Modes),
-                            if modes_open {
-                                COLOR_ACCENT_TEAL
-                            } else if daily_ready {
-                                COLOR_ACCENT_GOLD
-                            } else {
-                                COLOR_PANEL_CARD
-                            },
-                            if !modes_open && daily_ready {
-                                COLOR_TEXT_DARK
-                            } else {
-                                COLOR_TEXT_PRIMARY
-                            },
-                            true,
-                            None,
-                            1.0,
-                        );
+                        if has_unlocked_modes {
+                            spawn_small_button_with_opts(
+                                nav,
+                                &badged_label(i18n, "city.drawer.modes.button", modes_badge),
+                                CityAction::ToggleDrawer(CityDrawer::Modes),
+                                if modes_open {
+                                    COLOR_ACCENT_TEAL
+                                } else if daily_ready {
+                                    COLOR_ACCENT_GOLD
+                                } else {
+                                    COLOR_PANEL_CARD
+                                },
+                                if !modes_open && daily_ready {
+                                    COLOR_TEXT_DARK
+                                } else {
+                                    COLOR_TEXT_PRIMARY
+                                },
+                                true,
+                                None,
+                                1.0,
+                            );
+                        }
                         spawn_small_button_with_opts(
                             nav,
                             &badged_label(i18n, "city.drawer.clan.button", clan_badge),
@@ -2206,6 +2296,86 @@ pub(crate) fn spawn_resource_pill(parent: &mut ChildBuilder, text: &str, text_co
         });
 }
 
+/// Spawns `label: have/need` cost pills; insufficient pills are clickable guidance buttons.
+pub(super) fn spawn_cost_pills(
+    parent: &mut ChildBuilder,
+    i18n: &I18nCatalog,
+    have: wyrdstone_core::ResourceBundle,
+    cost: wyrdstone_core::ResourceBundle,
+) {
+    let entries = [
+        (wyrdstone_core::ResourceKind::Wood, have.wood, cost.wood),
+        (wyrdstone_core::ResourceKind::Stone, have.stone, cost.stone),
+        (wyrdstone_core::ResourceKind::Gold, have.gold, cost.gold),
+        (wyrdstone_core::ResourceKind::Mead, have.mead, cost.mead),
+    ];
+    parent
+        .spawn(Node {
+            flex_wrap: FlexWrap::Wrap,
+            column_gap: Val::Px(6.0),
+            row_gap: Val::Px(4.0),
+            ..default()
+        })
+        .with_children(|row| {
+            for (kind, cur, need) in entries {
+                if need == 0 {
+                    continue;
+                }
+                let label = i18n.t(kind.label_key());
+                if cur >= need {
+                    spawn_resource_pill(
+                        row,
+                        &i18n.t_fmt(
+                            "city.panel.building.cost_pill",
+                            &[
+                                ("label", label.to_string()),
+                                ("have", cur.to_string()),
+                                ("need", need.to_string()),
+                            ],
+                        ),
+                        COLOR_ACCENT_GREEN_TEXT,
+                    );
+                } else {
+                    row.spawn((
+                        Button,
+                        CityAction::FocusResourceSource(kind),
+                        CityTooltipTarget(
+                            i18n.t_fmt("city.shortage.tooltip", &[("resource", label.to_string())]),
+                        ),
+                        Node {
+                            min_height: Val::Px(32.0),
+                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.30, 0.10, 0.12, 0.90)),
+                        BorderColor(COLOR_ACCENT_CRIMSON),
+                        BorderRadius::all(Val::Px(6.0)),
+                    ))
+                    .with_children(|pill| {
+                        pill.spawn((
+                            Text::new(i18n.t_fmt(
+                                "city.panel.building.cost_pill_missing",
+                                &[
+                                    ("label", label.to_string()),
+                                    ("have", cur.to_string()),
+                                    ("need", need.to_string()),
+                                ],
+                            )),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_CRIMSON_TEXT),
+                        ));
+                    });
+                }
+            }
+        });
+}
+
 /// Swaps light text for the dark accent text colour when the button sits on a green or teal
 /// accent, where light text only reaches about 2.8:1 contrast.
 pub(crate) fn readable_text_color(bg_color: Color, text_color: Color) -> Color {
@@ -2544,14 +2714,19 @@ pub fn handle_city_buttons(
             }
         }
         if keys.just_pressed(KeyCode::KeyE) {
-            layout_mode.inspector_open = false;
-            layout_mode.active_drawer = if layout_mode.active_drawer == CityDrawer::Modes {
-                CityDrawer::None
+            if ctx.city.unlocked_mode_count() == 0 {
+                ctx.status_notice_key = Some(PlayMode::DailyTrial.unlock_hint_key().to_string());
+                play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
             } else {
-                CityDrawer::Modes
-            };
-            scroll_mem.inspector_offset_y = 0.0;
-            play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                layout_mode.inspector_open = false;
+                layout_mode.active_drawer = if layout_mode.active_drawer == CityDrawer::Modes {
+                    CityDrawer::None
+                } else {
+                    CityDrawer::Modes
+                };
+                scroll_mem.inspector_offset_y = 0.0;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+            }
             rebuild = true;
         }
         if keys.just_pressed(KeyCode::KeyG) {
@@ -2677,6 +2852,12 @@ pub fn handle_city_buttons(
         }
     }
 
+    if ctx.active_modal == ActiveModal::None && !ctx.last_unlocked_modes.is_empty() {
+        let modes = std::mem::take(&mut ctx.last_unlocked_modes);
+        apply_mode_unlock_celebration(&mut ctx, &modes, 4.5);
+        rebuild = true;
+    }
+
     // Open queued Chapter Dialogue once the building rise animation finishes and no other modal is open.
     if ctx.pending_dialogue.is_some() && ctx.active_modal == ActiveModal::None {
         if layout_mode.pending_chapter_delay_secs > 0.0 {
@@ -2793,6 +2974,7 @@ pub fn handle_city_buttons(
         )
     });
 
+    let before_modes_mask = ctx.city.unlocked_modes_mask();
     for action in tapped_actions {
         match action {
             CityAction::SelectBuilding(id) => {
@@ -2802,6 +2984,7 @@ pub fn handle_city_buttons(
                 ctx.selected_building_id = id.clone();
                 ctx.selected_difficulty = 0;
                 ctx.status_notice_key = None;
+                ctx.shortage_guidance = None;
                 layout_mode.active_drawer = CityDrawer::None;
                 layout_mode.inspector_open = true;
                 scroll_mem.inspector_offset_y = 0.0;
@@ -2817,6 +3000,7 @@ pub fn handle_city_buttons(
                     layout_mode.inspector_open = false;
                     layout_mode.active_drawer = CityDrawer::None;
                     ctx.status_notice_key = None;
+                    ctx.shortage_guidance = None;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     rebuild = true;
                 }
@@ -2834,6 +3018,7 @@ pub fn handle_city_buttons(
                 };
                 if allowed {
                     ctx.selected_difficulty = *diff;
+                    ctx.shortage_guidance = None;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     rebuild = true;
                 }
@@ -3326,12 +3511,57 @@ pub fn handle_city_buttons(
                     layout_mode.inspector_open = false;
                     layout_mode.active_drawer = CityDrawer::None;
                     ctx.status_notice_key = None;
+                    ctx.shortage_guidance = None;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     haptics.send(HapticEvent(HapticKind::LightTap));
                     rebuild = true;
                 }
             }
+            CityAction::FocusResourceSource(kind) => {
+                ctx.active_modal = ActiveModal::None;
+                ctx.confirm_import_backup = false;
+                ctx.confirm_end_expedition = false;
+                ctx.status_notice_key = None;
+                layout_mode.active_drawer = CityDrawer::None;
+                scroll_mem.modal_offset_y = 0.0;
+                scroll_mem.inspector_offset_y = 0.0;
+                let source = ctx
+                    .city
+                    .best_source_for_resource(
+                        *kind,
+                        &ctx.data.buildings,
+                        &ctx.data.levels,
+                        Some(&ctx.selected_building_id),
+                    )
+                    .map(|(b, lvl, diff)| (b.id.clone(), diff, kind.amount_in(lvl.base_reward)));
+                if let Some((bldg_id, diff, amount)) = source {
+                    ctx.selected_building_id = bldg_id.clone();
+                    ctx.selected_difficulty = diff;
+                    ctx.shortage_guidance = Some((*kind, bldg_id, diff, amount));
+                    layout_mode.inspector_open = true;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    haptics.send(HapticEvent(HapticKind::LightTap));
+                } else {
+                    ctx.shortage_guidance = None;
+                    let res_lbl = ctx.data.i18n.t(kind.label_key()).to_string();
+                    ctx.celebration_message = Some(
+                        ctx.data
+                            .i18n
+                            .t_fmt("city.shortage.none", &[("resource", res_lbl)]),
+                    );
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                }
+                rebuild = true;
+            }
             CityAction::ToggleDrawer(drawer) => {
+                if *drawer == CityDrawer::Modes && ctx.city.unlocked_mode_count() == 0 {
+                    ctx.status_notice_key =
+                        Some(PlayMode::DailyTrial.unlock_hint_key().to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    rebuild = true;
+                    continue;
+                }
                 layout_mode.inspector_open = false;
                 layout_mode.active_drawer = if layout_mode.active_drawer == *drawer {
                     CityDrawer::None
@@ -3625,6 +3855,11 @@ pub fn handle_city_buttons(
                         layout_mode.last_displayed_energy = ctx.city.energy;
                         layout_mode.last_ready_harvests =
                             count_ready_harvests(&ctx, now_unix_secs());
+                        if ctx.city.unlocked_mode_count() == 0
+                            && layout_mode.active_drawer == CityDrawer::Modes
+                        {
+                            layout_mode.active_drawer = CityDrawer::None;
+                        }
                         ctx.status_notice_key = None;
                         ctx.celebration_message =
                             Some(ctx.data.i18n.t("city.panel.backup.imported").to_string());
@@ -3750,6 +3985,13 @@ pub fn handle_city_buttons(
         }
     }
 
+    let newly_unlocked =
+        wyrdstone_core::newly_unlocked_modes(before_modes_mask, ctx.city.unlocked_modes_mask());
+    if !newly_unlocked.is_empty() {
+        apply_mode_unlock_celebration(&mut ctx, &newly_unlocked, 5.0);
+        rebuild = true;
+    }
+
     #[cfg(not(target_os = "android"))]
     if let Ok(win) = windows.get_single() {
         let is_fs = !matches!(win.mode, WindowMode::Windowed);
@@ -3834,6 +4076,7 @@ fn focus_active_quest(
         return FocusQuestResult::NoQuest;
     };
     ctx.status_notice_key = None;
+    ctx.shortage_guidance = None;
     match &quest.condition {
         QuestCondition::WinBuildingLevel { building_id, .. }
         | QuestCondition::ReachBuildingTier { building_id, .. } => {
@@ -3883,35 +4126,62 @@ fn focus_active_quest(
             FocusQuestResult::UpdatedHub(true)
         }
         QuestCondition::DefeatBosses { .. } => {
+            if !ctx.city.is_mode_unlocked(PlayMode::BossRaids) {
+                layout_mode.inspector_open = false;
+                layout_mode.active_drawer = CityDrawer::None;
+                ctx.status_notice_key = Some(PlayMode::BossRaids.unlock_hint_key().to_string());
+                play_sfx(commands, sound_bank, SfxKind::Invalid);
+                return FocusQuestResult::UpdatedHub(false);
+            }
             ctx.active_modal = ActiveModal::Raids;
             scroll_mem.modal_offset_y = 0.0;
             play_sfx(commands, sound_bank, SfxKind::Swap);
             FocusQuestResult::UpdatedHub(true)
         }
         QuestCondition::CompleteDailyTrials { .. } => {
+            if !ctx.city.is_mode_unlocked(PlayMode::DailyTrial) {
+                layout_mode.inspector_open = false;
+                layout_mode.active_drawer = CityDrawer::None;
+                ctx.status_notice_key = Some(PlayMode::DailyTrial.unlock_hint_key().to_string());
+                play_sfx(commands, sound_bank, SfxKind::Invalid);
+                return FocusQuestResult::UpdatedHub(false);
+            }
             if ctx.city.is_daily_available(today_day_index()) && ctx.start_daily_trial().is_ok() {
                 next_state.set(AppState::Match3);
                 return FocusQuestResult::LaunchedMatch3;
             }
+            layout_mode.inspector_open = false;
+            layout_mode.active_drawer = CityDrawer::None;
             ctx.status_notice_key = Some("city.panel.daily.done".to_string());
             play_sfx(commands, sound_bank, SfxKind::Invalid);
             FocusQuestResult::UpdatedHub(false)
         }
-        QuestCondition::ReachExpeditionWave { .. } => match ctx.start_or_resume_expedition() {
-            Ok(true) => {
-                next_state.set(AppState::Match3);
-                FocusQuestResult::LaunchedMatch3
-            }
-            Ok(false) => {
-                scroll_mem.modal_offset_y = 0.0;
-                FocusQuestResult::UpdatedHub(true)
-            }
-            Err(err_key) => {
-                ctx.status_notice_key = Some(err_key.to_string());
+        QuestCondition::ReachExpeditionWave { .. } => {
+            if !ctx.city.is_mode_unlocked(PlayMode::Expedition) {
+                layout_mode.inspector_open = false;
+                layout_mode.active_drawer = CityDrawer::None;
+                ctx.status_notice_key = Some(PlayMode::Expedition.unlock_hint_key().to_string());
                 play_sfx(commands, sound_bank, SfxKind::Invalid);
-                FocusQuestResult::UpdatedHub(false)
+                return FocusQuestResult::UpdatedHub(false);
             }
-        },
+            match ctx.start_or_resume_expedition() {
+                Ok(true) => {
+                    next_state.set(AppState::Match3);
+                    FocusQuestResult::LaunchedMatch3
+                }
+                Ok(false) => {
+                    scroll_mem.modal_offset_y = 0.0;
+                    FocusQuestResult::UpdatedHub(true)
+                }
+                Err(err_key) => {
+                    layout_mode.inspector_open = false;
+                    layout_mode.active_drawer = CityDrawer::None;
+                    ctx.status_notice_key = Some(err_key.to_string());
+                    play_sfx(commands, sound_bank, SfxKind::Invalid);
+                    FocusQuestResult::UpdatedHub(false)
+                }
+            }
+        }
     }
 }
 

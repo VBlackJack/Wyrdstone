@@ -17,7 +17,7 @@
 //! Responsive modal overlays for Amulets, Relic Collections, Runic Tool Forge, Chronicles, and Guide.
 
 use super::{
-    spawn_resource_pill, spawn_resource_pill_with_icon, spawn_small_button,
+    spawn_cost_pills, spawn_resource_pill, spawn_resource_pill_with_icon, spawn_small_button,
     spawn_small_button_colored, CityAction,
 };
 use crate::audio::SoundBank;
@@ -125,52 +125,6 @@ fn spawn_modal_resource_strip(parent: &mut ChildBuilder, ctx: &GameContext, vfx:
                     ],
                 );
                 spawn_resource_pill_with_icon(strip, icon, &lbl, col);
-            }
-        });
-}
-
-/// Spawns color-coded `label: have/need` pills, omitting zero-cost resources.
-fn spawn_cost_pills(
-    parent: &mut ChildBuilder,
-    i18n: &I18nCatalog,
-    have: ResourceBundle,
-    cost: ResourceBundle,
-) {
-    let entries = [
-        (i18n.t("resources.label.wood"), have.wood, cost.wood),
-        (i18n.t("resources.label.stone"), have.stone, cost.stone),
-        (i18n.t("resources.label.gold"), have.gold, cost.gold),
-        (i18n.t("resources.label.mead"), have.mead, cost.mead),
-    ];
-    parent
-        .spawn(Node {
-            flex_wrap: FlexWrap::Wrap,
-            column_gap: Val::Px(6.0),
-            row_gap: Val::Px(4.0),
-            ..default()
-        })
-        .with_children(|row| {
-            for (label, cur, need) in entries {
-                if need == 0 {
-                    continue;
-                }
-                let ok = cur >= need;
-                spawn_resource_pill(
-                    row,
-                    &i18n.t_fmt(
-                        "city.panel.building.cost_pill",
-                        &[
-                            ("label", label.to_string()),
-                            ("have", cur.to_string()),
-                            ("need", need.to_string()),
-                        ],
-                    ),
-                    if ok {
-                        COLOR_ACCENT_GREEN_TEXT
-                    } else {
-                        COLOR_ACCENT_CRIMSON_TEXT
-                    },
-                );
             }
         });
 }

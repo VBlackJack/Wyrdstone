@@ -143,6 +143,8 @@ pub struct GameContext {
     pub pending_offline_vault: Option<OfflineVaultSummary>,
     pub last_stand_pre_defeat_streak: u32,
     pub last_skald_xp_gained: u32,
+    pub last_unlocked_modes: Vec<wyrdstone_core::PlayMode>,
+    pub shortage_guidance: Option<(wyrdstone_core::ResourceKind, String, u8, u32)>,
     pub energy_regen_timer: Timer,
     /// Wall-clock instant from which the next endurance point is being earned.
     pub energy_regen_anchor_unix_secs: u64,
@@ -355,6 +357,8 @@ impl GameContext {
             pending_offline_vault,
             last_stand_pre_defeat_streak: 0,
             last_skald_xp_gained: 0,
+            last_unlocked_modes: Vec::new(),
+            shortage_guidance: None,
             energy_regen_timer: Timer::from_seconds(regen_secs, TimerMode::Repeating),
             energy_regen_anchor_unix_secs: regen_anchor,
             save_path,
@@ -617,6 +621,8 @@ impl GameContext {
         self.pending_dialogue = None;
         self.pending_offline_vault = None;
         self.last_stand_pre_defeat_streak = 0;
+        self.last_unlocked_modes.clear();
+        self.shortage_guidance = None;
         self.city.daily_bounties.ensure_for_day(today_day_index());
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
@@ -684,6 +690,8 @@ impl GameContext {
         self.pending_dialogue = None;
         self.pending_offline_vault = None;
         self.last_stand_pre_defeat_streak = 0;
+        self.last_unlocked_modes.clear();
+        self.shortage_guidance = None;
         self.city.daily_bounties.ensure_for_day(today_day_index());
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
@@ -692,6 +700,8 @@ impl GameContext {
     }
 
     fn apply_loadout_extras(&mut self, session: &mut LevelSession) -> bool {
+        self.shortage_guidance = None;
+        self.last_unlocked_modes.clear();
         let flame = self.city.valhalla_flame_tier();
         session.apply_valhalla_flame(flame, &mut self.rng);
         let devotion_tier = self.city.patron_devotion_tier(session.patron);
@@ -858,6 +868,8 @@ impl GameContext {
         self.active_modal = ActiveModal::None;
         self.armed_tool = None;
         self.status_notice_key = None;
+        self.shortage_guidance = None;
+        self.last_unlocked_modes.clear();
         self.persist();
         Ok(())
     }
@@ -1010,6 +1022,8 @@ impl GameContext {
         self.active_modal = ActiveModal::None;
         self.armed_tool = None;
         self.status_notice_key = None;
+        self.shortage_guidance = None;
+        self.last_unlocked_modes.clear();
         Ok(())
     }
 
@@ -1387,6 +1401,8 @@ mod read_only_notice_tests {
             pending_offline_vault: None,
             last_stand_pre_defeat_streak: 0,
             last_skald_xp_gained: 0,
+            last_unlocked_modes: Vec::new(),
+            shortage_guidance: None,
             energy_regen_timer: Timer::from_seconds(60.0, TimerMode::Repeating),
             energy_regen_anchor_unix_secs: 0,
             save_path: Some(save_file.clone()),

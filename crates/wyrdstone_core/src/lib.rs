@@ -47,8 +47,8 @@ pub use boss::{
 };
 pub use city::{
     validate_city_content, AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats,
-    CollectionDef, DivineSynergy, QuestCondition, QuestDef, ResourceBundle, ToolInventory,
-    ToolRecipeDef, WarDraught, HUB_BUILDING_ID, MAX_DAILY_STREAK_CYCLE,
+    CollectionDef, DivineSynergy, QuestCondition, QuestDef, ResourceBundle, ResourceKind,
+    ToolInventory, ToolRecipeDef, WarDraught, HUB_BUILDING_ID, MAX_DAILY_STREAK_CYCLE,
 };
 pub use expedition::{
     ExpeditionBoon, ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITION_BUILDING_ID,
@@ -60,7 +60,7 @@ pub use level::{
 };
 pub use patron::{PatronGod, FURY_CHARGE_MAX};
 pub use retention::{
-    last_stand_cost, patron_devotion_upgrade_cost, skald_pass_tier_reward,
+    last_stand_cost, newly_unlocked_modes, patron_devotion_upgrade_cost, skald_pass_tier_reward,
     weekly_challenge_week_index, weekly_medal_for_score, weekly_medal_name_key,
     weekly_medal_reward, DailyBounty, DailyBountyBoard, DailyBountyKind, OfflineVaultSummary,
     PlayMode, SkaldPassState, ValhallaFlameTier, WeeklyChallengeState, LAST_STAND_EXTRA_MOVES,

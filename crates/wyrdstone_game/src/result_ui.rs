@@ -863,6 +863,19 @@ fn spawn_result_ui(
                                             .map(|b| b.id.clone());
                                         let mut ready_badges: Vec<(String, Color, ResultAction)> =
                                             Vec::new();
+                                        for &mode in &ctx.last_unlocked_modes {
+                                            ready_badges.push((
+                                                i18n.t_fmt(
+                                                    "result.ready.mode_unlocked",
+                                                    &[(
+                                                        "mode",
+                                                        i18n.t(mode.name_key()).to_string(),
+                                                    )],
+                                                ),
+                                                COLOR_ACCENT_GOLD,
+                                                ResultAction::ReturnToFjord,
+                                            ));
+                                        }
                                         if quest_ready {
                                             ready_badges.push((
                                                 i18n.t("result.ready.quest").to_string(),

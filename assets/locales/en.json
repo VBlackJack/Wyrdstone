@@ -697,5 +697,20 @@
   "patron.devotion.need_glory": "Not enough Clan Glory for this Devotion tier.",
   "patron.devotion.upgraded": "{patron} Devotion reached Tier {tier}!",
   "city.header.legend_rank": "{rank} (Legend {level})",
-  "city.panel.stats.legend_progress": "Legend {level} (+{pct}% Spoils) - {glory}/{next} Glory to next"
+  "city.panel.stats.legend_progress": "Legend {level} (+{pct}% Spoils) - {glory}/{next} Glory to next",
+  "city.celebration.mode_unlocked": "Mode unlocked: {modes}!",
+  "city.drawer.modes.next_unlock": "Next unlock: {mode}",
+  "city.drawer.modes.locked_remaining": "{count} more mode(s) unlock as your Fjord grows.",
+  "result.ready.mode_unlocked": "New mode: {mode}",
+  "city.shortage.tooltip": "Click to jump to the best unlocked board for {resource}",
+  "city.shortage.banner": "Best board for {resource}: {building} ({diff}) - +{amount} {resource}",
+  "city.shortage.none": "No unlocked board currently rewards {resource}.",
+  "city.panel.building.cost_pill_missing": "{label}: {have}/{need} ->",
+  "city.panel.quests.progress": "{cur}/{target}",
+  "city.loadout.flame_title": "Valhalla Flame ({streak} streak): {tier}",
+  "city.loadout.flame_idle": "Valhalla Flame: Win 1 board to start with a free Line Bolt",
+  "city.loadout.flame_next": "Next tier ({tier}) in {wins} win(s)",
+  "city.loadout.flame_max": "Max tier active - protect your streak!",
+  "city.loadout.secondary_amulet": "Secondary: {name} ({effect})",
+  "city.loadout.synergies": "Active Synergies: {names}"
 }

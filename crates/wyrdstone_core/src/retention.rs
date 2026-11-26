@@ -142,6 +142,18 @@ impl ValhallaFlameTier {
             _ => 0,
         }
     }
+
+    /// Returns the next flame tier and remaining consecutive victories needed to reach it.
+    pub const fn streak_needed_for_next(streak: u32) -> Option<(Self, u32)> {
+        match streak {
+            0 => Some((Self::Ember, 1)),
+            1 => Some((Self::Blaze, 1)),
+            2 => Some((Self::Bifrost, 1)),
+            3 => Some((Self::Inferno, 2)),
+            4 => Some((Self::Inferno, 1)),
+            _ => None,
+        }
+    }
 }
 
 /// Accumulated passive village production earned while away from the Fjord.
@@ -539,6 +551,17 @@ impl PlayMode {
     }
 }
 
+/// Returns every secondary play mode newly unlocked between `before_mask` and `after_mask`.
+pub fn newly_unlocked_modes(before_mask: u8, after_mask: u8) -> Vec<PlayMode> {
+    let diff = after_mask & !before_mask;
+    PlayMode::ALL
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| (diff & (1u8 << idx)) != 0)
+        .map(|(_, &mode)| mode)
+        .collect()
+}
+
 /// Returns `(resources, required_glory)` to upgrade Patron Devotion to `next_tier` (`1..=5`).
 pub const fn patron_devotion_upgrade_cost(next_tier: u8) -> (ResourceBundle, u32) {
     match next_tier {
@@ -756,6 +779,38 @@ mod tests {
         );
         assert_eq!(ValhallaFlameTier::Inferno.starting_fury_bonus(), 25);
         assert_eq!(ValhallaFlameTier::Bifrost.starting_fury_bonus(), 0);
+        assert_eq!(
+            ValhallaFlameTier::streak_needed_for_next(0),
+            Some((ValhallaFlameTier::Ember, 1))
+        );
+        assert_eq!(
+            ValhallaFlameTier::streak_needed_for_next(1),
+            Some((ValhallaFlameTier::Blaze, 1))
+        );
+        assert_eq!(
+            ValhallaFlameTier::streak_needed_for_next(2),
+            Some((ValhallaFlameTier::Bifrost, 1))
+        );
+        assert_eq!(
+            ValhallaFlameTier::streak_needed_for_next(3),
+            Some((ValhallaFlameTier::Inferno, 2))
+        );
+        assert_eq!(
+            ValhallaFlameTier::streak_needed_for_next(4),
+            Some((ValhallaFlameTier::Inferno, 1))
+        );
+        assert_eq!(ValhallaFlameTier::streak_needed_for_next(5), None);
+        assert_eq!(ValhallaFlameTier::streak_needed_for_next(9), None);
+    }
+
+    #[test]
+    fn newly_unlocked_modes_returns_newly_set_bits_in_order() {
+        assert!(newly_unlocked_modes(0b000000, 0b000000).is_empty());
+        assert_eq!(
+            newly_unlocked_modes(0b000001, 0b010101),
+            vec![PlayMode::ValhallaBlitz, PlayMode::BossRaids]
+        );
+        assert!(newly_unlocked_modes(0b000011, 0b000001).is_empty());
     }
 
     #[test]

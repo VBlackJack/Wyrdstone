@@ -697,5 +697,20 @@
   "patron.devotion.need_glory": "Gloire de Clan insuffisante pour ce palier de Dévotion.",
   "patron.devotion.upgraded": "Dévotion de {patron} passée au Niv. {tier} !",
   "city.header.legend_rank": "{rank} (Légende {level})",
-  "city.panel.stats.legend_progress": "Légende {level} (+{pct}% Butin) - {glory}/{next} Gloire pour le suivant"
+  "city.panel.stats.legend_progress": "Légende {level} (+{pct}% Butin) - {glory}/{next} Gloire pour le suivant",
+  "city.celebration.mode_unlocked": "Mode débloqué : {modes} !",
+  "city.drawer.modes.next_unlock": "Prochain déblocage : {mode}",
+  "city.drawer.modes.locked_remaining": "{count} autre(s) mode(s) se débloquent en développant le Fjord.",
+  "result.ready.mode_unlocked": "Nouveau mode : {mode}",
+  "city.shortage.tooltip": "Cliquer pour aller au meilleur plateau débloqué pour : {resource}",
+  "city.shortage.banner": "Meilleur plateau pour {resource} : {building} ({diff}) - +{amount} {resource}",
+  "city.shortage.none": "Aucun plateau débloqué ne donne encore cette ressource : {resource}.",
+  "city.panel.building.cost_pill_missing": "{label} : {have}/{need} ->",
+  "city.panel.quests.progress": "{cur}/{target}",
+  "city.loadout.flame_title": "Flamme du Valhalla (série {streak}) : {tier}",
+  "city.loadout.flame_idle": "Flamme du Valhalla : Gagne 1 plateau pour débuter avec un Éclair gratuit",
+  "city.loadout.flame_next": "Palier suivant ({tier}) dans {wins} victoire(s)",
+  "city.loadout.flame_max": "Palier max actif - protège ta série !",
+  "city.loadout.secondary_amulet": "Secondaire : {name} ({effect})",
+  "city.loadout.synergies": "Synergies actives : {names}"
 }

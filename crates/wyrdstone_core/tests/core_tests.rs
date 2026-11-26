@@ -3228,3 +3228,120 @@ fn endgame_patron_devotion_weekly_challenge_and_legend_ranks_work() {
     assert!(loaded.city.patron_devotion.is_empty());
     assert_eq!(loaded.city.weekly_challenge.best_score, 0);
 }
+
+#[test]
+fn progressive_mode_unlocks_shortage_sources_and_quest_progress() {
+    use wyrdstone_core::{newly_unlocked_modes, PlayMode, QuestCondition, QuestDef, ResourceKind};
+
+    let data = GameDataBundle::load_bundled(Language::En).expect("bundled data loads");
+    let mut city = CityState::new(&data.balance);
+
+    // Fresh city has 0 unlocked modes; DailyTrial is the first locked mode.
+    assert_eq!(city.unlocked_modes_mask(), 0);
+    assert_eq!(city.unlocked_mode_count(), 0);
+    assert_eq!(city.next_locked_mode(), Some(PlayMode::DailyTrial));
+
+    // Victory #1 unlocks DailyTrial.
+    let before = city.unlocked_modes_mask();
+    city.stats.total_victories = 1;
+    let newly = newly_unlocked_modes(before, city.unlocked_modes_mask());
+    assert_eq!(newly, vec![PlayMode::DailyTrial]);
+    assert_eq!(city.next_locked_mode(), Some(PlayMode::YggdrasilTrials));
+
+    // Great Hall Tier 1 + 3 victories + 50 Glory unlocks remaining modes up to BossRaids, leaving Expedition.
+    let before_tier1 = city.unlocked_modes_mask();
+    city.building_tiers.insert("great_hall".to_string(), 1);
+    city.stats.total_victories = 3;
+    city.glory = 50;
+    let newly_tier1 = newly_unlocked_modes(before_tier1, city.unlocked_modes_mask());
+    assert_eq!(
+        newly_tier1,
+        vec![
+            PlayMode::YggdrasilTrials,
+            PlayMode::ValhallaBlitz,
+            PlayMode::WeeklyChallenge,
+            PlayMode::BossRaids,
+        ]
+    );
+    assert_eq!(city.next_locked_mode(), Some(PlayMode::Expedition));
+
+    // Great Hall Tier 2 unlocks Expedition -> all modes unlocked.
+    city.building_tiers.insert("great_hall".to_string(), 2);
+    assert_eq!(city.next_locked_mode(), None);
+
+    // Shortage guidance on fresh city (great_hall & meadery unlocked, 0 stars -> Standard only).
+    let fresh = CityState::new(&data.balance);
+    let (b_wood, lvl_wood, diff_wood) = fresh
+        .best_source_for_resource(ResourceKind::Wood, &data.buildings, &data.levels, None)
+        .expect("wood source on fresh city");
+    assert_eq!(b_wood.id, "great_hall");
+    assert_eq!(lvl_wood.id, "great_hall_1");
+    assert_eq!(diff_wood, 0);
+
+    let (b_mead, lvl_mead, diff_mead) = fresh
+        .best_source_for_resource(ResourceKind::Mead, &data.buildings, &data.levels, None)
+        .expect("mead source on fresh city");
+    assert_eq!(b_mead.id, "meadery");
+    assert_eq!(lvl_mead.id, "meadery_1");
+    assert_eq!(diff_mead, 0);
+
+    // Unlocking >=1 mastery star on great_hall allows Mastery (great_hall_2) to win for Wood.
+    let mut starred = CityState::new(&data.balance);
+    starred.building_wins.insert("great_hall".to_string(), 1);
+    let (_, lvl_wood_m, diff_wood_m) = starred
+        .best_source_for_resource(ResourceKind::Wood, &data.buildings, &data.levels, None)
+        .expect("mastery wood source");
+    assert_eq!(diff_wood_m, 1);
+    assert_eq!(lvl_wood_m.id, "great_hall_2");
+
+    // Quest progress matches is_quest_ready across all 8 QuestCondition variants.
+    let mut q_city = CityState::new(&data.balance);
+    q_city.building_wins.insert("great_hall".to_string(), 1);
+    q_city.completed_levels.insert("great_hall_2".to_string());
+    q_city.building_tiers.insert("forge".to_string(), 1);
+    q_city.crafted_amulets.insert("amulet_odin".to_string());
+    q_city.claimed_collections.insert("col_asgard".to_string());
+    q_city.stats.daily_completions = 2;
+    q_city.stats.bosses_defeated = 0;
+    q_city.defeated_bosses.insert("fenrir".to_string());
+    q_city.stats.best_expedition_wave = 2;
+
+    let cases = [
+        (
+            QuestCondition::WinBuildingLevel {
+                building_id: "great_hall".to_string(),
+                wins: 2,
+            },
+            (1, 2),
+        ),
+        (
+            QuestCondition::WinSpecificLevel {
+                level_id: "great_hall_2".to_string(),
+            },
+            (1, 1),
+        ),
+        (
+            QuestCondition::ReachBuildingTier {
+                building_id: "forge".to_string(),
+                tier: 2,
+            },
+            (1, 2),
+        ),
+        (QuestCondition::CraftAnyAmulet, (1, 1)),
+        (QuestCondition::ClaimAnyCollection, (1, 1)),
+        (QuestCondition::CompleteDailyTrials { count: 3 }, (2, 3)),
+        (QuestCondition::DefeatBosses { count: 1 }, (1, 1)),
+        (QuestCondition::ReachExpeditionWave { wave: 3 }, (2, 3)),
+    ];
+    for (idx, (cond, expected)) in cases.into_iter().enumerate() {
+        let q = QuestDef {
+            id: format!("t{idx}"),
+            speaker: "jarl".to_string(),
+            title_key: "quest.q1.title".to_string(),
+            desc_key: "quest.q1.desc".to_string(),
+            condition: cond,
+            reward: ResourceBundle::default(),
+        };
+        assert_eq!(q_city.quest_progress(&q), expected, "variant #{idx}");
+    }
+}
