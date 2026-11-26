@@ -34,6 +34,19 @@ const SCROLL_BOTTOM_PADDING_PX: f32 = 20.0;
 pub enum ScrollPanelKind {
     Modal,
     Inspector,
+    LeftRail,
+    RightRail,
+}
+
+impl ScrollPanelKind {
+    const fn index(self) -> usize {
+        match self {
+            Self::Modal => 0,
+            Self::Inspector => 1,
+            Self::LeftRail => 2,
+            Self::RightRail => 3,
+        }
+    }
 }
 
 /// Marker component placed on every `Overflow::scroll_y()` UI container.
@@ -99,6 +112,8 @@ pub fn spawn_scrollbar_track(parent: &mut ChildBuilder, kind: ScrollPanelKind) {
 pub struct UiScrollMemory {
     pub modal_offset_y: f32,
     pub inspector_offset_y: f32,
+    pub left_rail_offset_y: f32,
+    pub right_rail_offset_y: f32,
     touch_id: Option<u64>,
     touch_panel: Option<ScrollPanelKind>,
     touch_last_y: f32,
@@ -111,6 +126,8 @@ impl UiScrollMemory {
         match kind {
             ScrollPanelKind::Modal => self.modal_offset_y = val,
             ScrollPanelKind::Inspector => self.inspector_offset_y = val,
+            ScrollPanelKind::LeftRail => self.left_rail_offset_y = val,
+            ScrollPanelKind::RightRail => self.right_rail_offset_y = val,
         }
     }
 
@@ -238,7 +255,7 @@ pub fn handle_ui_scroll(
 
     if wheel_delta_y.abs() > f32::EPSILON {
         for (panel, computed, gtf, rcp, mut scroll, children) in &mut panels {
-            if has_modal_panel && panel.kind == ScrollPanelKind::Inspector {
+            if has_modal_panel && panel.kind != ScrollPanelKind::Modal {
                 continue;
             }
             if !rcp.mouse_over() {
@@ -258,7 +275,7 @@ pub fn handle_ui_scroll(
         let hit_panel = panels
             .iter()
             .find_map(|(panel, computed, gtf, _, scroll, children)| {
-                if has_modal_panel && panel.kind == ScrollPanelKind::Inspector {
+                if has_modal_panel && panel.kind != ScrollPanelKind::Modal {
                     return None;
                 }
                 (point_inside_node(pos, computed, gtf)
@@ -289,7 +306,7 @@ pub fn handle_ui_scroll(
                         if panel.kind != locked_kind {
                             continue;
                         }
-                        if has_modal_panel && panel.kind == ScrollPanelKind::Inspector {
+                        if has_modal_panel && panel.kind != ScrollPanelKind::Modal {
                             continue;
                         }
                         let max_scroll =
@@ -311,8 +328,7 @@ pub fn handle_ui_scroll(
 
     // Clamp stale offsets when content shrinks or viewport grows, and update indicators.
     if !panels.is_empty() {
-        let mut modal_metrics: Option<(bool, f32, f32, f32)> = None;
-        let mut inspector_metrics: Option<(bool, f32, f32, f32)> = None;
+        let mut metrics_by_kind: [Option<(bool, f32, f32, f32)>; 4] = [None; 4];
         for (panel, computed, gtf, _, mut scroll, children) in &mut panels {
             let max_scroll = max_scroll_y(computed, gtf, scroll.offset_y, children, &child_nodes);
             let clamped = scroll.offset_y.clamp(0.0, max_scroll);
@@ -333,43 +349,33 @@ pub fn handle_ui_scroll(
             } else {
                 0.0
             };
-            let metrics = (
+            metrics_by_kind[panel.kind.index()] = Some((
                 has_more,
                 if scrollable { 1.0 } else { 0.0 },
                 thumb_pct,
                 top_pct,
-            );
-            match panel.kind {
-                ScrollPanelKind::Modal => modal_metrics = Some(metrics),
-                ScrollPanelKind::Inspector => inspector_metrics = Some(metrics),
-            }
+            ));
         }
         for (hint, mut node) in &mut hints {
-            let show = match hint.kind {
-                ScrollPanelKind::Modal => modal_metrics.map(|m| m.0).unwrap_or(false),
-                ScrollPanelKind::Inspector => inspector_metrics.map(|m| m.0).unwrap_or(false),
-            };
+            let show = metrics_by_kind[hint.kind.index()]
+                .map(|m| m.0)
+                .unwrap_or(false);
             let display = if show { Display::Flex } else { Display::None };
             if node.display != display {
                 node.display = display;
             }
         }
         for (track, mut node) in &mut tracks {
-            let show = match track.kind {
-                ScrollPanelKind::Modal => modal_metrics.map(|m| m.1 > 0.5).unwrap_or(false),
-                ScrollPanelKind::Inspector => inspector_metrics.map(|m| m.1 > 0.5).unwrap_or(false),
-            };
+            let show = metrics_by_kind[track.kind.index()]
+                .map(|m| m.1 > 0.5)
+                .unwrap_or(false);
             let display = if show { Display::Flex } else { Display::None };
             if node.display != display {
                 node.display = display;
             }
         }
         for (thumb, mut node) in &mut thumbs {
-            let metrics = match thumb.kind {
-                ScrollPanelKind::Modal => modal_metrics,
-                ScrollPanelKind::Inspector => inspector_metrics,
-            };
-            if let Some((_, _, thumb_pct, top_pct)) = metrics {
+            if let Some((_, _, thumb_pct, top_pct)) = metrics_by_kind[thumb.kind.index()] {
                 let height = Val::Percent(thumb_pct);
                 let top = Val::Percent(top_pct);
                 if node.height != height {

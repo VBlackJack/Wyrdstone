@@ -702,6 +702,7 @@ pub(super) fn spawn_menu_drawer(
     fjord_art: &FjordTextures,
     sound_bank: &SoundBank,
     scroll_offset_y: f32,
+    #[cfg(not(target_os = "android"))] is_fullscreen: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let tribute_ready = ctx.city.is_login_tribute_available(today_day_index());
@@ -780,14 +781,27 @@ pub(super) fn spawn_menu_drawer(
                     COLOR_PANEL_CARD,
                     true,
                 );
+            });
+
+            #[cfg(not(target_os = "android"))]
+            {
+                let fs_label = if is_fullscreen {
+                    i18n.t("city.settings.display_windowed")
+                } else {
+                    i18n.t("city.settings.display_fullscreen")
+                };
                 spawn_small_button(
-                    row,
-                    i18n.t("city.panel.help.button"),
-                    CityAction::ToggleModal(ActiveModal::Help),
-                    COLOR_PANEL_CARD,
+                    body,
+                    fs_label,
+                    CityAction::ToggleFullscreen,
+                    if is_fullscreen {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        COLOR_PANEL_CARD
+                    },
                     true,
                 );
-            });
+            }
 
             spawn_small_button_colored(
                 body,

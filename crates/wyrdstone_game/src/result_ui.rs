@@ -19,7 +19,8 @@
 use crate::audio::{play_sfx, SfxKind, SoundBank};
 use crate::fjord_art::FjordTextures;
 use crate::scroll::{
-    spawn_scrollbar_track, PressArm, ScrollPanelKind, ScrollablePanel, UiScrollMemory,
+    spawn_scrollbar_track, PressArm, ScrollMoreHint, ScrollPanelKind, ScrollablePanel,
+    UiScrollMemory,
 };
 use crate::state::{today_day_index, ActiveModal, AppState, GameContext};
 use crate::theme::*;
@@ -1204,85 +1205,131 @@ fn spawn_result_ui(
                                         }
                                     }
 
-                                    let energy_cost = ctx.data.balance.energy_cost_per_level;
-                                    let has_energy = ctx.city.energy >= energy_cost;
-                                    let max_energy = ctx.city.max_energy(&ctx.data.balance);
-                                    let next_level_id = if is_victory {
-                                        find_next_level_id(ctx)
-                                    } else {
-                                        None
-                                    };
-                                    let can_drink_mead = !has_energy
-                                        && ctx.city.resources.mead
-                                            >= ctx.data.balance.mead_refill_cost;
+                                    // Footer CTAs live in the sticky section below so primary actions
+                                    // stay reachable without scrolling on mobile or dense reward runs.
+                                });
+                            spawn_scrollbar_track(scroll_row, ScrollPanelKind::Modal);
+                        });
 
-                                    card.spawn(Node {
-                                        column_gap: Val::Px(10.0),
-                                        row_gap: Val::Px(6.0),
-                                        flex_wrap: FlexWrap::Wrap,
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        margin: UiRect::top(Val::Px(4.0)),
-                                        ..default()
-                                    })
-                                    .with_children(|erow| {
+                    shell
+                        .spawn((
+                            ScrollMoreHint {
+                                kind: ScrollPanelKind::Modal,
+                            },
+                            Node {
+                                display: Display::None,
+                                flex_shrink: 0.0,
+                                justify_content: JustifyContent::Center,
+                                padding: UiRect::top(Val::Px(4.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|hint| {
+                            hint.spawn((
+                                Text::new(i18n.t("city.panel.scroll_hint")),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_MUTED),
+                            ));
+                        });
+
+                    let energy_cost = ctx.data.balance.energy_cost_per_level;
+                    let has_energy = ctx.city.energy >= energy_cost;
+                    let max_energy = ctx.city.max_energy(&ctx.data.balance);
+                    let next_level_id = if is_victory {
+                        find_next_level_id(ctx)
+                    } else {
+                        None
+                    };
+                    let can_drink_mead =
+                        !has_energy && ctx.city.resources.mead >= ctx.data.balance.mead_refill_cost;
+                    let is_trial = ctx
+                        .active_level_id
+                        .as_deref()
+                        .is_some_and(|id| id.starts_with("trial_"));
+                    let primary_is_next = is_victory && next_level_id.is_some();
+                    let replay_free = is_daily || is_trial;
+                    let replay_ok = can_replay && (replay_free || has_energy);
+                    let primary_is_replay = !is_victory && replay_ok;
+                    let primary_is_fjord = !primary_is_next && !primary_is_replay;
+
+                    shell
+                        .spawn((
+                            Node {
+                                flex_shrink: 0.0,
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                row_gap: Val::Px(8.0),
+                                padding: UiRect::top(Val::Px(10.0)),
+                                margin: UiRect::top(Val::Px(6.0)),
+                                border: UiRect::top(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.35)),
+                        ))
+                        .with_children(|footer| {
+                            footer
+                                .spawn(Node {
+                                    column_gap: Val::Px(10.0),
+                                    row_gap: Val::Px(6.0),
+                                    flex_wrap: FlexWrap::Wrap,
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                })
+                                .with_children(|erow| {
+                                    erow.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            "city.header.energy_full",
+                                            &[
+                                                ("cur", ctx.city.energy.to_string()),
+                                                ("max", max_energy.to_string()),
+                                            ],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(if has_energy {
+                                            COLOR_ACCENT_TEAL_TEXT
+                                        } else {
+                                            COLOR_ACCENT_CRIMSON_TEXT
+                                        }),
+                                    ));
+                                    if can_drink_mead {
+                                        let mead_lbl = i18n.t_fmt(
+                                            "city.button.drink_mead",
+                                            &[
+                                                (
+                                                    "energy",
+                                                    ctx.data.balance.mead_refill_energy.to_string(),
+                                                ),
+                                                (
+                                                    "cost",
+                                                    ctx.data.balance.mead_refill_cost.to_string(),
+                                                ),
+                                            ],
+                                        );
                                         erow.spawn((
-                                            Text::new(i18n.t_fmt(
-                                                "city.header.energy_full",
-                                                &[
-                                                    ("cur", ctx.city.energy.to_string()),
-                                                    ("max", max_energy.to_string()),
-                                                ],
-                                            )),
-                                            TextFont {
-                                                font_size: FONT_SMALL,
+                                            Button,
+                                            ResultAction::DrinkMead,
+                                            Node {
+                                                min_height: Val::Px(34.0),
+                                                padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border: UiRect::all(Val::Px(1.5)),
                                                 ..default()
                                             },
-                                            TextColor(if has_energy {
-                                                COLOR_ACCENT_TEAL_TEXT
-                                            } else {
-                                                COLOR_ACCENT_CRIMSON_TEXT
-                                            }),
-                                        ));
-                                        if can_drink_mead {
-                                            let mead_lbl = i18n.t_fmt(
-                                                "city.button.drink_mead",
-                                                &[
-                                                    (
-                                                        "energy",
-                                                        ctx.data
-                                                            .balance
-                                                            .mead_refill_energy
-                                                            .to_string(),
-                                                    ),
-                                                    (
-                                                        "cost",
-                                                        ctx.data
-                                                            .balance
-                                                            .mead_refill_cost
-                                                            .to_string(),
-                                                    ),
-                                                ],
-                                            );
-                                            erow.spawn((
-                                                Button,
-                                                ResultAction::DrinkMead,
-                                                Node {
-                                                    min_height: Val::Px(34.0),
-                                                    padding: UiRect::axes(
-                                                        Val::Px(12.0),
-                                                        Val::Px(5.0),
-                                                    ),
-                                                    justify_content: JustifyContent::Center,
-                                                    align_items: AlignItems::Center,
-                                                    border: UiRect::all(Val::Px(1.5)),
-                                                    ..default()
-                                                },
-                                                BackgroundColor(Color::srgb(0.56, 0.36, 0.14)),
-                                                BorderColor(COLOR_ACCENT_GOLD),
-                                                BorderRadius::all(Val::Px(8.0)),
-                                            ))
-                                            .with_children(|btn| {
+                                            BackgroundColor(Color::srgb(0.56, 0.36, 0.14)),
+                                            BorderColor(COLOR_ACCENT_GOLD),
+                                            BorderRadius::all(Val::Px(8.0)),
+                                        ))
+                                        .with_children(
+                                            |btn| {
                                                 btn.spawn((
                                                     Text::new(mead_lbl),
                                                     TextFont {
@@ -1291,93 +1338,82 @@ fn spawn_result_ui(
                                                     },
                                                     TextColor(COLOR_TEXT_PRIMARY),
                                                 ));
-                                            });
-                                        }
-                                    });
+                                            },
+                                        );
+                                    }
+                                });
 
-                                    let is_trial = ctx
-                                        .active_level_id
-                                        .as_deref()
-                                        .is_some_and(|id| id.starts_with("trial_"));
-                                    let primary_is_next = is_victory && next_level_id.is_some();
-                                    let replay_free = is_daily || is_trial;
-                                    let replay_ok = can_replay && (replay_free || has_energy);
-                                    let primary_is_replay = !is_victory && replay_ok;
-                                    let primary_is_fjord = !primary_is_next && !primary_is_replay;
-
-                                    card.spawn(Node {
-                                        column_gap: Val::Px(12.0),
-                                        row_gap: Val::Px(8.0),
-                                        flex_wrap: FlexWrap::Wrap,
-                                        justify_content: JustifyContent::Center,
-                                        margin: UiRect::top(Val::Px(6.0)),
-                                        ..default()
-                                    })
-                                    .with_children(|row| {
-                                        if let Some(next_id) = next_level_id {
-                                            let next_ok = is_trial || has_energy;
-                                            let next_lbl = if is_trial {
-                                                i18n.t("result.button.next_trial").to_string()
-                                            } else {
-                                                i18n.t_fmt(
-                                                    "result.button.next_level",
-                                                    &[("cost", energy_cost.to_string())],
-                                                )
-                                            };
-                                            spawn_result_btn(
-                                                row,
-                                                &next_lbl,
-                                                next_ok.then_some(ResultAction::NextLevel(next_id)),
-                                                if next_ok {
-                                                    COLOR_ACCENT_GREEN
-                                                } else {
-                                                    COLOR_BUTTON_DISABLED
-                                                },
-                                                if next_ok {
-                                                    COLOR_TEXT_ON_ACCENT
-                                                } else {
-                                                    COLOR_TEXT_MUTED
-                                                },
-                                                primary_is_next && next_ok,
-                                            );
-                                        }
+                            footer
+                                .spawn(Node {
+                                    column_gap: Val::Px(12.0),
+                                    row_gap: Val::Px(8.0),
+                                    flex_wrap: FlexWrap::Wrap,
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                })
+                                .with_children(|row| {
+                                    if let Some(next_id) = next_level_id {
+                                        let next_ok = is_trial || has_energy;
+                                        let next_lbl = if is_trial {
+                                            i18n.t("result.button.next_trial").to_string()
+                                        } else {
+                                            i18n.t_fmt(
+                                                "result.button.next_level",
+                                                &[("cost", energy_cost.to_string())],
+                                            )
+                                        };
                                         spawn_result_btn(
                                             row,
-                                            i18n.t("result.button.fjord"),
-                                            Some(ResultAction::ReturnToFjord),
-                                            COLOR_ACCENT_GOLD,
-                                            COLOR_TEXT_DARK,
-                                            primary_is_fjord,
-                                        );
-                                        if can_replay {
-                                            let replay_lbl = if replay_free {
-                                                i18n.t("result.button.replay").to_string()
+                                            &next_lbl,
+                                            next_ok.then_some(ResultAction::NextLevel(next_id)),
+                                            if next_ok {
+                                                COLOR_ACCENT_GREEN
                                             } else {
-                                                i18n.t_fmt(
-                                                    "result.button.replay_cost",
-                                                    &[("cost", energy_cost.to_string())],
-                                                )
-                                            };
-                                            spawn_result_btn(
-                                                row,
-                                                &replay_lbl,
-                                                replay_ok.then_some(ResultAction::Replay),
-                                                if replay_ok {
-                                                    COLOR_ACCENT_TEAL
-                                                } else {
-                                                    COLOR_BUTTON_DISABLED
-                                                },
-                                                if replay_ok {
-                                                    COLOR_TEXT_ON_ACCENT
-                                                } else {
-                                                    COLOR_TEXT_MUTED
-                                                },
-                                                primary_is_replay,
-                                            );
-                                        }
-                                    });
+                                                COLOR_BUTTON_DISABLED
+                                            },
+                                            if next_ok {
+                                                COLOR_TEXT_ON_ACCENT
+                                            } else {
+                                                COLOR_TEXT_MUTED
+                                            },
+                                            primary_is_next && next_ok,
+                                        );
+                                    }
+                                    spawn_result_btn(
+                                        row,
+                                        i18n.t("result.button.fjord"),
+                                        Some(ResultAction::ReturnToFjord),
+                                        COLOR_ACCENT_GOLD,
+                                        COLOR_TEXT_DARK,
+                                        primary_is_fjord,
+                                    );
+                                    if can_replay {
+                                        let replay_lbl = if replay_free {
+                                            i18n.t("result.button.replay").to_string()
+                                        } else {
+                                            i18n.t_fmt(
+                                                "result.button.replay_cost",
+                                                &[("cost", energy_cost.to_string())],
+                                            )
+                                        };
+                                        spawn_result_btn(
+                                            row,
+                                            &replay_lbl,
+                                            replay_ok.then_some(ResultAction::Replay),
+                                            if replay_ok {
+                                                COLOR_ACCENT_TEAL
+                                            } else {
+                                                COLOR_BUTTON_DISABLED
+                                            },
+                                            if replay_ok {
+                                                COLOR_TEXT_ON_ACCENT
+                                            } else {
+                                                COLOR_TEXT_MUTED
+                                            },
+                                            primary_is_replay,
+                                        );
+                                    }
                                 });
-                            spawn_scrollbar_track(scroll_row, ScrollPanelKind::Modal);
                         });
                 });
             });

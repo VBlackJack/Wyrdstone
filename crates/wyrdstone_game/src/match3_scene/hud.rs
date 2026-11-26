@@ -1437,6 +1437,8 @@ pub(super) fn spawn_match3_hud(
     vfx: &VfxTextures,
     sound_bank: &SoundBank,
     modal_scroll_y: f32,
+    left_rail_scroll_y: f32,
+    right_rail_scroll_y: f32,
     hud_mode: HudLayoutMode,
     safe: SafeAreaInsets,
     can_undo: bool,
@@ -1482,7 +1484,7 @@ pub(super) fn spawn_match3_hud(
         ))
         .with_children(|root| {
             if is_wide {
-                // Desktop Wide Left Rail: Moves, Timer, Score, Overdrive, Objectives / Boss Raid, Status Banner.
+                // Desktop Wide Left Rail: Scrollable stats & objectives body + sticky status footer.
                 root.spawn((
                     Match3HudBar,
                     Interaction::None,
@@ -1503,47 +1505,75 @@ pub(super) fn spawn_match3_hud(
                 ))
                 .with_children(|left| {
                     left.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(10.0),
-                        align_items: AlignItems::Stretch,
+                        flex_direction: FlexDirection::Row,
+                        flex_grow: 1.0,
+                        flex_shrink: 1.0,
+                        min_height: Val::Px(0.0),
+                        column_gap: Val::Px(4.0),
                         ..default()
                     })
-                    .with_children(|top_sec| {
-                        top_sec
-                            .spawn(Node {
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(8.0),
-                                align_items: AlignItems::Stretch,
-                                ..default()
-                            })
-                            .with_children(|stats| {
-                                spawn_moves_score_overdrive(
-                                    stats, ctx, session, fjord_art, vfx, true,
-                                );
+                    .with_children(|scroll_row| {
+                        scroll_row
+                            .spawn((
+                                ScrollablePanel {
+                                    kind: ScrollPanelKind::LeftRail,
+                                },
+                                ScrollPosition {
+                                    offset_x: 0.0,
+                                    offset_y: left_rail_scroll_y,
+                                },
+                                RelativeCursorPosition::default(),
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    flex_grow: 1.0,
+                                    flex_shrink: 1.0,
+                                    min_height: Val::Px(0.0),
+                                    overflow: Overflow::scroll_y(),
+                                    row_gap: Val::Px(10.0),
+                                    align_items: AlignItems::Stretch,
+                                    padding: UiRect::right(Val::Px(2.0)),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|top_sec| {
+                                top_sec
+                                    .spawn(Node {
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(8.0),
+                                        align_items: AlignItems::Stretch,
+                                        ..default()
+                                    })
+                                    .with_children(|stats| {
+                                        spawn_moves_score_overdrive(
+                                            stats, ctx, session, fjord_art, vfx, true,
+                                        );
+                                    });
+                                spawn_hud_divider(top_sec);
+                                let sec_key = if session.boss.is_some() {
+                                    "match3.hud.section.boss"
+                                } else {
+                                    "match3.hud.section.objectives"
+                                };
+                                spawn_section_header(top_sec, fjord_art, i18n.t(sec_key));
+                                top_sec
+                                    .spawn(Node {
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(6.0),
+                                        align_items: AlignItems::Stretch,
+                                        ..default()
+                                    })
+                                    .with_children(|objs| {
+                                        spawn_objectives_or_boss(
+                                            objs, ctx, session, fjord_art, textures, vfx, hud_mode,
+                                        );
+                                    });
                             });
-                        spawn_hud_divider(top_sec);
-                        let sec_key = if session.boss.is_some() {
-                            "match3.hud.section.boss"
-                        } else {
-                            "match3.hud.section.objectives"
-                        };
-                        spawn_section_header(top_sec, fjord_art, i18n.t(sec_key));
-                        top_sec
-                            .spawn(Node {
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(6.0),
-                                align_items: AlignItems::Stretch,
-                                ..default()
-                            })
-                            .with_children(|objs| {
-                                spawn_objectives_or_boss(
-                                    objs, ctx, session, fjord_art, textures, vfx, hud_mode,
-                                );
-                            });
+                        spawn_scrollbar_track(scroll_row, ScrollPanelKind::LeftRail);
                     });
 
                     left.spawn(Node {
                         flex_direction: FlexDirection::Column,
+                        flex_shrink: 0.0,
                         row_gap: Val::Px(6.0),
                         align_items: AlignItems::Center,
                         ..default()
@@ -1560,7 +1590,7 @@ pub(super) fn spawn_match3_hud(
                     });
                 });
 
-                // Desktop Wide Right Rail: Utility controls, Patron Divine Fury, Runic Arsenal, Tooltips & Shortcuts.
+                // Desktop Wide Right Rail: Sticky Utility controls + scrollable Fury & Arsenal + sticky Tooltip footer.
                 root.spawn((
                     Match3HudBar,
                     Interaction::None,
@@ -1583,64 +1613,102 @@ pub(super) fn spawn_match3_hud(
                     right
                         .spawn(Node {
                             flex_direction: FlexDirection::Column,
+                            flex_shrink: 0.0,
                             row_gap: Val::Px(8.0),
                             align_items: AlignItems::Stretch,
                             ..default()
                         })
-                        .with_children(|top_sec| {
-                            top_sec
-                                .spawn(Node {
-                                    column_gap: Val::Px(6.0),
-                                    row_gap: Val::Px(6.0),
-                                    flex_wrap: FlexWrap::Wrap,
-                                    justify_content: JustifyContent::SpaceBetween,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                })
-                                .with_children(|u_row| {
-                                    spawn_utility_buttons(
-                                        u_row,
-                                        i18n,
-                                        can_undo,
-                                        undo_used,
-                                        confirm_retreat,
-                                    );
-                                });
-                            if !session.is_trial {
-                                spawn_hud_divider(top_sec);
-                                spawn_fury_card(
-                                    top_sec, i18n, session, fjord_art, textures, hud_mode,
+                        .with_children(|hdr| {
+                            hdr.spawn(Node {
+                                column_gap: Val::Px(6.0),
+                                row_gap: Val::Px(6.0),
+                                flex_wrap: FlexWrap::Wrap,
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            })
+                            .with_children(|u_row| {
+                                spawn_utility_buttons(
+                                    u_row,
+                                    i18n,
+                                    can_undo,
+                                    undo_used,
+                                    confirm_retreat,
                                 );
-                            }
-                            spawn_hud_divider(top_sec);
-                            spawn_section_header(
-                                top_sec,
-                                fjord_art,
-                                i18n.t("match3.hud.section.arsenal"),
-                            );
-                            top_sec
-                                .spawn(Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: Val::Px(6.0),
-                                    align_items: AlignItems::Stretch,
-                                    ..default()
-                                })
-                                .with_children(|tools_col| {
-                                    spawn_tools_section(
-                                        tools_col,
-                                        ctx,
-                                        session,
+                            });
+                            spawn_hud_divider(hdr);
+                        });
+
+                    right
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            flex_grow: 1.0,
+                            flex_shrink: 1.0,
+                            min_height: Val::Px(0.0),
+                            column_gap: Val::Px(4.0),
+                            ..default()
+                        })
+                        .with_children(|scroll_row| {
+                            scroll_row
+                                .spawn((
+                                    ScrollablePanel {
+                                        kind: ScrollPanelKind::RightRail,
+                                    },
+                                    ScrollPosition {
+                                        offset_x: 0.0,
+                                        offset_y: right_rail_scroll_y,
+                                    },
+                                    RelativeCursorPosition::default(),
+                                    Node {
+                                        flex_direction: FlexDirection::Column,
+                                        flex_grow: 1.0,
+                                        flex_shrink: 1.0,
+                                        min_height: Val::Px(0.0),
+                                        overflow: Overflow::scroll_y(),
+                                        row_gap: Val::Px(8.0),
+                                        align_items: AlignItems::Stretch,
+                                        padding: UiRect::right(Val::Px(2.0)),
+                                        ..default()
+                                    },
+                                ))
+                                .with_children(|top_sec| {
+                                    if !session.is_trial {
+                                        spawn_fury_card(
+                                            top_sec, i18n, session, fjord_art, textures, hud_mode,
+                                        );
+                                        spawn_hud_divider(top_sec);
+                                    }
+                                    spawn_section_header(
+                                        top_sec,
                                         fjord_art,
-                                        textures,
-                                        hud_mode,
-                                        confirm_loki_shuffle,
+                                        i18n.t("match3.hud.section.arsenal"),
                                     );
+                                    top_sec
+                                        .spawn(Node {
+                                            flex_direction: FlexDirection::Column,
+                                            row_gap: Val::Px(6.0),
+                                            align_items: AlignItems::Stretch,
+                                            ..default()
+                                        })
+                                        .with_children(|tools_col| {
+                                            spawn_tools_section(
+                                                tools_col,
+                                                ctx,
+                                                session,
+                                                fjord_art,
+                                                textures,
+                                                hud_mode,
+                                                confirm_loki_shuffle,
+                                            );
+                                        });
                                 });
+                            spawn_scrollbar_track(scroll_row, ScrollPanelKind::RightRail);
                         });
 
                     right
                         .spawn(Node {
                             flex_direction: FlexDirection::Column,
+                            flex_shrink: 0.0,
                             row_gap: Val::Px(6.0),
                             align_items: AlignItems::Center,
                             ..default()

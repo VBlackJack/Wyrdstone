@@ -37,6 +37,9 @@ use crate::ui_style::{
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
+#[cfg(not(target_os = "android"))]
+use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode, WindowResized};
+#[cfg(target_os = "android")]
 use bevy::window::{PrimaryWindow, WindowResized};
 use wyrdstone_core::{
     format_building_bonus, format_rank_perk, ActiveTool, BuildingDef, I18nCatalog, PatronGod,
@@ -213,6 +216,8 @@ pub enum CityDrawer {
 #[derive(Resource)]
 pub struct CityLayoutMode {
     pub is_portrait: bool,
+    #[cfg(not(target_os = "android"))]
+    pub last_fullscreen: bool,
     pub active_drawer: CityDrawer,
     pub inspector_open: bool,
     pub last_displayed_energy: u32,
@@ -285,6 +290,8 @@ pub enum CityAction {
     ImportBackup,
     ToggleLanguage,
     ToggleAudio,
+    #[cfg(not(target_os = "android"))]
+    ToggleFullscreen,
     BackToTitle,
 }
 
@@ -300,10 +307,16 @@ pub fn setup_city_ui(
     safe_area: Res<SafeAreaInsets>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    let (win_w, win_h) = windows
+    let (win_w, win_h, _is_fullscreen) = windows
         .get_single()
-        .map(|w| (w.width(), w.height()))
-        .unwrap_or((WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT));
+        .map(|w| {
+            #[cfg(not(target_os = "android"))]
+            let fs = !matches!(w.mode, WindowMode::Windowed);
+            #[cfg(target_os = "android")]
+            let fs = true;
+            (w.width(), w.height(), fs)
+        })
+        .unwrap_or((WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, false));
     let is_portrait = win_w < win_h;
     let today = today_day_index();
     ctx.city.daily_bounties.ensure_for_day(today);
@@ -325,6 +338,8 @@ pub fn setup_city_ui(
     let ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
     commands.insert_resource(CityLayoutMode {
         is_portrait,
+        #[cfg(not(target_os = "android"))]
+        last_fullscreen: _is_fullscreen,
         active_drawer: CityDrawer::None,
         inspector_open,
         last_displayed_energy: ctx.city.energy,
@@ -348,6 +363,8 @@ pub fn setup_city_ui(
         &sound_bank,
         &scroll_mem,
         is_portrait,
+        #[cfg(not(target_os = "android"))]
+        _is_fullscreen,
         win_w,
         win_h,
         *safe_area,
@@ -468,6 +485,7 @@ fn spawn_city_tree(
     sound_bank: &SoundBank,
     scroll_mem: &UiScrollMemory,
     is_portrait: bool,
+    #[cfg(not(target_os = "android"))] is_fullscreen: bool,
     win_w: f32,
     win_h: f32,
     safe: SafeAreaInsets,
@@ -1373,6 +1391,8 @@ fn spawn_city_tree(
                                 fjord_art,
                                 sound_bank,
                                 scroll_mem.inspector_offset_y,
+                                #[cfg(not(target_os = "android"))]
+                                is_fullscreen,
                             );
                         }
                         CityDrawer::None => {
@@ -1580,7 +1600,14 @@ fn spawn_city_tree(
                     modals::spawn_stats_modal(viewport, ctx, fjord_art, vfx, m_scroll)
                 }
                 ActiveModal::Settings => modals::spawn_settings_modal(
-                    viewport, ctx, fjord_art, vfx, sound_bank, m_scroll,
+                    viewport,
+                    ctx,
+                    fjord_art,
+                    vfx,
+                    sound_bank,
+                    m_scroll,
+                    #[cfg(not(target_os = "android"))]
+                    is_fullscreen,
                 ),
                 ActiveModal::Help => {
                     modals::spawn_help_modal(viewport, ctx, fjord_art, vfx, m_scroll)
@@ -2324,6 +2351,7 @@ type CityInputParams<'w, 's> = (
     ResMut<'w, UiScrollMemory>,
     Res<'w, SafeAreaInsets>,
     EventWriter<'w, HapticEvent>,
+    Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
 );
 
 /// Processes button presses, passive harvest checks, and Escape modal-close shortcut.
@@ -2342,9 +2370,10 @@ pub fn handle_city_buttons(
     roots: Query<Entity, With<CityRoot>>,
     mut energy_texts: Query<&mut Text, (With<CityEnergyText>, Without<InspectorHarvestTimerText>)>,
     mut harvest_texts: HarvestTimerQuery,
-    (touches, mut press_arm, mut scroll_mem, safe_area, mut haptics): CityInputParams,
+    (touches, mut press_arm, mut scroll_mem, safe_area, mut haptics, mut windows): CityInputParams,
     buttons: Query<(Entity, &Interaction, &CityAction), Changed<Interaction>>,
 ) {
+    let _ = &mut windows;
     let mut rebuild = false;
 
     if keys.just_pressed(KeyCode::Escape) {
@@ -3602,6 +3631,21 @@ pub fn handle_city_buttons(
                 toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
                 rebuild = true;
             }
+            #[cfg(not(target_os = "android"))]
+            CityAction::ToggleFullscreen => {
+                ctx.confirm_import_backup = false;
+                if let Ok(mut win) = windows.get_single_mut() {
+                    let next_mode = match win.mode {
+                        WindowMode::Windowed => {
+                            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                        }
+                        _ => WindowMode::Windowed,
+                    };
+                    layout_mode.last_fullscreen = !matches!(next_mode, WindowMode::Windowed);
+                    win.mode = next_mode;
+                }
+                rebuild = true;
+            }
             CityAction::ClaimOfflineVault => {
                 if let Some(rewards) =
                     claim_offline_vault_action(&mut commands, &mut ctx, &sound_bank)
@@ -3687,6 +3731,15 @@ pub fn handle_city_buttons(
         }
     }
 
+    #[cfg(not(target_os = "android"))]
+    if let Ok(win) = windows.get_single() {
+        let is_fs = !matches!(win.mode, WindowMode::Windowed);
+        if is_fs != layout_mode.last_fullscreen {
+            layout_mode.last_fullscreen = is_fs;
+            rebuild = true;
+        }
+    }
+
     if rebuild {
         layout_mode.last_map_size = Vec2::ZERO;
         layout_mode.last_canvas_window_size = layout_mode.window_size;
@@ -3702,6 +3755,8 @@ pub fn handle_city_buttons(
             &sound_bank,
             &scroll_mem,
             layout_mode.is_portrait,
+            #[cfg(not(target_os = "android"))]
+            layout_mode.last_fullscreen,
             layout_mode.window_size.x,
             layout_mode.window_size.y,
             *safe_area,

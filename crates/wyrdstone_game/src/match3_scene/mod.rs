@@ -393,10 +393,12 @@ pub fn setup_match3_scene(
     vfx: Res<VfxTextures>,
     fjord_art: Res<FjordTextures>,
     sound_bank: Res<SoundBank>,
-    scroll_mem: Res<UiScrollMemory>,
+    mut scroll_mem: ResMut<UiScrollMemory>,
     safe_area: Res<SafeAreaInsets>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
+    scroll_mem.left_rail_offset_y = 0.0;
+    scroll_mem.right_rail_offset_y = 0.0;
     let mut input_state = Match3InputState {
         reduced_motion: ctx.reduced_motion,
         ..default()
@@ -508,6 +510,8 @@ pub fn setup_match3_scene(
         &vfx,
         &sound_bank,
         scroll_mem.modal_offset_y,
+        scroll_mem.left_rail_offset_y,
+        scroll_mem.right_rail_offset_y,
         input_state.hud_mode,
         *safe_area,
         input_state.can_undo(&ctx),
@@ -1795,6 +1799,8 @@ pub fn handle_match3_hud_buttons(
                         };
                         ctx.active_modal = ActiveModal::None;
                         scroll_mem.modal_offset_y = 0.0;
+                        scroll_mem.left_rail_offset_y = 0.0;
+                        scroll_mem.right_rail_offset_y = 0.0;
                         play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     } else {
                         play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
@@ -2617,6 +2623,8 @@ pub fn sync_match3_visuals(
             &vfx,
             &sound_bank,
             scroll_mem.modal_offset_y,
+            scroll_mem.left_rail_offset_y,
+            scroll_mem.right_rail_offset_y,
             input_state.hud_mode,
             *safe_area,
             input_state.can_undo(&ctx),
