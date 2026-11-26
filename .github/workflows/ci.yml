@@ -65,6 +65,11 @@ jobs:
           sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;${ANDROID_NDK_VERSION}"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          NDK_BIN="$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CC_aarch64_linux_android=${NDK_BIN}/aarch64-linux-android26-clang" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_linux_android=${NDK_BIN}/aarch64-linux-android26-clang++" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=${NDK_BIN}/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${NDK_BIN}/aarch64-linux-android26-clang" >> "$GITHUB_ENV"
       - name: Run Android clippy
         run: cargo clippy -p wyrdstone_game --lib --target aarch64-linux-android --locked -- -D warnings
       - name: Install cargo-apk
