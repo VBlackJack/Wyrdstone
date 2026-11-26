@@ -1503,7 +1503,7 @@ pub fn animate_result_stars(
 /// Cleans up result UI entities.
 pub fn cleanup_result_ui(mut commands: Commands, roots: Query<Entity, With<ResultRoot>>) {
     for entity in &roots {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).try_despawn_recursive();
     }
 }
 
@@ -1683,7 +1683,7 @@ pub fn handle_result_buttons(
             ) {
                 play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
                 for root in &roots {
-                    commands.entity(root).despawn_recursive();
+                    commands.entity(root).try_despawn_recursive();
                 }
                 spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx);
             }
@@ -1749,7 +1749,7 @@ pub fn handle_result_buttons(
         ) {
             play_sfx(&mut commands, &sound_bank, SfxKind::Upgrade);
             for root in &roots {
-                commands.entity(root).despawn_recursive();
+                commands.entity(root).try_despawn_recursive();
             }
             spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx);
         }

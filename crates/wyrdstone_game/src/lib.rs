@@ -34,7 +34,9 @@ mod vfx_art;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::{ButtonState, InputSystem};
 use bevy::prelude::*;
-use bevy::window::WindowResolution;
+use bevy::window::{
+    MonitorSelection, WindowMode, WindowPosition, WindowResizeConstraints, WindowResolution,
+};
 use state::{tick_energy_regen, AppState, GameContext};
 use theme::{COLOR_BG_DEEP, WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH};
 
@@ -55,16 +57,29 @@ pub fn run_app() {
         primary_window: Some(Window {
             title: window_title,
             resolution: WindowResolution::new(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT),
+            position: WindowPosition::Centered(MonitorSelection::Primary),
+            resize_constraints: WindowResizeConstraints {
+                min_width: 360.0,
+                min_height: 540.0,
+                ..default()
+            },
             resizable: true,
             ..default()
         }),
         ..default()
     };
 
-    // Use Bevy's default rendering stack (Vulkan-first on Windows with automatic fallback
-    // and WGPU_BACKEND env override, plus PipelinedRenderingPlugin) so rapid window resizes
-    // do not deadlock the Win32 UI thread inside DX12's synchronous swapchain ResizeBuffers wait.
-    app.add_plugins(DefaultPlugins.set(window_plugin))
+    // Keep Vulkan-first (with automatic fallback and WGPU_BACKEND env override), while disabling
+    // pipelined rendering on Windows so swapchain recreation runs on the main thread instead of
+    // deadlocking against vkCreateSwapchainKHR on resize/unmaximize.
+    #[cfg(target_os = "windows")]
+    let plugins = DefaultPlugins
+        .set(window_plugin)
+        .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
+    #[cfg(not(target_os = "windows"))]
+    let plugins = DefaultPlugins.set(window_plugin);
+
+    app.add_plugins(plugins)
         .insert_resource(ClearColor(COLOR_BG_DEEP))
         .insert_resource(ctx)
         .init_resource::<platform::SafeAreaInsets>()
@@ -183,18 +198,11 @@ pub fn run_app() {
 
 fn setup_camera(
     mut commands: Commands,
-    #[cfg(not(target_os = "android"))] mut windows: Query<
-        &mut Window,
-        With<bevy::window::PrimaryWindow>,
-    >,
     #[cfg(not(target_os = "android"))] winit_windows: NonSend<bevy::winit::WinitWindows>,
 ) {
     commands.spawn(Camera2d);
     #[cfg(not(target_os = "android"))]
     {
-        if let Ok(mut window) = windows.get_single_mut() {
-            window.set_maximized(true);
-        }
         let (rgba, w, h) = fjord_art::app_icon_rgba();
         if let Ok(icon) = winit::window::Icon::from_rgba(rgba, w, h) {
             for winit_win in winit_windows.windows.values() {
@@ -213,9 +221,22 @@ fn handle_global_shortcuts(
     mut ctx: ResMut<GameContext>,
     mut sound_bank: ResMut<audio::SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<audio::BgmTrack>>,
+    #[cfg(not(target_os = "android"))] mut windows: Query<
+        &mut Window,
+        With<bevy::window::PrimaryWindow>,
+    >,
 ) {
     if keys.just_pressed(KeyCode::KeyM) {
         audio::toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
+    }
+    #[cfg(not(target_os = "android"))]
+    if keys.just_pressed(KeyCode::F11) {
+        if let Ok(mut window) = windows.get_single_mut() {
+            window.mode = match window.mode {
+                WindowMode::Windowed => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+                _ => WindowMode::Windowed,
+            };
+        }
     }
 }
 

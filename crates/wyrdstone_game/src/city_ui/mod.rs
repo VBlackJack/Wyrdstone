@@ -364,10 +364,10 @@ pub fn cleanup_city_ui(
     vfx_nodes: Query<Entity, With<CityTransientVfx>>,
 ) {
     for entity in &roots {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).try_despawn_recursive();
     }
     for entity in &vfx_nodes {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).try_despawn_recursive();
     }
     commands.remove_resource::<CityLayoutMode>();
 }
@@ -3691,7 +3691,7 @@ pub fn handle_city_buttons(
         layout_mode.last_map_size = Vec2::ZERO;
         layout_mode.last_canvas_window_size = layout_mode.window_size;
         for entity in &roots {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
         }
         let just_built = layout_mode.just_built_id.take();
         spawn_city_tree(
@@ -3934,7 +3934,7 @@ pub fn animate_fjord_harvest_orbs(
         orb.elapsed += dt;
         let u = (orb.elapsed / orb.duration).clamp(0.0, 1.0);
         if u >= 1.0 {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
             continue;
         }
         let t = u * u * (3.0 - 2.0 * u);

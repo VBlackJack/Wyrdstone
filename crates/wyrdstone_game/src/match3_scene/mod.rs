@@ -527,7 +527,7 @@ pub fn cleanup_match3_scene(
     mut cameras: Query<&mut Transform, With<Camera2d>>,
 ) {
     for entity in &cleanup_q {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).try_despawn_recursive();
     }
     for mut cam in &mut cameras {
         cam.translation.x = 0.0;
@@ -1024,7 +1024,7 @@ pub(super) fn rebuild_board_now(
     colorblind_mode: bool,
 ) {
     for e in sprites {
-        commands.entity(e).despawn_recursive();
+        commands.entity(e).try_despawn_recursive();
     }
     // Hover and drag overlays are not Match3Entity (the pointer handler owns their lifecycle, so a
     // rebuild never double-despawns them): forget their cells so the handler redraws them.
@@ -2555,7 +2555,7 @@ pub fn sync_match3_visuals(
     if input_state.dirty_static_board {
         if let (Some(session), Ok(window)) = (&ctx.active_session, windows.get_single()) {
             for e in &static_sprites {
-                commands.entity(e).despawn_recursive();
+                commands.entity(e).try_despawn_recursive();
             }
             compute_board_layout(
                 window.width(),
@@ -2609,7 +2609,7 @@ pub fn sync_match3_visuals(
             .as_ref()
             .map(|s| hud::hud_shape(s, &ctx.data.balance.session, ctx.city.stats.total_victories));
         for e in &huds {
-            commands.entity(e).despawn_recursive();
+            commands.entity(e).try_despawn_recursive();
         }
         hud::spawn_match3_hud(
             &mut commands,

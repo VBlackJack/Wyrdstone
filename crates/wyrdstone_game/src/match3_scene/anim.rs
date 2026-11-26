@@ -876,7 +876,6 @@ pub(super) fn spawn_floating_score(
         ))
         .with_children(|p| {
             p.spawn((
-                Match3Cleanup,
                 FloatingScoreShadow { base_alpha: 0.88 },
                 Text2d::new(label),
                 TextFont {
@@ -2113,7 +2112,6 @@ fn enter_defeat_beat(
         ))
         .with_children(|p| {
             p.spawn((
-                Match3Cleanup,
                 FloatingScoreShadow { base_alpha: 0.90 },
                 Text2d::new(ctx.data.i18n.t(key).to_string()),
                 TextFont {
@@ -2472,7 +2470,7 @@ pub fn animate_particles(
     for (entity, mut p, mut tf, mut sprite) in &mut particles {
         p.elapsed += dt;
         if p.elapsed >= p.lifetime {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
             continue;
         }
         let progress = p.elapsed / p.lifetime;
@@ -2492,7 +2490,7 @@ pub fn animate_particles(
     for (entity, mut b, mut tf, mut sprite) in &mut beams {
         b.elapsed += dt;
         if b.elapsed >= b.lifetime {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
             continue;
         }
         let progress = b.elapsed / b.lifetime;
@@ -2517,7 +2515,7 @@ pub fn animate_particles(
                 orb.color.with_alpha(0.85),
                 0.24,
             );
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
             continue;
         }
         let u = (orb.elapsed / orb.duration).clamp(0.0, 1.0);
@@ -2554,7 +2552,7 @@ pub fn animate_particles(
     for (entity, mut f, mut tf, mut col, children) in &mut popups {
         f.elapsed += dt;
         if f.elapsed >= f.lifetime {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
             continue;
         }
         let progress = f.elapsed / f.lifetime;

@@ -83,7 +83,7 @@ pub fn cleanup_title_ui(
         ctx.status_notice_key = None;
     }
     for entity in &roots {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).try_despawn_recursive();
     }
 }
 
@@ -485,7 +485,7 @@ pub fn handle_title_buttons(
     for (entity, mut life) in &mut toasts {
         life.0 -= time.delta_secs();
         if life.0 <= 0.0 {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
             if !ctx.save_read_only {
                 ctx.status_notice_key = None;
             }
@@ -496,7 +496,7 @@ pub fn handle_title_buttons(
         ctx.confirm_reset = false;
         *focus_idx = None;
         for entity in &roots {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
         }
         spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
         return;
@@ -554,7 +554,7 @@ pub fn handle_title_buttons(
 
     if sound_bank.is_changed() && !sound_bank.is_added() {
         for entity in &roots {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).try_despawn_recursive();
         }
         spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
         return;
@@ -589,7 +589,7 @@ pub fn handle_title_buttons(
                         ctx.confirm_reset = false;
                         *focus_idx = None;
                         for entity in &roots {
-                            commands.entity(entity).despawn_recursive();
+                            commands.entity(entity).try_despawn_recursive();
                         }
                         spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
                     }
@@ -597,7 +597,7 @@ pub fn handle_title_buttons(
                     ctx.confirm_reset = true;
                     *focus_idx = None;
                     for entity in &roots {
-                        commands.entity(entity).despawn_recursive();
+                        commands.entity(entity).try_despawn_recursive();
                     }
                     spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
                 }
@@ -608,7 +608,7 @@ pub fn handle_title_buttons(
                 ctx.data.i18n.toggle_language();
                 ctx.persist();
                 for entity in &roots {
-                    commands.entity(entity).despawn_recursive();
+                    commands.entity(entity).try_despawn_recursive();
                 }
                 spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
                 return;
