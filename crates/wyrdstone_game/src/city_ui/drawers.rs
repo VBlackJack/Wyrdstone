@@ -54,11 +54,18 @@ fn spawn_drawer_shell<F>(
             BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.35)),
         ))
         .with_children(|hdr| {
-            hdr.spawn((
-                Text::new(title),
-                display_font(fjord_art, FONT_TITLE_MD - 4.0),
-                TextColor(COLOR_ACCENT_GOLD),
-            ));
+            hdr.spawn(Node {
+                flex_shrink: 1.0,
+                min_width: Val::Px(0.0),
+                ..default()
+            })
+            .with_children(|tbox| {
+                tbox.spawn((
+                    Text::new(title),
+                    display_font(fjord_art, FONT_TITLE_MD - 5.0),
+                    TextColor(COLOR_ACCENT_GOLD),
+                ));
+            });
             spawn_small_button(
                 hdr,
                 i18n.t("city.panel.amulets.close"),
@@ -218,14 +225,21 @@ fn spawn_clan_card(
                 ..default()
             })
             .with_children(|hdr| {
-                hdr.spawn((
-                    Text::new(title),
-                    TextFont {
-                        font_size: FONT_BODY,
-                        ..default()
-                    },
-                    TextColor(COLOR_ACCENT_GOLD),
-                ));
+                hdr.spawn(Node {
+                    flex_shrink: 1.0,
+                    min_width: Val::Px(0.0),
+                    ..default()
+                })
+                .with_children(|tbox| {
+                    tbox.spawn((
+                        Text::new(title),
+                        TextFont {
+                            font_size: FONT_BODY,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                });
                 let badge_lbl = if claim_count > 0 {
                     i18n.t_fmt(
                         "city.drawer.clan.action_claim",
@@ -885,6 +899,111 @@ pub(super) fn spawn_menu_drawer(
         i18n.t("city.drawer.menu.title"),
         scroll_offset_y,
         |body| {
+            #[cfg(target_arch = "wasm32")]
+            if crate::platform::is_fullscreen_supported() {
+                if crate::platform::is_orientation_lock_supported() {
+                    body.spawn(Node {
+                        column_gap: Val::Px(6.0),
+                        row_gap: Val::Px(6.0),
+                        flex_wrap: FlexWrap::Wrap,
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        spawn_small_button(
+                            row,
+                            i18n.t("app.display.fullscreen_portrait"),
+                            CityAction::EnterFullscreen(
+                                crate::platform::FullscreenOrientation::Portrait,
+                            ),
+                            COLOR_PANEL_CARD,
+                            true,
+                        );
+                        spawn_small_button(
+                            row,
+                            i18n.t("app.display.fullscreen_landscape"),
+                            CityAction::EnterFullscreen(
+                                crate::platform::FullscreenOrientation::Landscape,
+                            ),
+                            COLOR_PANEL_CARD,
+                            true,
+                        );
+                        if is_fullscreen {
+                            spawn_small_button(
+                                row,
+                                i18n.t("app.display.windowed"),
+                                CityAction::ToggleFullscreen,
+                                COLOR_ACCENT_TEAL,
+                                true,
+                            );
+                        }
+                    });
+                } else {
+                    let fs_label = if is_fullscreen {
+                        i18n.t("app.display.windowed")
+                    } else {
+                        i18n.t("app.display.fullscreen")
+                    };
+                    spawn_small_button(
+                        body,
+                        fs_label,
+                        CityAction::ToggleFullscreen,
+                        if is_fullscreen {
+                            COLOR_ACCENT_TEAL
+                        } else {
+                            COLOR_PANEL_CARD
+                        },
+                        true,
+                    );
+                }
+            }
+
+            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+            if crate::platform::is_fullscreen_supported() {
+                let fs_label = if is_fullscreen {
+                    i18n.t("city.settings.display_windowed")
+                } else {
+                    i18n.t("city.settings.display_fullscreen")
+                };
+                spawn_small_button(
+                    body,
+                    fs_label,
+                    CityAction::ToggleFullscreen,
+                    if is_fullscreen {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        COLOR_PANEL_CARD
+                    },
+                    true,
+                );
+            }
+
+            body.spawn(Node {
+                column_gap: Val::Px(8.0),
+                row_gap: Val::Px(8.0),
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            })
+            .with_children(|row| {
+                spawn_small_button(
+                    row,
+                    sound_label,
+                    CityAction::ToggleAudio,
+                    if sound_bank.muted {
+                        COLOR_BUTTON_DISABLED
+                    } else {
+                        COLOR_ACCENT_TEAL
+                    },
+                    true,
+                );
+                spawn_small_button(
+                    row,
+                    i18n.t("app.title.button.language"),
+                    CityAction::ToggleLanguage,
+                    COLOR_PANEL_CARD,
+                    true,
+                );
+            });
+
             spawn_small_button_colored(
                 body,
                 i18n.t("city.panel.tribute.button"),
@@ -922,60 +1041,6 @@ pub(super) fn spawn_menu_drawer(
                 COLOR_PANEL_CARD,
                 true,
             );
-
-            body.spawn(Node {
-                column_gap: Val::Px(8.0),
-                row_gap: Val::Px(8.0),
-                flex_wrap: FlexWrap::Wrap,
-                ..default()
-            })
-            .with_children(|row| {
-                spawn_small_button(
-                    row,
-                    sound_label,
-                    CityAction::ToggleAudio,
-                    if sound_bank.muted {
-                        COLOR_BUTTON_DISABLED
-                    } else {
-                        COLOR_ACCENT_TEAL
-                    },
-                    true,
-                );
-                spawn_small_button(
-                    row,
-                    i18n.t("app.title.button.language"),
-                    CityAction::ToggleLanguage,
-                    COLOR_PANEL_CARD,
-                    true,
-                );
-            });
-
-            #[cfg(not(target_os = "android"))]
-            if crate::platform::is_fullscreen_supported() {
-                #[cfg(target_arch = "wasm32")]
-                let (on_key, off_key) = ("app.display.windowed", "app.display.fullscreen");
-                #[cfg(not(target_arch = "wasm32"))]
-                let (on_key, off_key) = (
-                    "city.settings.display_windowed",
-                    "city.settings.display_fullscreen",
-                );
-                let fs_label = if is_fullscreen {
-                    i18n.t(on_key)
-                } else {
-                    i18n.t(off_key)
-                };
-                spawn_small_button(
-                    body,
-                    fs_label,
-                    CityAction::ToggleFullscreen,
-                    if is_fullscreen {
-                        COLOR_ACCENT_TEAL
-                    } else {
-                        COLOR_PANEL_CARD
-                    },
-                    true,
-                );
-            }
 
             spawn_small_button_colored(
                 body,

@@ -169,6 +169,7 @@ fn spawn_modal_shell<F>(
     close_action: CityAction,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
     body_fn: F,
 ) where
     F: FnOnce(&mut ChildBuilder),
@@ -184,6 +185,7 @@ fn spawn_modal_shell<F>(
         close_action,
         safe,
         scroll_offset_y,
+        is_mobile,
         true,
         true,
         body_fn,
@@ -202,6 +204,7 @@ fn spawn_modal_shell_ex<F>(
     close_action: CityAction,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
     dismiss_on_backdrop: bool,
     show_header_close: bool,
     body_fn: F,
@@ -219,11 +222,20 @@ fn spawn_modal_shell_ex<F>(
             height: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            padding: UiRect {
-                left: Val::Px(14.0 + safe.left),
-                right: Val::Px(14.0 + safe.right),
-                top: Val::Px(14.0 + safe.top),
-                bottom: Val::Px(14.0 + safe.bottom),
+            padding: if is_mobile {
+                UiRect {
+                    left: Val::Px(6.0 + safe.left),
+                    right: Val::Px(6.0 + safe.right),
+                    top: Val::Px(6.0 + safe.top),
+                    bottom: Val::Px(6.0 + safe.bottom),
+                }
+            } else {
+                UiRect {
+                    left: Val::Px(14.0 + safe.left),
+                    right: Val::Px(14.0 + safe.right),
+                    top: Val::Px(14.0 + safe.top),
+                    bottom: Val::Px(14.0 + safe.bottom),
+                }
             },
             ..default()
         },
@@ -243,11 +255,19 @@ fn spawn_modal_shell_ex<F>(
                 sliced_panel_image(vfx),
                 Node {
                     width: Val::Px(width_px),
-                    max_width: Val::Percent(94.0),
-                    max_height: Val::Percent(90.0),
+                    max_width: if is_mobile {
+                        Val::Percent(97.0)
+                    } else {
+                        Val::Percent(94.0)
+                    },
+                    max_height: if is_mobile {
+                        Val::Percent(95.0)
+                    } else {
+                        Val::Percent(90.0)
+                    },
                     flex_direction: FlexDirection::Column,
-                    padding: UiRect::all(Val::Px(22.0)),
-                    row_gap: Val::Px(10.0),
+                    padding: UiRect::all(Val::Px(if is_mobile { 12.0 } else { 22.0 })),
+                    row_gap: Val::Px(if is_mobile { 8.0 } else { 10.0 }),
                     overflow: Overflow::clip(),
                     ..default()
                 },
@@ -262,18 +282,32 @@ fn spawn_modal_shell_ex<F>(
                             align_items: AlignItems::Center,
                             column_gap: Val::Px(8.0),
                             flex_shrink: 0.0,
-                            padding: UiRect::bottom(Val::Px(8.0)),
+                            padding: UiRect::bottom(Val::Px(if is_mobile { 6.0 } else { 8.0 })),
                             border: UiRect::bottom(Val::Px(1.0)),
                             ..default()
                         },
                         BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.35)),
                     ))
                     .with_children(|hdr| {
-                        hdr.spawn((
-                            Text::new(title),
-                            display_font(fjord_art, FONT_HEADING),
-                            TextColor(COLOR_ACCENT_GOLD),
-                        ));
+                        hdr.spawn(Node {
+                            flex_shrink: 1.0,
+                            min_width: Val::Px(0.0),
+                            ..default()
+                        })
+                        .with_children(|tbox| {
+                            tbox.spawn((
+                                Text::new(title),
+                                display_font(
+                                    fjord_art,
+                                    if is_mobile {
+                                        FONT_HEADING - 3.0
+                                    } else {
+                                        FONT_HEADING
+                                    },
+                                ),
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                        });
                         if show_header_close {
                             spawn_small_button(
                                 hdr,
@@ -406,6 +440,7 @@ pub(super) fn spawn_amulets_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -419,6 +454,7 @@ pub(super) fn spawn_amulets_modal(
         CityAction::ToggleModal(ActiveModal::Amulets),
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             spawn_modal_resource_strip(modal, ctx, vfx);
             let synergies = ctx.city.active_synergies();
@@ -679,6 +715,7 @@ pub(super) fn spawn_collections_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -692,6 +729,7 @@ pub(super) fn spawn_collections_modal(
         CityAction::ToggleModal(ActiveModal::Collections),
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             let claimable_cols = ctx.city.claimable_collection_count(&ctx.data.collections);
             if claimable_cols >= 2 {
@@ -977,6 +1015,7 @@ pub(super) fn spawn_tool_shop_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -990,6 +1029,7 @@ pub(super) fn spawn_tool_shop_modal(
         CityAction::ToggleModal(ActiveModal::Shop),
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             spawn_modal_resource_strip(modal, ctx, vfx);
             for recipe in &ctx.data.tool_shop {
@@ -1170,6 +1210,7 @@ pub(super) fn spawn_stats_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let st = ctx.city.stats;
@@ -1184,6 +1225,7 @@ pub(super) fn spawn_stats_modal(
         CityAction::ToggleModal(ActiveModal::Stats),
         safe,
         scroll_offset_y,
+        is_mobile,
         |card| {
             let bal = &ctx.data.balance;
             let rank = ctx.city.clan_rank_with_balance(bal);
@@ -1348,6 +1390,7 @@ pub(super) fn spawn_settings_modal(
     sound_bank: &SoundBank,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
     #[cfg(not(target_os = "android"))] is_fullscreen: bool,
 ) {
     let i18n = &ctx.data.i18n;
@@ -1362,6 +1405,7 @@ pub(super) fn spawn_settings_modal(
         CityAction::ToggleModal(ActiveModal::Settings),
         safe,
         scroll_offset_y,
+        is_mobile,
         |card| {
             let sound_label = if sound_bank.muted {
                 i18n.t("app.audio.off")
@@ -1424,19 +1468,61 @@ pub(super) fn spawn_settings_modal(
                     COLOR_PANEL_CARD,
                     true,
                 );
-                #[cfg(not(target_os = "android"))]
+                #[cfg(target_arch = "wasm32")]
                 if crate::platform::is_fullscreen_supported() {
-                    #[cfg(target_arch = "wasm32")]
-                    let (on_key, off_key) = ("app.display.windowed", "app.display.fullscreen");
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let (on_key, off_key) = (
-                        "city.settings.display_windowed",
-                        "city.settings.display_fullscreen",
-                    );
-                    let fs_label = if is_fullscreen {
-                        i18n.t(on_key)
+                    if crate::platform::is_orientation_lock_supported() {
+                        spawn_small_button(
+                            row,
+                            i18n.t("app.display.fullscreen_portrait"),
+                            CityAction::EnterFullscreen(
+                                crate::platform::FullscreenOrientation::Portrait,
+                            ),
+                            COLOR_PANEL_CARD,
+                            true,
+                        );
+                        spawn_small_button(
+                            row,
+                            i18n.t("app.display.fullscreen_landscape"),
+                            CityAction::EnterFullscreen(
+                                crate::platform::FullscreenOrientation::Landscape,
+                            ),
+                            COLOR_PANEL_CARD,
+                            true,
+                        );
+                        if is_fullscreen {
+                            spawn_small_button(
+                                row,
+                                i18n.t("app.display.windowed"),
+                                CityAction::ToggleFullscreen,
+                                COLOR_ACCENT_TEAL,
+                                true,
+                            );
+                        }
                     } else {
-                        i18n.t(off_key)
+                        let fs_label = if is_fullscreen {
+                            i18n.t("app.display.windowed")
+                        } else {
+                            i18n.t("app.display.fullscreen")
+                        };
+                        spawn_small_button(
+                            row,
+                            fs_label,
+                            CityAction::ToggleFullscreen,
+                            if is_fullscreen {
+                                COLOR_ACCENT_TEAL
+                            } else {
+                                COLOR_PANEL_CARD
+                            },
+                            true,
+                        );
+                    }
+                }
+                #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+                if crate::platform::is_fullscreen_supported() {
+                    let fs_label = if is_fullscreen {
+                        i18n.t("city.settings.display_windowed")
+                    } else {
+                        i18n.t("city.settings.display_fullscreen")
                     };
                     spawn_small_button(
                         row,
@@ -1674,6 +1760,7 @@ pub(super) fn spawn_help_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -1687,6 +1774,7 @@ pub(super) fn spawn_help_modal(
         CityAction::ToggleModal(ActiveModal::Help),
         safe,
         scroll_offset_y,
+        is_mobile,
         |card| {
             spawn_help_topic_cards(card, i18n, fjord_art, vfx);
         },
@@ -1700,6 +1788,7 @@ pub(super) fn spawn_patrons_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -1713,6 +1802,7 @@ pub(super) fn spawn_patrons_modal(
         CityAction::ToggleModal(ActiveModal::Patrons),
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             for god in PatronGod::ALL {
                 let active = ctx.city.selected_patron == god;
@@ -1944,6 +2034,7 @@ pub(super) fn spawn_raids_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let energy_cost = ctx.data.balance.energy_cost_per_level;
@@ -1959,6 +2050,7 @@ pub(super) fn spawn_raids_modal(
         CityAction::ToggleModal(ActiveModal::Raids),
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             let glory_lbl = i18n.t_fmt(
                 "city.header.mastery",
@@ -2309,6 +2401,7 @@ pub(super) fn spawn_trials_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -2322,6 +2415,7 @@ pub(super) fn spawn_trials_modal(
         CityAction::ToggleModal(ActiveModal::Trials),
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             modal.spawn((
                 Text::new(i18n.t_fmt(
@@ -2470,6 +2564,7 @@ pub(super) fn spawn_achievements_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -2483,6 +2578,7 @@ pub(super) fn spawn_achievements_modal(
         CityAction::ToggleModal(ActiveModal::Achievements),
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             let claimable_feats = ctx.city.claimable_achievement_count(
                 &ctx.data.achievements,
@@ -2660,6 +2756,7 @@ pub(super) fn spawn_expedition_boons_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let Some(run) = &ctx.active_expedition else {
@@ -2680,6 +2777,7 @@ pub(super) fn spawn_expedition_boons_modal(
         CityAction::CloseModal,
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             if (run.wave + 1).is_multiple_of(5) {
                 modal.spawn((
@@ -2906,6 +3004,7 @@ pub(super) fn spawn_login_calendar_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let today = today_day_index();
@@ -2923,6 +3022,7 @@ pub(super) fn spawn_login_calendar_modal(
         CityAction::CloseModal,
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             modal.spawn((
                 Text::new(if available {
@@ -3107,6 +3207,7 @@ pub(super) fn spawn_chapter_dialogue_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let Some(dlg) = &ctx.pending_dialogue else {
@@ -3123,6 +3224,7 @@ pub(super) fn spawn_chapter_dialogue_modal(
         CityAction::CloseModal,
         safe,
         scroll_offset_y,
+        is_mobile,
         false,
         false,
         |modal| {
@@ -3200,6 +3302,7 @@ pub(super) fn spawn_welcome_back_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let Some(summary) = &ctx.pending_offline_vault else {
@@ -3238,6 +3341,7 @@ pub(super) fn spawn_welcome_back_modal(
         CityAction::CloseModal,
         safe,
         scroll_offset_y,
+        is_mobile,
         false,
         false,
         |modal| {
@@ -3313,6 +3417,7 @@ pub(super) fn spawn_bounties_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -3326,6 +3431,7 @@ pub(super) fn spawn_bounties_modal(
         CityAction::CloseModal,
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             let claimable_bounties = ctx.city.daily_bounties.claimable_count();
             modal
@@ -3629,6 +3735,7 @@ pub(super) fn spawn_wonder_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let stage = ctx.city.wonder_stage;
@@ -3644,6 +3751,7 @@ pub(super) fn spawn_wonder_modal(
         CityAction::CloseModal,
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             modal
                 .spawn(Node {
@@ -3873,6 +3981,7 @@ pub(super) fn spawn_ascension_modal(
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
+    is_mobile: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let cur_era = ctx.city.realm_era;
@@ -3902,6 +4011,7 @@ pub(super) fn spawn_ascension_modal(
         CityAction::CloseModal,
         safe,
         scroll_offset_y,
+        is_mobile,
         |modal| {
             // Current & Next Realm header card (no BoxShadow inside ScrollablePanel).
             modal

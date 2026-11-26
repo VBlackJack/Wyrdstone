@@ -38,7 +38,7 @@ pub(super) fn spawn_building_inspector(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     scroll_offset_y: f32,
-    is_portrait: bool,
+    is_compact: bool,
     active_tab: InspectorTab,
 ) {
     let i18n = &ctx.data.i18n;
@@ -118,7 +118,7 @@ pub(super) fn spawn_building_inspector(
                 ..default()
             })
             .with_children(|left| {
-                if is_portrait {
+                if is_compact {
                     if let Some(img) = fjord_art.building_image(&b.id) {
                         let tint = if !unlocked {
                             Color::srgb(0.42, 0.46, 0.54)
@@ -161,7 +161,7 @@ pub(super) fn spawn_building_inspector(
                         Text::new(i18n.t(&b.name_key)),
                         display_font(
                             fjord_art,
-                            if is_portrait {
+                            if is_compact {
                                 FONT_TITLE_MD - 7.0
                             } else {
                                 FONT_TITLE_MD - 4.0
@@ -169,7 +169,7 @@ pub(super) fn spawn_building_inspector(
                         ),
                         TextColor(COLOR_ACCENT_GOLD),
                     ));
-                    if is_portrait {
+                    if is_compact {
                         tcol.spawn((
                             Text::new(status_line.clone()),
                             TextFont {
@@ -296,7 +296,7 @@ pub(super) fn spawn_building_inspector(
                 ))
                 .with_children(|top| {
                     if active_tab == InspectorTab::Upgrade {
-                        if !is_portrait {
+                        if !is_compact {
                             if let Some(img) = fjord_art.building_image(&b.id) {
                                 let tint = if !unlocked {
                                     Color::srgb(0.42, 0.46, 0.54)
@@ -579,7 +579,7 @@ pub(super) fn spawn_building_inspector(
                     }
 
                     // Raid Tab: Shortage guidance, difficulty tabs, board preview, relics & combat loadout.
-                    if !is_portrait {
+                    if !is_compact {
                         top.spawn((
                             Text::new(status_line),
                             TextFont {

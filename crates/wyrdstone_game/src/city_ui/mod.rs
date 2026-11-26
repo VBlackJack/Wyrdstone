@@ -24,7 +24,7 @@ use crate::audio::{
     cycle_bgm_volume, cycle_sfx_volume, play_sfx, toggle_mute, BgmTrack, SfxKind, SoundBank,
 };
 use crate::fjord_art::FjordTextures;
-use crate::platform::{HapticEvent, HapticKind, SafeAreaInsets};
+use crate::platform::{HapticEvent, HapticKind, HudLayoutMode, SafeAreaInsets};
 use crate::scroll::{PressArm, UiScrollMemory};
 use crate::state::{
     now_unix_secs, today_day_index, ActiveModal, AppState, ChapterDialogue, GameContext,
@@ -60,8 +60,8 @@ const MIN_CITY_TOP_BAR_HEIGHT_PX: f32 = 24.0;
 const FJORD_MAP_ASPECT: f32 = 1280.0 / 720.0;
 const WONDER_MAP_X_PCT: f32 = 35.0;
 const WONDER_MAP_Y_PCT: f32 = 36.0;
-const WONDER_PORTRAIT_LEFT_PCT: f32 = 34.0;
-const WONDER_PORTRAIT_TOP_PCT: f32 = 62.0;
+const WONDER_PORTRAIT_LEFT_PCT: f32 = 34.5;
+const WONDER_PORTRAIT_TOP_PCT: f32 = 56.0;
 
 #[derive(Component)]
 pub struct CityRoot;
@@ -231,6 +231,7 @@ pub(super) enum InspectorTab {
 /// Tracks City layout mode, displayed endurance, audio state, and periodic harvest readiness checks.
 #[derive(Resource)]
 pub struct CityLayoutMode {
+    pub hud_mode: HudLayoutMode,
     pub is_portrait: bool,
     #[cfg(not(target_os = "android"))]
     pub last_fullscreen: bool,
@@ -325,6 +326,8 @@ pub enum CityAction {
     ToggleAudio,
     #[cfg(not(target_os = "android"))]
     ToggleFullscreen,
+    #[cfg(target_arch = "wasm32")]
+    EnterFullscreen(crate::platform::FullscreenOrientation),
     BackToTitle,
 }
 
@@ -352,7 +355,8 @@ pub fn setup_city_ui(
             (w.width(), w.height(), fs)
         })
         .unwrap_or((WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, false));
-    let is_portrait = win_w < win_h;
+    let hud_mode = HudLayoutMode::from_viewport(win_w, win_h);
+    let is_portrait = hud_mode.is_portrait();
     let today = today_day_index();
     ctx.city.daily_bounties.ensure_for_day(today);
     ctx.city
@@ -381,6 +385,7 @@ pub fn setup_city_ui(
     };
     let ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
     commands.insert_resource(CityLayoutMode {
+        hud_mode,
         is_portrait,
         #[cfg(not(target_os = "android"))]
         last_fullscreen: _is_fullscreen,
@@ -408,7 +413,7 @@ pub fn setup_city_ui(
         &vfx,
         &sound_bank,
         &scroll_mem,
-        is_portrait,
+        hud_mode,
         #[cfg(not(target_os = "android"))]
         _is_fullscreen,
         win_w,
@@ -489,7 +494,7 @@ fn resource_pill_text(i18n: &I18nCatalog, label_key: &str, amount: u32) -> Strin
     )
 }
 
-fn format_energy_label(ctx: &GameContext) -> String {
+fn format_energy_label(ctx: &GameContext, compact: bool) -> String {
     let i18n = &ctx.data.i18n;
     let max_energy = ctx.city.max_energy(&ctx.data.balance);
     if ctx.city.energy < max_energy {
@@ -503,7 +508,11 @@ fn format_energy_label(ctx: &GameContext) -> String {
             .ceil()
             .max(1.0) as u64;
         i18n.t_fmt(
-            "city.header.energy_regen",
+            if compact {
+                "city.header.energy_regen_compact"
+            } else {
+                "city.header.energy_regen"
+            },
             &[
                 ("cur", ctx.city.energy.to_string()),
                 ("max", max_energy.to_string()),
@@ -512,7 +521,11 @@ fn format_energy_label(ctx: &GameContext) -> String {
         )
     } else {
         i18n.t_fmt(
-            "city.header.energy_full",
+            if compact {
+                "city.header.energy_compact"
+            } else {
+                "city.header.energy_full"
+            },
             &[
                 ("cur", ctx.city.energy.to_string()),
                 ("max", max_energy.to_string()),
@@ -552,7 +565,7 @@ fn spawn_city_tree(
     vfx: &VfxTextures,
     sound_bank: &SoundBank,
     scroll_mem: &UiScrollMemory,
-    is_portrait: bool,
+    hud_mode: HudLayoutMode,
     #[cfg(not(target_os = "android"))] is_fullscreen: bool,
     win_w: f32,
     win_h: f32,
@@ -562,6 +575,9 @@ fn spawn_city_tree(
     inspector_tab: InspectorTab,
     just_built_id: Option<&str>,
 ) {
+    let is_portrait = hud_mode.is_portrait();
+    let is_phone_landscape = hud_mode.is_phone_landscape();
+    let is_mobile = hud_mode.is_mobile();
     let i18n = &ctx.data.i18n;
     let res = ctx.city.resources;
     let max_energy = ctx.city.max_energy(&ctx.data.balance);
@@ -668,12 +684,12 @@ fn spawn_city_tree(
                                 width: Val::Px(canvas_w),
                                 height: Val::Px(canvas_h),
                                 flex_shrink: 0.0,
-                                border: UiRect::all(Val::Px(if is_portrait { 0.0 } else { 1.5 })),
+                                border: UiRect::all(Val::Px(if is_mobile { 0.0 } else { 1.5 })),
                                 overflow: Overflow::clip(),
                                 ..default()
                             },
                             BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.28)),
-                            BorderRadius::all(Val::Px(if is_portrait { 0.0 } else { 10.0 })),
+                            BorderRadius::all(Val::Px(if is_mobile { 0.0 } else { 10.0 })),
                             panel_shadow(),
                         ))
                         .with_children(|map| {
@@ -831,6 +847,7 @@ fn spawn_city_tree(
                                     is_quest_target,
                                     is_just_built,
                                     is_portrait,
+                                    is_mobile,
                                     canvas_w,
                                     canvas_h,
                                     now,
@@ -842,6 +859,7 @@ fn spawn_city_tree(
                                     ctx,
                                     vfx,
                                     is_portrait,
+                                    is_mobile,
                                     canvas_w,
                                     canvas_h,
                                 );
@@ -850,8 +868,14 @@ fn spawn_city_tree(
                 });
 
             // 2. Slim Floating Top HUD Bar + Contextual Banners (pass-through column wrapper).
-            let edge_x = if is_portrait { 6.0 } else { 14.0 };
-            let edge_y = if is_portrait { 6.0 } else { 10.0 };
+            let edge_x = if is_mobile { 6.0 } else { 14.0 };
+            let edge_y = if is_portrait {
+                CITY_TOP_EDGE_PORTRAIT_PX
+            } else if is_phone_landscape {
+                4.0
+            } else {
+                CITY_TOP_EDGE_LANDSCAPE_PX
+            };
             viewport
                 .spawn((
                     Node {
@@ -860,7 +884,7 @@ fn spawn_city_tree(
                         left: Val::Px(edge_x + safe.left),
                         right: Val::Px(edge_x + safe.right),
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(6.0),
+                        row_gap: Val::Px(if is_phone_landscape { 4.0 } else { 6.0 }),
                         ..default()
                     },
                     ZIndex(30),
@@ -875,16 +899,20 @@ fn spawn_city_tree(
                             sliced_panel_image(vfx),
                             Node {
                                 width: Val::Percent(100.0),
-                                flex_wrap: FlexWrap::Wrap,
+                                flex_wrap: if is_phone_landscape {
+                                    FlexWrap::NoWrap
+                                } else {
+                                    FlexWrap::Wrap
+                                },
                                 justify_content: JustifyContent::SpaceBetween,
                                 align_items: AlignItems::Center,
-                                padding: if is_portrait {
-                                    UiRect::axes(Val::Px(6.0), Val::Px(4.0))
+                                padding: if is_mobile {
+                                    UiRect::axes(Val::Px(6.0), Val::Px(3.0))
                                 } else {
                                     UiRect::axes(Val::Px(12.0), Val::Px(6.0))
                                 },
-                                row_gap: Val::Px(5.0),
-                                column_gap: Val::Px(10.0),
+                                row_gap: Val::Px(4.0),
+                                column_gap: Val::Px(if is_phone_landscape { 6.0 } else { 10.0 }),
                                 ..default()
                             },
                             panel_shadow(),
@@ -895,6 +923,7 @@ fn spawn_city_tree(
                                 flex_direction: FlexDirection::Column,
                                 align_items: AlignItems::FlexStart,
                                 row_gap: Val::Px(2.0),
+                                flex_shrink: 1.0,
                                 ..default()
                             })
                             .with_children(|col| {
@@ -902,7 +931,9 @@ fn spawn_city_tree(
                                     Text::new(i18n.t("city.header.title")),
                                     display_font(
                                         fjord_art,
-                                        if is_portrait {
+                                        if is_phone_landscape {
+                                            FONT_SMALL + 1.5
+                                        } else if is_portrait {
                                             FONT_BODY
                                         } else {
                                             FONT_HEADING - 2.0
@@ -910,49 +941,51 @@ fn spawn_city_tree(
                                     ),
                                     TextColor(COLOR_ACCENT_GOLD),
                                 ));
-                                let rank = ctx.city.clan_rank_with_balance(&ctx.data.balance);
-                                let legend = ctx.city.legend_level(&ctx.data.balance);
-                                let rank_label = if legend > 0 {
-                                    i18n.t_fmt(
-                                        "city.header.legend_rank",
-                                        &[
-                                            ("rank", i18n.t(rank.i18n_key()).to_string()),
-                                            ("level", legend.to_string()),
-                                        ],
-                                    )
-                                } else {
-                                    i18n.t(rank.i18n_key()).to_string()
-                                };
-                                let mastery_label = i18n.t_fmt(
-                                    "city.header.mastery",
-                                    &[("glory", ctx.city.glory.to_string())],
-                                );
-                                let subtitle_line = if is_portrait {
-                                    i18n.t_fmt(
-                                        "city.header.subtitle_compact",
-                                        &[("rank", rank_label), ("mastery", mastery_label)],
-                                    )
-                                } else {
-                                    let perk_label =
-                                        format_rank_perk(i18n, rank, &ctx.data.balance);
-                                    i18n.t_fmt(
-                                        "city.header.subtitle_full",
-                                        &[
-                                            ("rank", rank_label),
-                                            ("mastery", mastery_label),
-                                            ("perk", perk_label),
-                                        ],
-                                    )
-                                };
-                                col.spawn((
-                                    Text::new(subtitle_line),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
-                                    },
-                                    TextColor(COLOR_TEXT_MUTED),
-                                ));
-                                if ctx.city.realm_era > 0 {
+                                if !is_phone_landscape {
+                                    let rank = ctx.city.clan_rank_with_balance(&ctx.data.balance);
+                                    let legend = ctx.city.legend_level(&ctx.data.balance);
+                                    let rank_label = if legend > 0 {
+                                        i18n.t_fmt(
+                                            "city.header.legend_rank",
+                                            &[
+                                                ("rank", i18n.t(rank.i18n_key()).to_string()),
+                                                ("level", legend.to_string()),
+                                            ],
+                                        )
+                                    } else {
+                                        i18n.t(rank.i18n_key()).to_string()
+                                    };
+                                    let mastery_label = i18n.t_fmt(
+                                        "city.header.mastery",
+                                        &[("glory", ctx.city.glory.to_string())],
+                                    );
+                                    let subtitle_line = if is_portrait {
+                                        i18n.t_fmt(
+                                            "city.header.subtitle_compact",
+                                            &[("rank", rank_label), ("mastery", mastery_label)],
+                                        )
+                                    } else {
+                                        let perk_label =
+                                            format_rank_perk(i18n, rank, &ctx.data.balance);
+                                        i18n.t_fmt(
+                                            "city.header.subtitle_full",
+                                            &[
+                                                ("rank", rank_label),
+                                                ("mastery", mastery_label),
+                                                ("perk", perk_label),
+                                            ],
+                                        )
+                                    };
+                                    col.spawn((
+                                        Text::new(subtitle_line),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_TEXT_MUTED),
+                                    ));
+                                }
+                                if ctx.city.realm_era > 0 && !is_phone_landscape {
                                     let realm_lbl = i18n.t_fmt(
                                         "city.header.realm_badge",
                                         &[
@@ -978,14 +1011,14 @@ fn spawn_city_tree(
                             // Center: Resource & Energy Pills
                             bar.spawn(Node {
                                 flex_wrap: FlexWrap::Wrap,
-                                column_gap: Val::Px(6.0),
-                                row_gap: Val::Px(4.0),
+                                column_gap: Val::Px(if is_mobile { 4.0 } else { 6.0 }),
+                                row_gap: Val::Px(3.0),
                                 align_items: AlignItems::Center,
                                 ..default()
                             })
                             .with_children(|pills| {
                                 let res_lbl = |key: &str, amount: u32| {
-                                    if is_portrait {
+                                    if is_mobile {
                                         amount.to_string()
                                     } else {
                                         resource_pill_text(i18n, key, amount)
@@ -1000,6 +1033,7 @@ fn spawn_city_tree(
                                     Some(CityAction::FocusResourceSource(
                                         wyrdstone_core::ResourceKind::Wood,
                                     )),
+                                    is_mobile,
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -1010,6 +1044,7 @@ fn spawn_city_tree(
                                     Some(CityAction::FocusResourceSource(
                                         wyrdstone_core::ResourceKind::Stone,
                                     )),
+                                    is_mobile,
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -1020,6 +1055,7 @@ fn spawn_city_tree(
                                     Some(CityAction::FocusResourceSource(
                                         wyrdstone_core::ResourceKind::Gold,
                                     )),
+                                    is_mobile,
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -1030,6 +1066,7 @@ fn spawn_city_tree(
                                     Some(CityAction::FocusResourceSource(
                                         wyrdstone_core::ResourceKind::Mead,
                                     )),
+                                    is_mobile,
                                 );
                                 pills
                                     .spawn((
@@ -1038,8 +1075,12 @@ fn spawn_city_tree(
                                             i18n.t("city.tooltip.energy").to_string(),
                                         ),
                                         Node {
-                                            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                                            column_gap: Val::Px(5.0),
+                                            padding: if is_mobile {
+                                                UiRect::axes(Val::Px(6.0), Val::Px(2.0))
+                                            } else {
+                                                UiRect::axes(Val::Px(8.0), Val::Px(4.0))
+                                            },
+                                            column_gap: Val::Px(4.0),
                                             align_items: AlignItems::Center,
                                             border: UiRect::all(Val::Px(1.0)),
                                             ..default()
@@ -1052,22 +1093,26 @@ fn spawn_city_tree(
                                         pill.spawn((
                                             ImageNode::new(vfx.icon_energy.clone()),
                                             Node {
-                                                width: Val::Px(15.0),
-                                                height: Val::Px(15.0),
+                                                width: Val::Px(14.0),
+                                                height: Val::Px(14.0),
                                                 ..default()
                                             },
                                         ));
                                         pill.spawn((
                                             CityEnergyText,
-                                            Text::new(format_energy_label(ctx)),
+                                            Text::new(format_energy_label(ctx, is_mobile)),
                                             TextFont {
-                                                font_size: FONT_SMALL,
+                                                font_size: if is_mobile {
+                                                    FONT_SMALL - 1.0
+                                                } else {
+                                                    FONT_SMALL
+                                                },
                                                 ..default()
                                             },
                                             TextColor(COLOR_RES_ENERGY),
                                         ));
                                     });
-                                if ctx.city.stats.win_streak >= 1 {
+                                if ctx.city.stats.win_streak >= 1 && !is_phone_landscape {
                                     let flame = ctx.city.valhalla_flame_tier();
                                     let flame_lbl = i18n.t_fmt(
                                         "city.header.flame",
@@ -1082,8 +1127,15 @@ fn spawn_city_tree(
                                             CityAction::ShowFlameInfo,
                                             CityTooltipTarget(i18n.t(flame.desc_key()).to_string()),
                                             Node {
-                                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                                padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                                                min_height: Val::Px(if is_mobile {
+                                                    30.0
+                                                } else {
+                                                    MIN_TOUCH_TARGET_PX
+                                                }),
+                                                padding: UiRect::axes(
+                                                    Val::Px(if is_mobile { 7.0 } else { 10.0 }),
+                                                    Val::Px(if is_mobile { 2.0 } else { 4.0 }),
+                                                ),
                                                 justify_content: JustifyContent::Center,
                                                 align_items: AlignItems::Center,
                                                 border: UiRect::all(Val::Px(1.0)),
@@ -1097,14 +1149,18 @@ fn spawn_city_tree(
                                             pill.spawn((
                                                 Text::new(flame_lbl),
                                                 TextFont {
-                                                    font_size: FONT_SMALL,
+                                                    font_size: if is_mobile {
+                                                        FONT_SMALL - 1.0
+                                                    } else {
+                                                        FONT_SMALL
+                                                    },
                                                     ..default()
                                                 },
                                                 TextColor(COLOR_ACCENT_GOLD),
                                             ));
                                         });
                                 }
-                                if ctx.city.energy < max_energy {
+                                if ctx.city.energy < max_energy && !is_phone_landscape {
                                     let can_drink = res.mead >= ctx.data.balance.mead_refill_cost;
                                     let lbl = i18n.t_fmt(
                                         "city.button.drink_mead",
@@ -1116,17 +1172,32 @@ fn spawn_city_tree(
                                             ("cost", ctx.data.balance.mead_refill_cost.to_string()),
                                         ],
                                     );
-                                    spawn_small_button(
-                                        pills,
-                                        &lbl,
-                                        CityAction::DrinkMead,
-                                        if can_drink {
-                                            COLOR_ACCENT_GREEN
-                                        } else {
-                                            COLOR_BUTTON_DISABLED
-                                        },
-                                        can_drink,
-                                    );
+                                    if is_mobile {
+                                        spawn_compact_top_button(
+                                            pills,
+                                            &lbl,
+                                            CityAction::DrinkMead,
+                                            if can_drink {
+                                                COLOR_ACCENT_GREEN
+                                            } else {
+                                                COLOR_BUTTON_DISABLED
+                                            },
+                                            COLOR_TEXT_PRIMARY,
+                                            can_drink,
+                                        );
+                                    } else {
+                                        spawn_small_button(
+                                            pills,
+                                            &lbl,
+                                            CityAction::DrinkMead,
+                                            if can_drink {
+                                                COLOR_ACCENT_GREEN
+                                            } else {
+                                                COLOR_BUTTON_DISABLED
+                                            },
+                                            can_drink,
+                                        );
+                                    }
                                 }
                             });
 
@@ -1134,11 +1205,18 @@ fn spawn_city_tree(
                             if !is_portrait || ready_harvests >= 2 {
                                 bar.spawn((
                                     Node {
-                                        column_gap: Val::Px(6.0),
+                                        column_gap: Val::Px(if is_phone_landscape {
+                                            4.0
+                                        } else {
+                                            6.0
+                                        }),
                                         row_gap: Val::Px(4.0),
                                         flex_wrap: FlexWrap::Wrap,
                                         align_items: AlignItems::Center,
-                                        padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                                        padding: UiRect::axes(
+                                            Val::Px(if is_phone_landscape { 4.0 } else { 6.0 }),
+                                            Val::Px(if is_phone_landscape { 2.0 } else { 3.0 }),
+                                        ),
                                         border: UiRect::all(Val::Px(1.0)),
                                         ..default()
                                     },
@@ -1148,17 +1226,29 @@ fn spawn_city_tree(
                                 ))
                                 .with_children(|actions| {
                                     if ready_harvests >= 2 {
-                                        spawn_small_button_colored(
-                                            actions,
-                                            &i18n.t_fmt(
-                                                "city.harvest.collect_all",
-                                                &[("count", ready_harvests.to_string())],
-                                            ),
-                                            CityAction::CollectAllHarvests,
-                                            COLOR_ACCENT_GOLD,
-                                            COLOR_TEXT_DARK,
-                                            true,
+                                        let harvest_lbl = i18n.t_fmt(
+                                            "city.harvest.collect_all",
+                                            &[("count", ready_harvests.to_string())],
                                         );
+                                        if is_mobile {
+                                            spawn_compact_top_button(
+                                                actions,
+                                                &harvest_lbl,
+                                                CityAction::CollectAllHarvests,
+                                                COLOR_ACCENT_GOLD,
+                                                COLOR_TEXT_DARK,
+                                                true,
+                                            );
+                                        } else {
+                                            spawn_small_button_colored(
+                                                actions,
+                                                &harvest_lbl,
+                                                CityAction::CollectAllHarvests,
+                                                COLOR_ACCENT_GOLD,
+                                                COLOR_TEXT_DARK,
+                                                true,
+                                            );
+                                        }
                                     }
                                     if !is_portrait {
                                         if has_unlocked_modes {
@@ -1169,26 +1259,39 @@ fn spawn_city_tree(
                                                 "city.drawer.modes.button",
                                                 modes_badge,
                                             );
-                                            spawn_small_button_with_opts(
-                                                actions,
-                                                &modes_lbl,
-                                                CityAction::ToggleDrawer(CityDrawer::Modes),
-                                                if modes_open {
-                                                    COLOR_ACCENT_TEAL
-                                                } else if daily_ready {
-                                                    COLOR_ACCENT_GOLD
-                                                } else {
-                                                    COLOR_PANEL_CARD
-                                                },
-                                                if !modes_open && daily_ready {
-                                                    COLOR_TEXT_DARK
-                                                } else {
-                                                    COLOR_TEXT_PRIMARY
-                                                },
-                                                true,
-                                                Some(i18n.t("city.tooltip.modes").to_string()),
-                                                0.0,
-                                            );
+                                            let bg = if modes_open {
+                                                COLOR_ACCENT_TEAL
+                                            } else if daily_ready {
+                                                COLOR_ACCENT_GOLD
+                                            } else {
+                                                COLOR_PANEL_CARD
+                                            };
+                                            let fg = if !modes_open && daily_ready {
+                                                COLOR_TEXT_DARK
+                                            } else {
+                                                COLOR_TEXT_PRIMARY
+                                            };
+                                            if is_phone_landscape {
+                                                spawn_compact_top_button(
+                                                    actions,
+                                                    &modes_lbl,
+                                                    CityAction::ToggleDrawer(CityDrawer::Modes),
+                                                    bg,
+                                                    fg,
+                                                    true,
+                                                );
+                                            } else {
+                                                spawn_small_button_with_opts(
+                                                    actions,
+                                                    &modes_lbl,
+                                                    CityAction::ToggleDrawer(CityDrawer::Modes),
+                                                    bg,
+                                                    fg,
+                                                    true,
+                                                    Some(i18n.t("city.tooltip.modes").to_string()),
+                                                    0.0,
+                                                );
+                                            }
                                         }
 
                                         let clan_open = active_drawer == CityDrawer::Clan;
@@ -1197,47 +1300,72 @@ fn spawn_city_tree(
                                             "city.drawer.clan.button",
                                             clan_badge,
                                         );
-                                        spawn_small_button_with_opts(
-                                            actions,
-                                            &clan_lbl,
-                                            CityAction::ToggleDrawer(CityDrawer::Clan),
-                                            if clan_open {
-                                                COLOR_ACCENT_TEAL
-                                            } else if clan_badge > 0 {
-                                                COLOR_ACCENT_GREEN
-                                            } else {
-                                                COLOR_PANEL_CARD
-                                            },
-                                            COLOR_TEXT_PRIMARY,
-                                            true,
-                                            Some(i18n.t("city.tooltip.clan").to_string()),
-                                            0.0,
-                                        );
+                                        let clan_bg = if clan_open {
+                                            COLOR_ACCENT_TEAL
+                                        } else if clan_badge > 0 {
+                                            COLOR_ACCENT_GREEN
+                                        } else {
+                                            COLOR_PANEL_CARD
+                                        };
+                                        if is_phone_landscape {
+                                            spawn_compact_top_button(
+                                                actions,
+                                                &clan_lbl,
+                                                CityAction::ToggleDrawer(CityDrawer::Clan),
+                                                clan_bg,
+                                                COLOR_TEXT_PRIMARY,
+                                                true,
+                                            );
+                                        } else {
+                                            spawn_small_button_with_opts(
+                                                actions,
+                                                &clan_lbl,
+                                                CityAction::ToggleDrawer(CityDrawer::Clan),
+                                                clan_bg,
+                                                COLOR_TEXT_PRIMARY,
+                                                true,
+                                                Some(i18n.t("city.tooltip.clan").to_string()),
+                                                0.0,
+                                            );
+                                        }
 
                                         let menu_open = active_drawer == CityDrawer::Menu;
                                         let menu_badge = usize::from(tribute_ready);
                                         let menu_lbl =
                                             badged_label(i18n, "city.button.menu", menu_badge);
-                                        spawn_small_button_with_opts(
-                                            actions,
-                                            &menu_lbl,
-                                            CityAction::ToggleDrawer(CityDrawer::Menu),
-                                            if menu_open {
-                                                COLOR_ACCENT_TEAL
-                                            } else if tribute_ready {
-                                                COLOR_ACCENT_GOLD
-                                            } else {
-                                                COLOR_PANEL_CARD
-                                            },
-                                            if !menu_open && tribute_ready {
-                                                COLOR_TEXT_DARK
-                                            } else {
-                                                COLOR_TEXT_PRIMARY
-                                            },
-                                            true,
-                                            Some(i18n.t("city.tooltip.menu").to_string()),
-                                            0.0,
-                                        );
+                                        let menu_bg = if menu_open {
+                                            COLOR_ACCENT_TEAL
+                                        } else if tribute_ready {
+                                            COLOR_ACCENT_GOLD
+                                        } else {
+                                            COLOR_PANEL_CARD
+                                        };
+                                        let menu_fg = if !menu_open && tribute_ready {
+                                            COLOR_TEXT_DARK
+                                        } else {
+                                            COLOR_TEXT_PRIMARY
+                                        };
+                                        if is_phone_landscape {
+                                            spawn_compact_top_button(
+                                                actions,
+                                                &menu_lbl,
+                                                CityAction::ToggleDrawer(CityDrawer::Menu),
+                                                menu_bg,
+                                                menu_fg,
+                                                true,
+                                            );
+                                        } else {
+                                            spawn_small_button_with_opts(
+                                                actions,
+                                                &menu_lbl,
+                                                CityAction::ToggleDrawer(CityDrawer::Menu),
+                                                menu_bg,
+                                                menu_fg,
+                                                true,
+                                                Some(i18n.t("city.tooltip.menu").to_string()),
+                                                0.0,
+                                            );
+                                        }
                                     }
                                 });
                             }
@@ -1409,8 +1537,8 @@ fn spawn_city_tree(
                                         flex_wrap: FlexWrap::Wrap,
                                         column_gap: Val::Px(6.0),
                                         row_gap: Val::Px(4.0),
-                                        max_width: if is_portrait {
-                                            Val::Percent(92.0)
+                                        max_width: if is_mobile {
+                                            Val::Percent(94.0)
                                         } else {
                                             Val::Percent(100.0)
                                         },
@@ -1418,7 +1546,7 @@ fn spawn_city_tree(
                                     },
                                 ))
                                 .with_children(|qrow| {
-                                    if is_portrait && quick_items.len() > 1 {
+                                    if is_mobile && quick_items.len() > 1 {
                                         let has_clan_ready =
                                             claimable_cols + claimable_bounties + claimable_feats
                                                 > 0;
@@ -1452,7 +1580,7 @@ fn spawn_city_tree(
                 });
 
             // 3. Compact Floating Bottom-Left Saga Quest Card
-            if !(is_portrait && right_panel_open) {
+            if !(is_mobile && right_panel_open) {
                 let quest_node = if is_portrait {
                     Node {
                         position_type: PositionType::Absolute,
@@ -1463,6 +1591,19 @@ fn spawn_city_tree(
                         align_items: AlignItems::Center,
                         padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                         column_gap: Val::Px(8.0),
+                        border: UiRect::all(Val::Px(1.5)),
+                        ..default()
+                    }
+                } else if is_phone_landscape {
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(6.0 + safe.left),
+                        bottom: Val::Px(6.0 + safe.bottom),
+                        max_width: Val::Px(340.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::axes(Val::Px(7.0), Val::Px(4.0)),
+                        column_gap: Val::Px(6.0),
                         border: UiRect::all(Val::Px(1.5)),
                         ..default()
                     }
@@ -1501,7 +1642,7 @@ fn spawn_city_tree(
                                 ..default()
                             })
                             .with_children(|left| {
-                                if !is_portrait {
+                                if !is_mobile {
                                     if let Some(portrait) = fjord_art.portrait(&quest.speaker) {
                                         left.spawn((
                                             ImageNode::new(portrait),
@@ -1641,7 +1782,7 @@ fn spawn_city_tree(
                                 ..default()
                             })
                             .with_children(|left| {
-                                if !is_portrait {
+                                if !is_mobile {
                                     if let Some(portrait) = fjord_art.portrait("odin") {
                                         left.spawn((
                                             ImageNode::new(portrait),
@@ -1767,7 +1908,7 @@ fn spawn_city_tree(
 
             // 4. Unified Slide-Out Drawer (Modes / Clan / Burger Menu / Building Inspector)
             if right_panel_open {
-                if is_portrait && ctx.active_modal == ActiveModal::None {
+                if is_mobile && ctx.active_modal == ActiveModal::None {
                     viewport.spawn((
                         Button,
                         NoButtonScale,
@@ -1798,6 +1939,22 @@ fn spawn_city_tree(
                         justify_content: JustifyContent::SpaceBetween,
                         padding: UiRect::all(Val::Px(14.0)),
                         row_gap: Val::Px(8.0),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    }
+                } else if is_phone_landscape {
+                    Node {
+                        position_type: PositionType::Absolute,
+                        top: Val::Px(48.0 + safe.top),
+                        bottom: Val::Px(6.0 + safe.bottom),
+                        right: Val::Px(6.0 + safe.right),
+                        width: Val::Px(340.0),
+                        max_width: Val::Percent(62.0),
+                        min_height: Val::Px(0.0),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::SpaceBetween,
+                        padding: UiRect::all(Val::Px(10.0)),
+                        row_gap: Val::Px(6.0),
                         overflow: Overflow::clip(),
                         ..default()
                     }
@@ -1866,7 +2023,7 @@ fn spawn_city_tree(
                                     ctx,
                                     fjord_art,
                                     scroll_mem.inspector_offset_y,
-                                    is_portrait,
+                                    is_mobile,
                                     inspector_tab,
                                 );
                             }
@@ -1909,15 +2066,15 @@ fn spawn_city_tree(
                             flex_direction: FlexDirection::Row,
                             justify_content: JustifyContent::SpaceAround,
                             align_items: AlignItems::Center,
-                            column_gap: Val::Px(4.0),
-                            padding: UiRect::axes(Val::Px(6.0), Val::Px(5.0)),
+                            column_gap: Val::Px(3.0),
+                            padding: UiRect::axes(Val::Px(4.0), Val::Px(5.0)),
                             ..default()
                         },
                         panel_shadow(),
                         ZIndex(45),
                     ))
                     .with_children(|nav| {
-                        spawn_small_button_with_opts(
+                        spawn_portrait_nav_button(
                             nav,
                             i18n.t("city.nav.fjord"),
                             CityAction::FocusFjordMap,
@@ -1927,12 +2084,9 @@ fn spawn_city_tree(
                                 COLOR_PANEL_CARD
                             },
                             COLOR_TEXT_PRIMARY,
-                            true,
-                            None,
-                            1.0,
                         );
                         if has_unlocked_modes {
-                            spawn_small_button_with_opts(
+                            spawn_portrait_nav_button(
                                 nav,
                                 &badged_label(i18n, "city.drawer.modes.button", modes_badge),
                                 CityAction::ToggleDrawer(CityDrawer::Modes),
@@ -1948,12 +2102,9 @@ fn spawn_city_tree(
                                 } else {
                                     COLOR_TEXT_PRIMARY
                                 },
-                                true,
-                                None,
-                                1.0,
                             );
                         }
-                        spawn_small_button_with_opts(
+                        spawn_portrait_nav_button(
                             nav,
                             &badged_label(i18n, "city.drawer.clan.button", clan_badge),
                             CityAction::ToggleDrawer(CityDrawer::Clan),
@@ -1965,11 +2116,8 @@ fn spawn_city_tree(
                                 COLOR_PANEL_CARD
                             },
                             COLOR_TEXT_PRIMARY,
-                            true,
-                            None,
-                            1.0,
                         );
-                        spawn_small_button_with_opts(
+                        spawn_portrait_nav_button(
                             nav,
                             &badged_label(i18n, "city.nav.quest", usize::from(quest_ready)),
                             quest_action,
@@ -1979,11 +2127,8 @@ fn spawn_city_tree(
                                 COLOR_PANEL_CARD
                             },
                             COLOR_TEXT_PRIMARY,
-                            true,
-                            None,
-                            1.0,
                         );
-                        spawn_small_button_with_opts(
+                        spawn_portrait_nav_button(
                             nav,
                             &badged_label(i18n, "city.button.menu", menu_badge),
                             CityAction::ToggleDrawer(CityDrawer::Menu),
@@ -1999,12 +2144,9 @@ fn spawn_city_tree(
                             } else {
                                 COLOR_TEXT_PRIMARY
                             },
-                            true,
-                            None,
-                            1.0,
                         );
                     });
-            } else {
+            } else if !is_mobile {
                 viewport
                     .spawn((
                         FjordTooltipBar,
@@ -2053,18 +2195,18 @@ fn spawn_city_tree(
             let m_scroll = scroll_mem.modal_offset_y;
             match ctx.active_modal {
                 ActiveModal::None => {}
-                ActiveModal::Amulets => {
-                    modals::spawn_amulets_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Collections => {
-                    modals::spawn_collections_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Shop => {
-                    modals::spawn_tool_shop_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Stats => {
-                    modals::spawn_stats_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
+                ActiveModal::Amulets => modals::spawn_amulets_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Collections => modals::spawn_collections_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Shop => modals::spawn_tool_shop_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Stats => modals::spawn_stats_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
                 ActiveModal::Settings => modals::spawn_settings_modal(
                     viewport,
                     ctx,
@@ -2073,45 +2215,46 @@ fn spawn_city_tree(
                     sound_bank,
                     safe,
                     m_scroll,
+                    is_mobile,
                     #[cfg(not(target_os = "android"))]
                     is_fullscreen,
                 ),
-                ActiveModal::Help => {
-                    modals::spawn_help_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Raids => {
-                    modals::spawn_raids_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Trials => {
-                    modals::spawn_trials_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Patrons => {
-                    modals::spawn_patrons_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Achievements => {
-                    modals::spawn_achievements_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
+                ActiveModal::Help => modals::spawn_help_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Raids => modals::spawn_raids_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Trials => modals::spawn_trials_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Patrons => modals::spawn_patrons_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Achievements => modals::spawn_achievements_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
                 ActiveModal::ExpeditionBoons => modals::spawn_expedition_boons_modal(
-                    viewport, ctx, fjord_art, vfx, safe, m_scroll,
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
                 ),
                 ActiveModal::LoginCalendar => modals::spawn_login_calendar_modal(
-                    viewport, ctx, fjord_art, vfx, safe, m_scroll,
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
                 ),
                 ActiveModal::ChapterDialogue => modals::spawn_chapter_dialogue_modal(
-                    viewport, ctx, fjord_art, vfx, safe, m_scroll,
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
                 ),
-                ActiveModal::WelcomeBack => {
-                    modals::spawn_welcome_back_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Bounties => {
-                    modals::spawn_bounties_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Wonder => {
-                    modals::spawn_wonder_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
-                ActiveModal::Ascension => {
-                    modals::spawn_ascension_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
-                }
+                ActiveModal::WelcomeBack => modals::spawn_welcome_back_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Bounties => modals::spawn_bounties_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Wonder => modals::spawn_wonder_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
+                ActiveModal::Ascension => modals::spawn_ascension_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll, is_mobile,
+                ),
             }
 
             // 5. Hub-level notice toast (modals and the inspector render notices themselves).
@@ -2133,6 +2276,7 @@ fn spawn_wonder_map_pin(
     ctx: &GameContext,
     vfx: &VfxTextures,
     is_portrait: bool,
+    is_mobile: bool,
     canvas_w: f32,
     canvas_h: f32,
 ) {
@@ -2243,7 +2387,7 @@ fn spawn_wonder_map_pin(
                 border: UiRect::all(Val::Px(if affordable { 2.0 } else { 1.5 })),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.11, 0.10, 0.92)),
+            BackgroundColor(Color::srgba(0.05, 0.11, 0.10, 0.94)),
             BorderColor(border_col),
             BorderRadius::all(Val::Px(8.0)),
             gold_glow_shadow(),
@@ -2252,18 +2396,24 @@ fn spawn_wonder_map_pin(
             plate_cmd.insert(QuestBeaconPin);
         }
         plate_cmd.with_children(|plate| {
+            let plate_font = if is_mobile {
+                FONT_SMALL - 1.5
+            } else {
+                FONT_SMALL
+            };
             plate.spawn((
                 Text::new(i18n.t("city.wonder.name")),
                 TextFont {
-                    font_size: FONT_SMALL,
+                    font_size: plate_font,
                     ..default()
                 },
                 TextColor(COLOR_ACCENT_GOLD),
+                TextLayout::new_with_justify(JustifyText::Center),
             ));
             plate.spawn((
                 Text::new(stage_lbl),
                 TextFont {
-                    font_size: FONT_SMALL - 2.0,
+                    font_size: (plate_font - 1.5).max(10.0),
                     ..default()
                 },
                 TextColor(if affordable {
@@ -2271,6 +2421,7 @@ fn spawn_wonder_map_pin(
                 } else {
                     COLOR_TEXT_PRIMARY
                 }),
+                TextLayout::new_with_justify(JustifyText::Center),
             ));
         });
     });
@@ -2286,6 +2437,7 @@ fn spawn_map_building_pin(
     is_quest_target: bool,
     is_just_built: bool,
     is_portrait: bool,
+    is_mobile: bool,
     canvas_w: f32,
     canvas_h: f32,
     now_secs: u64,
@@ -2592,7 +2744,7 @@ fn spawn_map_building_pin(
                 })),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.06, 0.09, 0.15, 0.90)),
+            BackgroundColor(Color::srgba(0.05, 0.09, 0.14, 0.94)),
             BorderColor(border_col),
             BorderRadius::all(Val::Px(8.0)),
             nameplate_shadow,
@@ -2601,11 +2753,16 @@ fn spawn_map_building_pin(
             plate_cmd.insert(QuestBeaconPin);
         }
         plate_cmd.with_children(|plate| {
+            let plate_font = if is_mobile {
+                FONT_SMALL - 1.5
+            } else {
+                FONT_SMALL
+            };
             plate
                 .spawn(Node {
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
-                    column_gap: Val::Px(4.0),
+                    column_gap: Val::Px(3.0),
                     flex_wrap: FlexWrap::Wrap,
                     ..default()
                 })
@@ -2614,7 +2771,7 @@ fn spawn_map_building_pin(
                         title_row.spawn((
                             Text::new(i18n.t("city.panel.quests.tag")),
                             TextFont {
-                                font_size: FONT_SMALL - 2.0,
+                                font_size: (plate_font - 1.5).max(10.0),
                                 ..default()
                             },
                             TextColor(COLOR_ACCENT_TEAL_TEXT),
@@ -2623,7 +2780,7 @@ fn spawn_map_building_pin(
                     title_row.spawn((
                         Text::new(i18n.t(&b.name_key)),
                         TextFont {
-                            font_size: FONT_SMALL,
+                            font_size: plate_font,
                             ..default()
                         },
                         TextColor(if selected {
@@ -2631,12 +2788,13 @@ fn spawn_map_building_pin(
                         } else {
                             COLOR_TEXT_PRIMARY
                         }),
+                        TextLayout::new_with_justify(JustifyText::Center),
                     ));
                     if ctx.city.building_mastery_stars(&b.id) >= wyrdstone_core::MAX_MASTERY_STARS {
                         title_row.spawn((
                             Text::new(i18n.t("city.pin.mastered_tag")),
                             TextFont {
-                                font_size: FONT_SMALL - 2.0,
+                                font_size: (plate_font - 1.5).max(10.0),
                                 ..default()
                             },
                             TextColor(COLOR_ACCENT_GOLD),
@@ -2660,8 +2818,8 @@ fn spawn_map_building_pin(
                                     Color::srgba(0.30, 0.36, 0.46, 0.45)
                                 }),
                                 Node {
-                                    width: Val::Px(13.0),
-                                    height: Val::Px(13.0),
+                                    width: Val::Px(if is_mobile { 11.0 } else { 13.0 }),
+                                    height: Val::Px(if is_mobile { 11.0 } else { 13.0 }),
                                     ..default()
                                 },
                             ));
@@ -2677,7 +2835,7 @@ fn spawn_map_building_pin(
                         CityAction::CollectHarvest(b.id.clone()),
                         Node {
                             width: Val::Percent(100.0),
-                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                            min_height: Val::Px(if is_mobile { 30.0 } else { MIN_TOUCH_TARGET_PX }),
                             padding: UiRect::axes(Val::Px(4.0), Val::Px(2.0)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
@@ -2690,17 +2848,18 @@ fn spawn_map_building_pin(
                         hbtn.spawn((
                             Text::new(i18n.t("city.harvest.ready")),
                             TextFont {
-                                font_size: FONT_SMALL,
+                                font_size: plate_font,
                                 ..default()
                             },
                             TextColor(COLOR_TEXT_DARK),
+                            TextLayout::new_with_justify(JustifyText::Center),
                         ));
                     });
                 if can_upgrade {
                     plate.spawn((
                         Text::new(i18n.t("city.panel.building.status.ready")),
                         TextFont {
-                            font_size: FONT_SMALL - 1.5,
+                            font_size: (plate_font - 1.5).max(10.0),
                             ..default()
                         },
                         TextColor(COLOR_ACCENT_GREEN_TEXT),
@@ -2732,7 +2891,7 @@ fn spawn_map_building_pin(
                 plate.spawn((
                     Text::new(badge),
                     TextFont {
-                        font_size: FONT_SMALL,
+                        font_size: plate_font,
                         ..default()
                     },
                     TextColor(if can_upgrade {
@@ -2742,6 +2901,7 @@ fn spawn_map_building_pin(
                     } else {
                         COLOR_TEXT_MUTED
                     }),
+                    TextLayout::new_with_justify(JustifyText::Center),
                 ));
             }
         });
@@ -2754,7 +2914,7 @@ pub(super) fn spawn_resource_pill_with_icon(
     text: &str,
     text_color: Color,
 ) {
-    spawn_resource_pill_with_icon_tip(parent, icon, text, text_color, None, None);
+    spawn_resource_pill_with_icon_tip(parent, icon, text, text_color, None, None, false);
 }
 
 fn spawn_resource_pill_with_icon_tip(
@@ -2764,16 +2924,25 @@ fn spawn_resource_pill_with_icon_tip(
     text_color: Color,
     tooltip: Option<String>,
     action: Option<CityAction>,
+    compact_pill: bool,
 ) {
     let mut cmd = parent.spawn((
         Node {
             min_height: if action.is_some() {
-                Val::Px(MIN_TOUCH_TARGET_PX)
+                Val::Px(if compact_pill {
+                    30.0
+                } else {
+                    MIN_TOUCH_TARGET_PX
+                })
             } else {
                 Val::Auto
             },
-            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-            column_gap: Val::Px(5.0),
+            padding: if compact_pill {
+                UiRect::axes(Val::Px(5.0), Val::Px(2.0))
+            } else {
+                UiRect::axes(Val::Px(8.0), Val::Px(4.0))
+            },
+            column_gap: Val::Px(if compact_pill { 4.0 } else { 5.0 }),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border: UiRect::all(Val::Px(1.0)),
@@ -2790,18 +2959,23 @@ fn spawn_resource_pill_with_icon_tip(
         cmd.insert((Interaction::None, CityTooltipTarget(tip)));
     }
     cmd.with_children(|pill| {
+        let icon_px = if compact_pill { 14.0 } else { 16.0 };
         pill.spawn((
             ImageNode::new(icon),
             Node {
-                width: Val::Px(16.0),
-                height: Val::Px(16.0),
+                width: Val::Px(icon_px),
+                height: Val::Px(icon_px),
                 ..default()
             },
         ));
         pill.spawn((
             Text::new(text),
             TextFont {
-                font_size: FONT_SMALL,
+                font_size: if compact_pill {
+                    FONT_SMALL - 1.0
+                } else {
+                    FONT_SMALL
+                },
                 ..default()
             },
             TextColor(text_color),
@@ -2927,6 +3101,95 @@ pub(crate) fn readable_text_color(bg_color: Color, text_color: Color) -> Color {
 
 /// Fixed beacon glow level used instead of the pulse when reduced motion is on.
 const BEACON_STATIC_GLOW: f32 = 0.5;
+
+fn spawn_portrait_nav_button(
+    parent: &mut ChildBuilder,
+    label: &str,
+    action: CityAction,
+    bg_color: Color,
+    text_color: Color,
+) {
+    let text_color = readable_text_color(bg_color, text_color);
+    parent
+        .spawn((
+            Button,
+            action,
+            Node {
+                flex_grow: 1.0,
+                flex_basis: Val::Px(0.0),
+                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                min_width: Val::Px(0.0),
+                padding: UiRect::axes(Val::Px(3.0), Val::Px(6.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(bg_color),
+            BorderColor(COLOR_PANEL_BORDER),
+            BorderRadius::all(Val::Px(RADIUS_SM)),
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: FONT_SMALL - 1.5,
+                    ..default()
+                },
+                TextColor(text_color),
+                TextLayout::new_with_justify(JustifyText::Center),
+            ));
+        });
+}
+
+fn spawn_compact_top_button(
+    parent: &mut ChildBuilder,
+    label: &str,
+    action: CityAction,
+    bg_color: Color,
+    text_color: Color,
+    enabled: bool,
+) {
+    let text_color = if !enabled {
+        COLOR_TEXT_MUTED
+    } else {
+        readable_text_color(bg_color, text_color)
+    };
+    let border_col = if enabled {
+        COLOR_PANEL_BORDER
+    } else {
+        Color::srgba(0.28, 0.34, 0.42, 0.65)
+    };
+    let mut cmd = parent.spawn((
+        Button,
+        action,
+        Node {
+            min_height: Val::Px(32.0),
+            padding: UiRect::axes(Val::Px(7.0), Val::Px(2.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(1.0)),
+            ..default()
+        },
+        BackgroundColor(bg_color),
+        BorderColor(border_col),
+        BorderRadius::all(Val::Px(RADIUS_SM)),
+    ));
+    if !enabled {
+        cmd.insert(NoButtonScale);
+    }
+    cmd.with_children(|btn| {
+        btn.spawn((
+            Text::new(label),
+            TextFont {
+                font_size: FONT_SMALL - 1.5,
+                ..default()
+            },
+            TextColor(text_color),
+        ));
+    });
+}
 
 pub(crate) fn spawn_small_button(
     parent: &mut ChildBuilder,
@@ -3424,7 +3687,7 @@ pub fn handle_city_buttons(
         if prev_below != curr_below {
             rebuild = true;
         } else {
-            let formatted = format_energy_label(&ctx);
+            let formatted = format_energy_label(&ctx, layout_mode.hud_mode.is_mobile());
             for mut text in &mut energy_texts {
                 text.0 = formatted.clone();
             }
@@ -3439,7 +3702,7 @@ pub fn handle_city_buttons(
     {
         let max_energy = ctx.city.max_energy(&ctx.data.balance);
         if ctx.city.energy < max_energy {
-            let formatted = format_energy_label(&ctx);
+            let formatted = format_energy_label(&ctx, layout_mode.hud_mode.is_mobile());
             for mut text in &mut energy_texts {
                 text.0 = formatted.clone();
             }
@@ -3491,10 +3754,12 @@ pub fn handle_city_buttons(
             continue;
         }
         layout_mode.window_size = Vec2::new(ev.width, ev.height);
-        let now_portrait = ev.width < ev.height;
-        if now_portrait != layout_mode.is_portrait {
-            layout_mode.is_portrait = now_portrait;
+        let now_mode = HudLayoutMode::from_viewport(ev.width, ev.height);
+        if now_mode != layout_mode.hud_mode {
+            layout_mode.hud_mode = now_mode;
+            layout_mode.is_portrait = now_mode.is_portrait();
             layout_mode.last_map_size = Vec2::ZERO;
+            layout_mode.last_top_bar_height = 0.0;
             rebuild = true;
         }
     }
@@ -4594,6 +4859,13 @@ pub fn handle_city_buttons(
                 }
                 rebuild = true;
             }
+            #[cfg(target_arch = "wasm32")]
+            CityAction::EnterFullscreen(ori) => {
+                ctx.confirm_import_backup = false;
+                crate::platform::enter_web_fullscreen(*ori);
+                layout_mode.last_fullscreen = crate::platform::is_web_fullscreen();
+                rebuild = true;
+            }
             CityAction::ClaimOfflineVault => {
                 if let Some(rewards) =
                     claim_offline_vault_action(&mut commands, &mut ctx, &sound_bank)
@@ -4775,7 +5047,7 @@ pub fn handle_city_buttons(
             &vfx,
             &sound_bank,
             &scroll_mem,
-            layout_mode.is_portrait,
+            layout_mode.hud_mode,
             #[cfg(not(target_os = "android"))]
             layout_mode.last_fullscreen,
             layout_mode.window_size.x,
@@ -5041,7 +5313,7 @@ pub fn update_city_hover_tooltip(
     mut bar_q: Query<&mut Node, With<FjordTooltipBar>>,
     mut text_q: Query<&mut Text, With<FjordTooltipText>>,
 ) {
-    let hovered_tip = if layout_mode.is_portrait || ctx.active_modal != ActiveModal::None {
+    let hovered_tip = if layout_mode.hud_mode.is_mobile() || ctx.active_modal != ActiveModal::None {
         None
     } else {
         targets
@@ -5470,6 +5742,16 @@ pub fn animate_city_ambience(
 /// Vertical padding reserved below each building sprite for its nameplate + optional harvest button.
 const PIN_NAMEPLATE_RESERVE_PX: f32 = 96.0;
 
+fn compute_pin_unit(map_w: f32, map_h: f32, is_portrait: bool) -> f32 {
+    if is_portrait {
+        (map_w * 0.19).min(map_h * 0.11).clamp(44.0, 76.0)
+    } else if map_h < 500.0 {
+        (map_w * 0.095).min(map_h * 0.165).clamp(36.0, 62.0)
+    } else {
+        (map_w * 0.115).min(map_h * 0.205).max(44.0)
+    }
+}
+
 /// Computes responsive `(left, top, pin_w, sprite_w, sprite_h)` in map pixels for a `MapBuildingPin`.
 pub(crate) fn compute_pin_layout(
     pin: &MapBuildingPin,
@@ -5477,9 +5759,9 @@ pub(crate) fn compute_pin_layout(
     map_h: f32,
     is_portrait: bool,
 ) -> (f32, f32, f32, f32, f32) {
+    let unit = compute_pin_unit(map_w, map_h, is_portrait);
     if is_portrait {
-        let pin_w = (map_w * 0.30).clamp(100.0, 124.0);
-        let unit = (map_w * 0.22).min(map_h * 0.125).clamp(48.0, 88.0);
+        let pin_w = (map_w * 0.295).clamp(96.0, 120.0);
         let sprite_w = unit * pin.tier_scale;
         let sprite_h = sprite_w * 0.88;
         let left = match pin.portrait_left_pct {
@@ -5500,18 +5782,27 @@ pub(crate) fn compute_pin_layout(
             sprite_h,
         );
     }
-    let unit = (map_w * 0.115).min(map_h * 0.205).max(44.0);
-    let pin_w = (unit * 1.06).clamp(108.0, 210.0);
+    let phone_landscape = map_h < 500.0;
+    let pin_w = if phone_landscape {
+        (unit * 1.40).clamp(86.0, 104.0)
+    } else {
+        (unit * 1.06).clamp(108.0, 210.0)
+    };
     let sprite_w = unit * pin.tier_scale;
     let sprite_h = sprite_w * 0.88;
     let anchor_x = (pin.map_x_pct / 100.0) * map_w;
     let anchor_y = (pin.map_y_pct / 100.0) * map_h;
-    let nameplate_reserve = (map_h * 0.11).clamp(52.0, 96.0);
+    let nameplate_reserve = if phone_landscape {
+        46.0
+    } else {
+        (map_h * 0.11).clamp(52.0, 96.0)
+    };
+    let min_top = if phone_landscape { 48.0 } else { 4.0 };
     let max_left = (map_w - pin_w - 4.0).max(4.0);
-    let max_top = (map_h - sprite_h - nameplate_reserve).max(4.0);
+    let max_top = (map_h - sprite_h - nameplate_reserve).max(min_top);
     (
         (anchor_x - pin_w * 0.5).clamp(4.0, max_left),
-        (anchor_y - sprite_h).clamp(4.0, max_top),
+        (anchor_y - sprite_h).clamp(min_top, max_top),
         pin_w,
         sprite_w,
         sprite_h,
@@ -5608,8 +5899,12 @@ pub fn sync_map_building_layout(
                         drawer_node.max_height = Val::Px(max_h);
                     }
                 } else {
-                    let target_top =
-                        CITY_TOP_EDGE_LANDSCAPE_PX + safe_area.top + bar_h + CITY_DRAWER_TOP_GAP_PX;
+                    let (top_edge, gap) = if layout_mode.hud_mode.is_phone_landscape() {
+                        (4.0, 4.0)
+                    } else {
+                        (CITY_TOP_EDGE_LANDSCAPE_PX, CITY_DRAWER_TOP_GAP_PX)
+                    };
+                    let target_top = top_edge + safe_area.top + bar_h + gap;
                     for mut drawer_node in &mut drawer_q {
                         drawer_node.top = Val::Px(target_top);
                     }
@@ -5669,11 +5964,7 @@ pub fn sync_map_building_layout(
         }
     }
 
-    let unit = if layout_mode.is_portrait {
-        (map_w * 0.22).min(map_h * 0.125).clamp(48.0, 88.0)
-    } else {
-        (map_w * 0.115).min(map_h * 0.205).max(44.0)
-    };
+    let unit = compute_pin_unit(map_w, map_h, layout_mode.is_portrait);
     for (stage, mut node) in &mut stages {
         let target_w = unit * stage.tier_scale;
         let target_h = target_w * 0.88;
@@ -5924,6 +6215,79 @@ mod tests {
                     "wonder overlaps {} at {map_w}x{map_h} (portrait={is_portrait}): wonder=({wl},{wt},{wpw},{wh}) vs b=({bl},{bt},{bpw},{bh})",
                     b.id
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn phone_landscape_pins_and_wonder_never_overlap_or_clip() {
+        let data = GameDataBundle::load_bundled(Language::En).expect("bundled data must parse");
+        let wonder_pin = MapBuildingPin {
+            map_x_pct: WONDER_MAP_X_PCT,
+            map_y_pct: WONDER_MAP_Y_PCT,
+            portrait_left_pct: Some(WONDER_PORTRAIT_LEFT_PCT),
+            portrait_top_pct: Some(WONDER_PORTRAIT_TOP_PCT),
+            tier_scale: 1.20,
+        };
+
+        for &(win_w, win_h) in &[
+            (640.0_f32, 360.0_f32),
+            (667.0, 375.0),
+            (844.0, 390.0),
+            (915.0, 412.0),
+        ] {
+            let (map_w, map_h) = compute_fjord_canvas_size(win_w, win_h, false);
+            let mut boxes: Vec<(&str, f32, f32, f32, f32)> = Vec::new();
+            let (wl, wt, wpw, _, wsh) = compute_pin_layout(&wonder_pin, map_w, map_h, false);
+            let wh = wsh + 42.0;
+            assert!(
+                wl >= 4.0 && wl + wpw <= map_w,
+                "wonder leaves {win_w}x{win_h} horizontally"
+            );
+            assert!(
+                wt >= 48.0 && wt + wh <= map_h,
+                "wonder leaves {win_w}x{win_h} vertically (top={wt}, bottom={})",
+                wt + wh
+            );
+            boxes.push(("wonder", wl, wt, wpw, wh));
+
+            for b in &data.buildings {
+                let pin = MapBuildingPin {
+                    map_x_pct: b.map_x_pct,
+                    map_y_pct: b.map_y_pct,
+                    portrait_left_pct: b.portrait_left_pct,
+                    portrait_top_pct: b.portrait_top_pct,
+                    tier_scale: 1.20,
+                };
+                let (bl, bt, bpw, _, bsh) = compute_pin_layout(&pin, map_w, map_h, false);
+                let bh = bsh + 42.0;
+                assert!(
+                    bl >= 4.0 && bl + bpw <= map_w,
+                    "{} leaves {win_w}x{win_h} horizontally",
+                    b.id
+                );
+                assert!(
+                    bt >= 48.0 && bt + bh <= map_h,
+                    "{} leaves {win_w}x{win_h} vertically (top={bt}, bottom={})",
+                    b.id,
+                    bt + bh
+                );
+                boxes.push((b.id.as_str(), bl, bt, bpw, bh));
+            }
+
+            for (i, a) in boxes.iter().enumerate() {
+                for b in &boxes[i + 1..] {
+                    let sep_x = a.1 + a.3 <= b.1 || b.1 + b.3 <= a.1;
+                    let sep_y = a.2 + a.4 <= b.2 || b.2 + b.4 <= a.2;
+                    assert!(
+                        sep_x || sep_y,
+                        "PhoneLandscape {win_w}x{win_h} pins {} and {} overlap: {:?} vs {:?}",
+                        a.0,
+                        b.0,
+                        a,
+                        b
+                    );
+                }
             }
         }
     }

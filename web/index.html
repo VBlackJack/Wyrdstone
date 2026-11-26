@@ -152,17 +152,57 @@
     window.addEventListener("touchstart", unlockAudio, { passive: true });
     window.addEventListener("keydown", unlockAudio, { passive: true });
 
+    const stageEl = document.getElementById("wyrdstone-stage");
     let pendingFullscreenTap = false;
-    function notifyCanvasResize() {
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new Event("resize"));
-      });
+    let pendingOrientation = "auto";
+    let resizeRaf = 0;
+    let resizeTimers = [];
+    let lastStageW = 0;
+    let lastStageH = 0;
+
+    function dispatchResize() {
+      window.dispatchEvent(new Event("resize"));
     }
-    window.addEventListener("fullscreenchange", notifyCanvasResize);
-    window.addEventListener("webkitfullscreenchange", notifyCanvasResize);
-    window.addEventListener("orientationchange", notifyCanvasResize);
+
+    function scheduleCanvasResize() {
+      if (resizeRaf) {
+        cancelAnimationFrame(resizeRaf);
+      }
+      for (const id of resizeTimers) {
+        clearTimeout(id);
+      }
+      resizeTimers = [];
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = 0;
+        dispatchResize();
+      });
+      resizeTimers.push(setTimeout(dispatchResize, 120));
+      resizeTimers.push(setTimeout(dispatchResize, 320));
+    }
+
+    if (typeof ResizeObserver === "function" && stageEl) {
+      const stageObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        const w = Math.round(entry.contentRect.width);
+        const h = Math.round(entry.contentRect.height);
+        if (w !== lastStageW || h !== lastStageH) {
+          lastStageW = w;
+          lastStageH = h;
+          scheduleCanvasResize();
+        }
+      });
+      stageObserver.observe(stageEl);
+    }
+
+    window.addEventListener("fullscreenchange", scheduleCanvasResize);
+    window.addEventListener("webkitfullscreenchange", scheduleCanvasResize);
+    window.addEventListener("orientationchange", scheduleCanvasResize);
+    if (screen && screen.orientation && typeof screen.orientation.addEventListener === "function") {
+      screen.orientation.addEventListener("change", scheduleCanvasResize);
+    }
     if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", notifyCanvasResize);
+      window.visualViewport.addEventListener("resize", scheduleCanvasResize);
     }
 
     window.wyrdstoneFullscreenSupported = function () {
@@ -174,9 +214,33 @@
       );
     };
 
+    window.wyrdstoneCanLockOrientation = function () {
+      return Boolean(
+        screen &&
+          screen.orientation &&
+          typeof screen.orientation.lock === "function" &&
+          window.matchMedia &&
+          window.matchMedia("(pointer: coarse)").matches
+      );
+    };
+
     window.wyrdstoneIsFullscreen = function () {
       return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
     };
+
+    function applyOrientationLock(mode) {
+      try {
+        if (mode === "portrait" || mode === "landscape") {
+          if (screen && screen.orientation && typeof screen.orientation.lock === "function") {
+            const p = screen.orientation.lock(mode);
+            if (p && typeof p.catch === "function") p.catch(() => {});
+          }
+        } else if (screen && screen.orientation && typeof screen.orientation.unlock === "function") {
+          screen.orientation.unlock();
+        }
+      } catch (_) {}
+      scheduleCanvasResize();
+    }
 
     function enterFullscreenNow() {
       const root = document.documentElement;
@@ -191,31 +255,59 @@
       }
     }
 
-    function armPendingFullscreenTap() {
+    function armPendingFullscreenTap(mode) {
+      pendingOrientation = mode || "auto";
       if (pendingFullscreenTap) return;
       pendingFullscreenTap = true;
       const runOnTap = () => {
         pendingFullscreenTap = false;
-        enterFullscreenNow().catch(() => {});
+        window.removeEventListener("pointerdown", runOnTap, true);
+        window.removeEventListener("touchend", runOnTap, true);
+        const chosen = pendingOrientation;
+        enterFullscreenNow()
+          .then(() => applyOrientationLock(chosen))
+          .catch(() => {});
       };
-      window.addEventListener("pointerdown", runOnTap, { capture: true, once: true });
-      window.addEventListener("touchend", runOnTap, { capture: true, once: true });
+      window.addEventListener("pointerdown", runOnTap, true);
+      window.addEventListener("touchend", runOnTap, true);
     }
+
+    window.wyrdstoneEnterFullscreen = function (orientation) {
+      const mode = orientation || "auto";
+      if (window.wyrdstoneIsFullscreen()) {
+        applyOrientationLock(mode);
+        return;
+      }
+      enterFullscreenNow()
+        .then(() => applyOrientationLock(mode))
+        .catch(() => {
+          armPendingFullscreenTap(mode);
+        });
+    };
+
+    window.wyrdstoneExitFullscreen = function () {
+      pendingFullscreenTap = false;
+      try {
+        if (screen && screen.orientation && typeof screen.orientation.unlock === "function") {
+          screen.orientation.unlock();
+        }
+      } catch (_) {}
+      const exitFn = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exitFn) {
+        try {
+          const res = exitFn.call(document);
+          if (res && typeof res.catch === "function") res.catch(() => {});
+        } catch (_) {}
+      }
+      scheduleCanvasResize();
+    };
 
     window.wyrdstoneToggleFullscreen = function () {
       if (window.wyrdstoneIsFullscreen()) {
-        const exitFn = document.exitFullscreen || document.webkitExitFullscreen;
-        if (exitFn) {
-          try {
-            const res = exitFn.call(document);
-            if (res && typeof res.catch === "function") res.catch(() => {});
-          } catch (_) {}
-        }
+        window.wyrdstoneExitFullscreen();
         return;
       }
-      enterFullscreenNow().catch(() => {
-        armPendingFullscreenTap();
-      });
+      window.wyrdstoneEnterFullscreen("auto");
     };
 
     function showError(message) {

@@ -270,6 +270,8 @@ pub enum Match3UiAction {
     CloseDrawer,
     #[cfg(not(target_os = "android"))]
     ToggleFullscreen,
+    #[cfg(target_arch = "wasm32")]
+    EnterFullscreen(crate::platform::FullscreenOrientation),
     SelectTool(ActiveTool),
     CancelTool,
     TriggerFury,
@@ -350,6 +352,7 @@ pub struct Match3InputState {
     pub board_origin: Vec2,
     pub board_center_y: f32,
     pub hud_mode: HudLayoutMode,
+    pub side_rail_width_px: f32,
     pub active_drawer: Match3Drawer,
     pub last_fullscreen: bool,
     pub measured_top_hud_px: f32,
@@ -584,6 +587,7 @@ pub fn setup_match3_scene(
         scroll_mem.left_rail_offset_y,
         scroll_mem.right_rail_offset_y,
         input_state.hud_mode,
+        input_state.side_rail_width_px,
         input_state.active_drawer,
         *safe_area,
         input_state.can_undo(&ctx),
@@ -630,6 +634,14 @@ pub fn cleanup_match3_scene(
     commands.remove_resource::<Match3InputState>();
 }
 
+pub(super) fn compute_phone_landscape_rail_width(
+    win_w: f32,
+    win_h: f32,
+    safe: SafeAreaInsets,
+) -> f32 {
+    ((win_w - win_h - safe.left - safe.right - 24.0) * 0.46).clamp(138.0, 214.0)
+}
+
 pub(super) fn compute_board_layout(
     win_w: f32,
     win_h: f32,
@@ -643,11 +655,22 @@ pub(super) fn compute_board_layout(
     const BOARD_FRAME_PAD_PX: f32 = 28.0;
     let (avail_w, avail_h, top_reserved, bottom_reserved) = match hud_mode {
         HudLayoutMode::DesktopWide => {
+            layout.side_rail_width_px = DESKTOP_SIDE_RAIL_WIDTH_PX;
             let rail_total = (DESKTOP_SIDE_RAIL_WIDTH_PX + 24.0) * 2.0 + safe.left + safe.right;
             let top_res = DESKTOP_BOARD_VERTICAL_MARGIN_PX + safe.top;
             let bot_res = DESKTOP_BOARD_VERTICAL_MARGIN_PX + safe.bottom;
             let aw = (win_w - rail_total - BOARD_FRAME_PAD_PX).max(180.0);
             let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
+            (aw, ah, top_res, bot_res)
+        }
+        HudLayoutMode::PhoneLandscape => {
+            let rail_w = compute_phone_landscape_rail_width(win_w, win_h, safe);
+            layout.side_rail_width_px = rail_w;
+            let rail_total = (rail_w + 14.0) * 2.0 + safe.left + safe.right;
+            let top_res = 8.0 + safe.top;
+            let bot_res = 8.0 + safe.bottom;
+            let aw = (win_w - rail_total - BOARD_FRAME_PAD_PX).max(160.0);
+            let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(160.0);
             (aw, ah, top_res, bot_res)
         }
         HudLayoutMode::Compact => {
@@ -1887,6 +1910,7 @@ pub fn handle_match3_hud_buttons(
             Match3UiAction::ToggleDrawer(drawer) => {
                 input_state.confirm_retreat = false;
                 input_state.confirm_loki_shuffle = false;
+                scroll_mem.modal_offset_y = 0.0;
                 input_state.active_drawer = if input_state.active_drawer == drawer {
                     Match3Drawer::None
                 } else {
@@ -1922,6 +1946,13 @@ pub fn handle_match3_hud_buttons(
                     input_state.last_fullscreen = !matches!(next_mode, WindowMode::Windowed);
                     win.mode = next_mode;
                 }
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                input_state.dirty_hud = true;
+            }
+            #[cfg(target_arch = "wasm32")]
+            Match3UiAction::EnterFullscreen(ori) => {
+                crate::platform::enter_web_fullscreen(ori);
+                input_state.last_fullscreen = crate::platform::is_web_fullscreen();
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 input_state.dirty_hud = true;
             }
@@ -1977,6 +2008,7 @@ pub fn handle_match3_hud_buttons(
                         *input_state = Match3InputState {
                             reduced_motion: ctx.reduced_motion,
                             hud_mode: input_state.hud_mode,
+                            side_rail_width_px: input_state.side_rail_width_px,
                             last_fullscreen: input_state.last_fullscreen,
                             measured_top_hud_px: input_state.measured_top_hud_px,
                             measured_bottom_hud_px: input_state.measured_bottom_hud_px,
@@ -2846,6 +2878,7 @@ pub fn sync_match3_visuals(
             scroll_mem.left_rail_offset_y,
             scroll_mem.right_rail_offset_y,
             input_state.hud_mode,
+            input_state.side_rail_width_px,
             input_state.active_drawer,
             *safe_area,
             input_state.can_undo(&ctx),
@@ -2859,8 +2892,10 @@ pub fn sync_match3_visuals(
         input_state.dirty_hud = false;
     }
 
-    if !input_state.hud_mode.is_desktop_wide()
-        && input_state.is_idle()
+    if matches!(
+        input_state.hud_mode,
+        HudLayoutMode::Compact | HudLayoutMode::Portrait
+    ) && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
         && input_state.active_drawer == Match3Drawer::None
     {
@@ -3046,6 +3081,32 @@ mod tests {
             assert!(
                 bottom_edge_px >= bot_hud - 0.5,
                 "board bottom clipped at {w}x{h}: bottom_edge={bottom_edge_px} < bot_hud={bot_hud}"
+            );
+        }
+    }
+
+    #[test]
+    fn phone_landscape_match3_board_uses_side_rails_and_fits_comfortably() {
+        let safe = SafeAreaInsets::default();
+        for &(w, h) in &[(667.0_f32, 375.0_f32), (844.0, 390.0), (915.0, 412.0)] {
+            let mut state = Match3InputState::default();
+            compute_board_layout(w, h, 8, 8, safe, &mut state);
+            assert_eq!(state.hud_mode, HudLayoutMode::PhoneLandscape);
+            assert!(
+                state.cell_step >= MIN_TILE_SIZE_PX,
+                "cell_step ({}) too small on {w}x{h}",
+                state.cell_step
+            );
+            let board_w = state.cell_step * 8.0 + 28.0;
+            let board_h = state.cell_step * 8.0 + 28.0;
+            let rail_clearance = w - (state.side_rail_width_px + 14.0) * 2.0;
+            assert!(
+                board_w <= rail_clearance + 0.5,
+                "board_w ({board_w}) overlaps side rails (clearance={rail_clearance}) at {w}x{h}"
+            );
+            assert!(
+                board_h <= h - 16.0 + 0.5,
+                "board_h ({board_h}) clips vertically at {w}x{h}"
             );
         }
     }

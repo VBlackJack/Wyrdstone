@@ -2533,7 +2533,7 @@ type PulseBorderQuery<'w, 's> = Query<
 pub fn animate_particles(
     mut commands: Commands,
     time: Res<Time>,
-    vfx: Res<VfxTextures>,
+    (vfx, safe_area): (Res<VfxTextures>, Res<crate::platform::SafeAreaInsets>),
     mut input_state: ResMut<Match3InputState>,
     mut resize_events: EventReader<WindowResized>,
     mut backdrops: BackdropQuery,
@@ -2578,7 +2578,20 @@ pub fn animate_particles(
         let now_mode = HudLayoutMode::from_viewport(ev.width, ev.height);
         if now_mode != input_state.hud_mode {
             input_state.hud_mode = now_mode;
+            if !now_mode.is_mobile() {
+                input_state.active_drawer = super::Match3Drawer::None;
+            }
             input_state.dirty_hud = true;
+        }
+        if now_mode.is_phone_landscape() {
+            let new_rail_w =
+                super::compute_phone_landscape_rail_width(ev.width, ev.height, *safe_area);
+            if (new_rail_w - input_state.side_rail_width_px).abs() >= 1.0 {
+                input_state.side_rail_width_px = new_rail_w;
+                input_state.dirty_hud = true;
+            }
+        } else if now_mode.is_desktop_wide() {
+            input_state.side_rail_width_px = DESKTOP_SIDE_RAIL_WIDTH_PX;
         }
         input_state.measured_top_hud_px = 0.0;
         input_state.measured_bottom_hud_px = 0.0;

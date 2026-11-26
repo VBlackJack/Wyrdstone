@@ -18,14 +18,16 @@
 
 use bevy::prelude::*;
 
-/// Responsive layout mode shared between PC desktop and Android mobile viewports.
+/// Responsive layout mode shared between PC desktop and mobile viewports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HudLayoutMode {
-    /// Narrow or vertical screen (e.g. Android portrait phone).
+    /// Narrow or vertical screen (e.g. smartphone portrait).
     Portrait,
+    /// Wide, short landscape phone screen (e.g. `667x375` or `844x390`).
+    PhoneLandscape,
     /// Medium landscape screen (tablet or small desktop window).
     Compact,
-    /// Wide desktop screen (`>= 1060px` wide) using side-rail Match-3 panels.
+    /// Wide desktop screen (`>= 1060px` wide) using full side-rail Match-3 panels.
     #[default]
     DesktopWide,
 }
@@ -33,16 +35,41 @@ pub enum HudLayoutMode {
 impl HudLayoutMode {
     pub const DESKTOP_WIDE_MIN_WIDTH: f32 = 1060.0;
     pub const PORTRAIT_MAX_WIDTH: f32 = 760.0;
+    pub const PHONE_LANDSCAPE_MAX_HEIGHT: f32 = 560.0;
+    pub const PHONE_LANDSCAPE_MIN_ASPECT: f32 = 1.25;
 
     /// Classifies a logical viewport size into the best-fit ergonomics mode.
     pub fn from_viewport(win_w: f32, win_h: f32) -> Self {
-        if win_w < Self::PORTRAIT_MAX_WIDTH || win_h > win_w {
+        if win_h > win_w {
+            Self::Portrait
+        } else if win_h < Self::PHONE_LANDSCAPE_MAX_HEIGHT
+            && win_w < Self::DESKTOP_WIDE_MIN_WIDTH
+            && win_w >= win_h * Self::PHONE_LANDSCAPE_MIN_ASPECT
+        {
+            Self::PhoneLandscape
+        } else if win_w < Self::PORTRAIT_MAX_WIDTH {
             Self::Portrait
         } else if win_w >= Self::DESKTOP_WIDE_MIN_WIDTH {
             Self::DesktopWide
         } else {
             Self::Compact
         }
+    }
+
+    pub fn is_portrait(self) -> bool {
+        self == Self::Portrait
+    }
+
+    pub fn is_phone_landscape(self) -> bool {
+        self == Self::PhoneLandscape
+    }
+
+    pub fn is_mobile(self) -> bool {
+        matches!(self, Self::Portrait | Self::PhoneLandscape)
+    }
+
+    pub fn uses_side_rails(self) -> bool {
+        matches!(self, Self::DesktopWide | Self::PhoneLandscape)
     }
 
     pub fn is_compact(self) -> bool {
@@ -163,25 +190,80 @@ pub fn is_web_fullscreen() -> bool {
     false
 }
 
-/// Toggles browser fullscreen mode via the `web/index.html` Fullscreen API bridge on WASM32.
+/// Requested screen orientation lock when entering browser fullscreen on mobile.
 #[cfg(target_arch = "wasm32")]
-pub fn toggle_web_fullscreen() {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullscreenOrientation {
+    Auto,
+    Portrait,
+    Landscape,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl FullscreenOrientation {
+    pub fn as_js_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Portrait => "portrait",
+            Self::Landscape => "landscape",
+        }
+    }
+}
+
+/// True when browser screen orientation locking is available on a touch/coarse-pointer device.
+#[cfg(target_arch = "wasm32")]
+pub fn is_orientation_lock_supported() -> bool {
     if let Some(win) = web_sys::window() {
         if let Ok(func) =
-            js_sys::Reflect::get(&win, &JsValue::from_str("wyrdstoneToggleFullscreen"))
+            js_sys::Reflect::get(&win, &JsValue::from_str("wyrdstoneCanLockOrientation"))
+        {
+            if let Ok(callable) = func.dyn_into::<js_sys::Function>() {
+                if let Ok(res) = callable.call0(&win) {
+                    return res.as_bool().unwrap_or(false);
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Enters browser fullscreen and requests the given orientation lock on WASM32.
+#[cfg(target_arch = "wasm32")]
+pub fn enter_web_fullscreen(orientation: FullscreenOrientation) {
+    if let Some(win) = web_sys::window() {
+        if let Ok(func) = js_sys::Reflect::get(&win, &JsValue::from_str("wyrdstoneEnterFullscreen"))
+        {
+            if let Ok(callable) = func.dyn_into::<js_sys::Function>() {
+                let _ = callable.call1(&win, &JsValue::from_str(orientation.as_js_str()));
+                return;
+            }
+        }
+    }
+    toggle_web_fullscreen();
+}
+
+/// Exits browser fullscreen and unlocks screen orientation on WASM32.
+#[cfg(target_arch = "wasm32")]
+pub fn exit_web_fullscreen() {
+    if let Some(win) = web_sys::window() {
+        if let Ok(func) = js_sys::Reflect::get(&win, &JsValue::from_str("wyrdstoneExitFullscreen"))
         {
             if let Ok(callable) = func.dyn_into::<js_sys::Function>() {
                 let _ = callable.call0(&win);
                 return;
             }
         }
-        if let Some(doc) = win.document() {
-            if doc.fullscreen_element().is_some() {
-                doc.exit_fullscreen();
-            } else if let Some(el) = doc.document_element() {
-                let _ = el.request_fullscreen();
-            }
-        }
+    }
+    toggle_web_fullscreen();
+}
+
+/// Toggles browser fullscreen mode via the `web/index.html` Fullscreen API bridge on WASM32.
+#[cfg(target_arch = "wasm32")]
+pub fn toggle_web_fullscreen() {
+    if is_web_fullscreen() {
+        exit_web_fullscreen();
+    } else {
+        enter_web_fullscreen(FullscreenOrientation::Auto);
     }
 }
 
@@ -203,12 +285,31 @@ mod tests {
             HudLayoutMode::Portrait
         );
         assert_eq!(
+            HudLayoutMode::from_viewport(500.0, 500.0),
+            HudLayoutMode::Portrait
+        );
+        for &(w, h) in &[(667.0, 375.0), (844.0, 390.0), (915.0, 412.0)] {
+            let m = HudLayoutMode::from_viewport(w, h);
+            assert_eq!(m, HudLayoutMode::PhoneLandscape);
+            assert!(m.is_phone_landscape());
+            assert!(m.is_mobile());
+            assert!(m.uses_side_rails());
+            assert!(m.is_compact());
+            assert!(!m.is_desktop_wide());
+        }
+        assert_eq!(
             HudLayoutMode::from_viewport(800.0, 600.0),
             HudLayoutMode::Compact
         );
         assert!(HudLayoutMode::Compact.is_compact());
+        assert!(!HudLayoutMode::Compact.is_mobile());
         assert!(!HudLayoutMode::DesktopWide.is_compact());
         assert!(HudLayoutMode::Portrait.is_compact());
+        assert!(HudLayoutMode::Portrait.is_mobile());
+        assert_eq!(
+            HudLayoutMode::from_viewport(1280.0, 540.0),
+            HudLayoutMode::DesktopWide
+        );
         assert_eq!(
             HudLayoutMode::from_viewport(1280.0, 720.0),
             HudLayoutMode::DesktopWide

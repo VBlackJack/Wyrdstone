@@ -18,7 +18,7 @@
 
 use crate::audio::{play_sfx, SfxKind, SoundBank};
 use crate::fjord_art::FjordTextures;
-use crate::platform::SafeAreaInsets;
+use crate::platform::{HudLayoutMode, SafeAreaInsets};
 use crate::scroll::{
     spawn_scrollbar_track, PressArm, ScrollMoreHint, ScrollPanelKind, ScrollablePanel,
     UiScrollMemory,
@@ -31,6 +31,7 @@ use crate::ui_style::{
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
+use bevy::window::{PrimaryWindow, WindowResized};
 use wyrdstone_core::{
     last_stand_cost, weekly_medal_name_key, LevelOutcome, Objective, LAST_STAND_EXTRA_MOVES,
     LAST_STAND_EXTRA_SECS, MAX_DAILY_STREAK_CYCLE, SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
@@ -167,6 +168,7 @@ fn find_next_level_id(ctx: &GameContext) -> Option<String> {
 }
 
 /// Spawns the Victory / Defeat summary card.
+#[allow(clippy::too_many_arguments)]
 pub fn setup_result_ui(
     mut commands: Commands,
     ctx: Res<GameContext>,
@@ -175,6 +177,7 @@ pub fn setup_result_ui(
     sound_bank: Res<SoundBank>,
     safe_area: Res<SafeAreaInsets>,
     mut scroll_mem: ResMut<UiScrollMemory>,
+    windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     scroll_mem.modal_offset_y = 0.0;
     let is_victory = ctx.last_outcome == Some(LevelOutcome::Victory);
@@ -182,17 +185,37 @@ pub fn setup_result_ui(
     if !is_victory {
         play_sfx(&mut commands, &sound_bank, SfxKind::Defeat);
     }
-    spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx, *safe_area);
+    let hud_mode = windows
+        .get_single()
+        .map(|w| HudLayoutMode::from_viewport(w.width(), w.height()))
+        .unwrap_or_default();
+    spawn_result_ui(
+        &mut commands,
+        &ctx,
+        &fjord_art,
+        &vfx,
+        *safe_area,
+        hud_mode,
+        0.0,
+        false,
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_result_ui(
     commands: &mut Commands,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
     safe: SafeAreaInsets,
+    hud_mode: HudLayoutMode,
+    scroll_offset_y: f32,
+    skip_intro_anim: bool,
 ) {
     let i18n = &ctx.data.i18n;
+    let is_mobile = hud_mode.is_mobile();
+    let is_phone_landscape = hud_mode.is_phone_landscape();
+    let no_anim = ctx.reduced_motion || skip_intro_anim;
     let is_victory = ctx.last_outcome == Some(LevelOutcome::Victory);
 
     let is_daily = ctx
@@ -239,11 +262,20 @@ fn spawn_result_ui(
                     height: Val::Percent(100.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    padding: UiRect {
-                        left: Val::Px(16.0 + safe.left),
-                        right: Val::Px(16.0 + safe.right),
-                        top: Val::Px(16.0 + safe.top),
-                        bottom: Val::Px(16.0 + safe.bottom),
+                    padding: if is_mobile {
+                        UiRect {
+                            left: Val::Px(8.0 + safe.left),
+                            right: Val::Px(8.0 + safe.right),
+                            top: Val::Px(8.0 + safe.top),
+                            bottom: Val::Px(8.0 + safe.bottom),
+                        }
+                    } else {
+                        UiRect {
+                            left: Val::Px(16.0 + safe.left),
+                            right: Val::Px(16.0 + safe.right),
+                            top: Val::Px(16.0 + safe.top),
+                            bottom: Val::Px(16.0 + safe.bottom),
+                        }
                     },
                     ..default()
                 },
@@ -259,10 +291,18 @@ fn spawn_result_ui(
                     sliced_panel_image(vfx),
                     Node {
                         width: Val::Px(500.0),
-                        max_width: Val::Percent(94.0),
-                        max_height: Val::Percent(92.0),
+                        max_width: if is_mobile {
+                            Val::Percent(96.0)
+                        } else {
+                            Val::Percent(94.0)
+                        },
+                        max_height: if is_mobile {
+                            Val::Percent(95.0)
+                        } else {
+                            Val::Percent(92.0)
+                        },
                         flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Px(24.0)),
+                        padding: UiRect::all(Val::Px(if is_mobile { 14.0 } else { 24.0 })),
                         overflow: Overflow::clip(),
                         ..default()
                     },
@@ -398,7 +438,7 @@ fn spawn_result_ui(
                                     },
                                     RelativeCursorPosition::default(),
                                     ScrollPosition {
-                                        offset_y: 0.0,
+                                        offset_y: scroll_offset_y,
                                         ..default()
                                     },
                                     Node {
@@ -408,7 +448,7 @@ fn spawn_result_ui(
                                         flex_shrink: 1.0,
                                         min_height: Val::Px(0.0),
                                         overflow: Overflow::scroll_y(),
-                                        row_gap: Val::Px(12.0),
+                                        row_gap: Val::Px(if is_mobile { 8.0 } else { 12.0 }),
                                         padding: UiRect::right(Val::Px(4.0)),
                                         ..default()
                                     },
@@ -416,8 +456,16 @@ fn spawn_result_ui(
                                 .with_children(|card| {
                                     card.spawn((
                                         Text::new(title),
-                                        display_font(fjord_art, FONT_TITLE_MD + 10.0),
+                                        display_font(
+                                            fjord_art,
+                                            if is_mobile {
+                                                FONT_TITLE_MD + 2.0
+                                            } else {
+                                                FONT_TITLE_MD + 10.0
+                                            },
+                                        ),
                                         TextColor(accent),
+                                        TextLayout::new_with_justify(JustifyText::Center),
                                     ));
 
                                     card.spawn((
@@ -427,9 +475,10 @@ fn spawn_result_ui(
                                             ..default()
                                         },
                                         TextColor(COLOR_TEXT_PRIMARY),
+                                        TextLayout::new_with_justify(JustifyText::Center),
                                     ));
 
-                                    let initial_score = if is_victory && !ctx.reduced_motion {
+                                    let initial_score = if is_victory && !no_anim {
                                         0
                                     } else {
                                         ctx.last_score
@@ -445,7 +494,7 @@ fn spawn_result_ui(
                                         },
                                         TextColor(COLOR_TEXT_PRIMARY),
                                     ));
-                                    if is_victory && !ctx.reduced_motion && ctx.last_score > 0 {
+                                    if is_victory && !no_anim && ctx.last_score > 0 {
                                         score_cmd.insert(RollUpNumber {
                                             target: ctx.last_score,
                                             template_key: SCORE_TEMPLATE_KEY,
@@ -458,8 +507,19 @@ fn spawn_result_ui(
 
                                     if is_victory {
                                         // Animated 3-star mastery showcase.
+                                        let star_px = if is_phone_landscape {
+                                            36.0
+                                        } else if is_mobile {
+                                            42.0
+                                        } else {
+                                            46.0
+                                        };
                                         card.spawn(Node {
-                                            column_gap: Val::Px(14.0),
+                                            column_gap: Val::Px(if is_mobile {
+                                                10.0
+                                            } else {
+                                                14.0
+                                            }),
                                             align_items: AlignItems::Center,
                                             margin: UiRect::vertical(Val::Px(4.0)),
                                             ..default()
@@ -479,18 +539,18 @@ fn spawn_result_ui(
                                                             elapsed: 0.0,
                                                             earned,
                                                             star_idx: idx,
-                                                            sfx_played: ctx.reduced_motion,
+                                                            sfx_played: no_anim,
                                                         },
                                                         ImageNode::new(vfx.icon_star.clone())
                                                             .with_color(tint),
                                                         Node {
-                                                            width: Val::Px(46.0),
-                                                            height: Val::Px(46.0),
+                                                            width: Val::Px(star_px),
+                                                            height: Val::Px(star_px),
                                                             ..default()
                                                         },
                                                         Transform::from_scale(if !earned {
                                                             Vec3::splat(0.88)
-                                                        } else if ctx.reduced_motion {
+                                                        } else if no_anim {
                                                             Vec3::ONE
                                                         } else {
                                                             Vec3::splat(0.01)
@@ -735,12 +795,8 @@ fn spawn_result_ui(
                                                                     ..default()
                                                                 },
                                                             ));
-                                                            let initial_amt = if ctx.reduced_motion
-                                                            {
-                                                                amount
-                                                            } else {
-                                                                0
-                                                            };
+                                                            let initial_amt =
+                                                                if no_anim { amount } else { 0 };
                                                             let mut amt_cmd = pill.spawn((
                                                                 Text::new(i18n.t_fmt(
                                                                     REWARD_TEMPLATE_KEY,
@@ -755,7 +811,7 @@ fn spawn_result_ui(
                                                                 },
                                                                 TextColor(col),
                                                             ));
-                                                            if !ctx.reduced_motion {
+                                                            if !no_anim {
                                                                 amt_cmd.insert(RollUpNumber {
                                                                     target: amount,
                                                                     template_key:
@@ -1991,7 +2047,7 @@ fn execute_result_action(
 }
 
 /// Handles Return to Fjord, Next Board, Play Again buttons, and keyboard navigation (`Tab`/`Arrows`/`Enter`/`Escape`).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn handle_result_buttons(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -2005,7 +2061,13 @@ pub fn handle_result_buttons(
         Res<SoundBank>,
         Res<SafeAreaInsets>,
     ),
-    (mut press_arm, mut focus_idx): (Local<PressArm>, Local<Option<usize>>),
+    (mut press_arm, mut focus_idx, mut prev_hud_mode, mut resize_events): (
+        Local<PressArm>,
+        Local<Option<usize>>,
+        Local<Option<HudLayoutMode>>,
+        EventReader<WindowResized>,
+    ),
+    windows: Query<&Window, With<PrimaryWindow>>,
     roots: Query<Entity, With<ResultRoot>>,
     buttons: Query<(Entity, &Interaction, &ResultAction), Changed<Interaction>>,
     mut focus_buttons: Query<(
@@ -2015,6 +2077,45 @@ pub fn handle_result_buttons(
         Option<&BaseBorderColor>,
     )>,
 ) {
+    let mut hud_mode_now = prev_hud_mode.unwrap_or_else(|| {
+        windows
+            .get_single()
+            .map(|w| HudLayoutMode::from_viewport(w.width(), w.height()))
+            .unwrap_or_default()
+    });
+    for ev in resize_events.read() {
+        if ev.width.is_finite() && ev.height.is_finite() && ev.width >= 100.0 && ev.height >= 100.0
+        {
+            hud_mode_now = HudLayoutMode::from_viewport(ev.width, ev.height);
+        }
+    }
+    let mode_changed = match *prev_hud_mode {
+        None => {
+            *prev_hud_mode = Some(hud_mode_now);
+            false
+        }
+        Some(prev) if prev != hud_mode_now => {
+            *prev_hud_mode = Some(hud_mode_now);
+            true
+        }
+        _ => false,
+    };
+    if mode_changed {
+        for root in &roots {
+            commands.entity(root).try_despawn_recursive();
+        }
+        spawn_result_ui(
+            &mut commands,
+            &ctx,
+            &fjord_art,
+            &vfx,
+            *safe_area,
+            hud_mode_now,
+            scroll_mem.modal_offset_y,
+            true,
+        );
+        return;
+    }
     if keys.just_pressed(KeyCode::Escape) {
         *focus_idx = None;
         next_state.set(AppState::FjordCity);
@@ -2079,7 +2180,16 @@ pub fn handle_result_buttons(
                 for root in &roots {
                     commands.entity(root).try_despawn_recursive();
                 }
-                spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx, *safe_area);
+                spawn_result_ui(
+                    &mut commands,
+                    &ctx,
+                    &fjord_art,
+                    &vfx,
+                    *safe_area,
+                    hud_mode_now,
+                    scroll_mem.modal_offset_y,
+                    true,
+                );
             }
             return;
         }
@@ -2145,7 +2255,16 @@ pub fn handle_result_buttons(
             for root in &roots {
                 commands.entity(root).try_despawn_recursive();
             }
-            spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx, *safe_area);
+            spawn_result_ui(
+                &mut commands,
+                &ctx,
+                &fjord_art,
+                &vfx,
+                *safe_area,
+                hud_mode_now,
+                scroll_mem.modal_offset_y,
+                true,
+            );
         }
         return;
     }

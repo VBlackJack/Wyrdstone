@@ -12,8 +12,8 @@
         legendary_level_id: Some("great_hall_3"),
         map_x_pct: 49.0,
         map_y_pct: 54.0,
-        portrait_left_pct: Some(34.0),
-        portrait_top_pct: Some(36.0),
+        portrait_left_pct: Some(34.5),
+        portrait_top_pct: Some(24.0),
         upgrade_costs: [
             ResourceBundle(wood: 60, stone: 40, gold: 40, mead: 0),
             ResourceBundle(wood: 140, stone: 100, gold: 100, mead: 15),
@@ -36,7 +36,7 @@
         map_x_pct: 19.0,
         map_y_pct: 40.0,
         portrait_left_pct: Some(1.0),
-        portrait_top_pct: Some(22.0),
+        portrait_top_pct: Some(18.0),
         upgrade_costs: [
             ResourceBundle(wood: 50, stone: 80, gold: 60, mead: 0),
             ResourceBundle(wood: 120, stone: 180, gold: 130, mead: 10),
@@ -58,8 +58,8 @@
         legendary_level_id: Some("dock_3"),
         map_x_pct: 66.0,
         map_y_pct: 64.0,
-        portrait_left_pct: Some(67.0),
-        portrait_top_pct: Some(34.0),
+        portrait_left_pct: Some(68.0),
+        portrait_top_pct: Some(39.0),
         upgrade_costs: [
             ResourceBundle(wood: 100, stone: 50, gold: 80, mead: 10),
             ResourceBundle(wood: 200, stone: 110, gold: 170, mead: 25),
@@ -82,7 +82,7 @@
         map_x_pct: 22.0,
         map_y_pct: 80.0,
         portrait_left_pct: Some(1.0),
-        portrait_top_pct: Some(50.0),
+        portrait_top_pct: Some(48.0),
         upgrade_costs: [
             ResourceBundle(wood: 70, stone: 110, gold: 120, mead: 15),
             ResourceBundle(wood: 160, stone: 240, gold: 250, mead: 35),
@@ -104,8 +104,8 @@
         legendary_level_id: Some("meadery_3"),
         map_x_pct: 84.0,
         map_y_pct: 82.0,
-        portrait_left_pct: Some(67.0),
-        portrait_top_pct: Some(60.0),
+        portrait_left_pct: Some(68.0),
+        portrait_top_pct: Some(63.0),
         upgrade_costs: [
             ResourceBundle(wood: 75, stone: 45, gold: 50, mead: 0),
             ResourceBundle(wood: 160, stone: 100, gold: 120, mead: 15),
@@ -127,8 +127,8 @@
         legendary_level_id: Some("watchtower_3"),
         map_x_pct: 82.0,
         map_y_pct: 32.0,
-        portrait_left_pct: Some(67.0),
-        portrait_top_pct: Some(8.0),
+        portrait_left_pct: Some(68.0),
+        portrait_top_pct: Some(15.0),
         upgrade_costs: [
             ResourceBundle(wood: 110, stone: 130, gold: 140, mead: 20),
             ResourceBundle(wood: 220, stone: 260, gold: 280, mead: 40),

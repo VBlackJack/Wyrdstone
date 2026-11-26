@@ -408,14 +408,20 @@ fn spawn_moves_score_overdrive(
     session: &LevelSession,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
-    vertical: bool,
+    hud_mode: HudLayoutMode,
 ) {
     let i18n = &ctx.data.i18n;
+    let vertical = hud_mode.uses_side_rails();
+    let is_mobile = hud_mode.is_mobile();
     let low_moves = !session.is_blitz && session.moves_left <= LOW_MOVES_THRESHOLD;
     let hot_blitz = session.is_blitz && session.blitz_multiplier >= 4;
     let mut moves_box = stats.spawn((
         Node {
-            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+            padding: if is_mobile {
+                UiRect::axes(Val::Px(6.0), Val::Px(3.0))
+            } else {
+                UiRect::axes(Val::Px(10.0), Val::Px(4.0))
+            },
             justify_content: if vertical {
                 JustifyContent::SpaceBetween
             } else {
@@ -452,7 +458,16 @@ fn spawn_moves_score_overdrive(
         mbox.spawn((
             Match3MovesText,
             Text::new(moves_label(i18n, session)),
-            display_font(fjord_art, FONT_HEADING),
+            display_font(
+                fjord_art,
+                if hud_mode.is_phone_landscape() {
+                    FONT_BODY + 1.0
+                } else if is_mobile {
+                    FONT_HEADING - 2.0
+                } else {
+                    FONT_HEADING
+                },
+            ),
             TextColor(if low_moves {
                 COLOR_ACCENT_CRIMSON_TEXT
             } else {
@@ -594,25 +609,26 @@ fn spawn_objectives_or_boss(
 ) {
     let i18n = &ctx.data.i18n;
     let is_compact = hud_mode.is_compact();
-    let is_portrait = hud_mode == HudLayoutMode::Portrait;
+    let is_mobile = hud_mode.is_mobile();
     let is_wide = hud_mode.is_desktop_wide();
+    let uses_rails = hud_mode.uses_side_rails();
     if let Some(boss) = &session.boss {
         let hp_pct = (boss.hp as f32 / boss.def.max_hp.max(1) as f32 * 100.0).clamp(0.0, 100.0);
         objs.spawn(Node {
-            flex_direction: if is_wide {
+            flex_direction: if uses_rails {
                 FlexDirection::Column
             } else {
                 FlexDirection::Row
             },
             flex_wrap: FlexWrap::Wrap,
-            align_items: if is_wide {
+            align_items: if uses_rails {
                 AlignItems::Stretch
             } else {
                 AlignItems::Center
             },
             column_gap: Val::Px(8.0),
             row_gap: Val::Px(6.0),
-            width: if is_wide {
+            width: if uses_rails {
                 Val::Percent(100.0)
             } else {
                 Val::Auto
@@ -623,7 +639,7 @@ fn spawn_objectives_or_boss(
             brow.spawn(Node {
                 column_gap: Val::Px(8.0),
                 align_items: AlignItems::Center,
-                justify_content: if is_wide {
+                justify_content: if uses_rails {
                     JustifyContent::Center
                 } else {
                     JustifyContent::FlexStart
@@ -646,14 +662,14 @@ fn spawn_objectives_or_boss(
                         Node {
                             width: Val::Px(if is_wide {
                                 54.0
-                            } else if is_portrait {
+                            } else if is_mobile {
                                 36.0
                             } else {
                                 46.0
                             }),
                             height: Val::Px(if is_wide {
                                 54.0
-                            } else if is_portrait {
+                            } else if is_mobile {
                                 36.0
                             } else {
                                 46.0
@@ -723,7 +739,7 @@ fn spawn_objectives_or_boss(
             brow.spawn(Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(4.0),
-                align_items: if is_wide {
+                align_items: if uses_rails {
                     AlignItems::Stretch
                 } else {
                     AlignItems::Center
@@ -772,9 +788,9 @@ fn spawn_objectives_or_boss(
                 ));
                 bcol.spawn((
                     Node {
-                        width: if is_wide {
+                        width: if uses_rails {
                             Val::Percent(100.0)
-                        } else if is_portrait {
+                        } else if is_mobile {
                             Val::Px(132.0)
                         } else if is_compact {
                             Val::Px(150.0)
@@ -854,17 +870,17 @@ fn spawn_objectives_or_boss(
             let complete = prog.is_complete();
             objs.spawn((
                 Node {
-                    width: if is_wide {
+                    width: if uses_rails {
                         Val::Percent(100.0)
                     } else {
                         Val::Auto
                     },
-                    padding: if is_portrait {
+                    padding: if is_mobile {
                         UiRect::axes(Val::Px(7.0), Val::Px(3.0))
                     } else {
                         UiRect::axes(Val::Px(9.0), Val::Px(6.0))
                     },
-                    column_gap: Val::Px(if is_portrait { 5.0 } else { 8.0 }),
+                    column_gap: Val::Px(if is_mobile { 5.0 } else { 8.0 }),
                     align_items: AlignItems::Center,
                     border: UiRect::all(Val::Px(1.5)),
                     ..default()
@@ -893,7 +909,7 @@ fn spawn_objectives_or_boss(
                     } else {
                         None
                     };
-                    let icon_px = if is_portrait { 18.0 } else { 22.0 };
+                    let icon_px = if is_mobile { 18.0 } else { 22.0 };
                     pill.spawn(Node {
                         width: Val::Px(icon_px),
                         height: Val::Px(icon_px),
@@ -1222,6 +1238,7 @@ fn spawn_fury_card(
 ) {
     let is_compact = hud_mode.is_compact();
     let is_wide = hud_mode.is_desktop_wide();
+    let uses_rails = hud_mode.uses_side_rails();
     let fury_ready = session.can_trigger_fury();
     let fury_pct = fury_charge_pct(session);
     let fury_lbl = fury_label(i18n, session, is_compact);
@@ -1229,7 +1246,7 @@ fn spawn_fury_card(
         Button,
         Match3UiAction::TriggerFury,
         Node {
-            width: if is_wide {
+            width: if uses_rails {
                 Val::Percent(100.0)
             } else {
                 Val::Auto
@@ -1284,7 +1301,13 @@ fn spawn_fury_card(
             })
             .with_children(|left| {
                 if let Some(p_img) = fjord_art.patron_portrait(session.patron) {
-                    let icon_px = if is_compact { 26.0 } else { 32.0 };
+                    let icon_px = if hud_mode.is_phone_landscape() {
+                        22.0
+                    } else if is_compact {
+                        26.0
+                    } else {
+                        32.0
+                    };
                     left.spawn((
                         ImageNode::new(p_img),
                         Node {
@@ -1671,6 +1694,7 @@ pub(super) fn spawn_match3_hud(
     left_rail_scroll_y: f32,
     right_rail_scroll_y: f32,
     hud_mode: HudLayoutMode,
+    side_rail_width_px: f32,
     active_drawer: super::Match3Drawer,
     safe: SafeAreaInsets,
     can_undo: bool,
@@ -1687,7 +1711,10 @@ pub(super) fn spawn_match3_hud(
     };
     let is_compact = hud_mode.is_compact();
     let is_portrait = hud_mode == HudLayoutMode::Portrait;
+    let is_phone_landscape = hud_mode.is_phone_landscape();
+    let is_mobile = hud_mode.is_mobile();
     let is_wide = hud_mode.is_desktop_wide();
+    let uses_rails = hud_mode.uses_side_rails();
 
     commands
         .spawn((
@@ -1696,18 +1723,18 @@ pub(super) fn spawn_match3_hud(
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                flex_direction: if is_wide {
+                flex_direction: if uses_rails {
                     FlexDirection::Row
                 } else {
                     FlexDirection::Column
                 },
                 justify_content: JustifyContent::SpaceBetween,
-                align_items: if is_wide {
+                align_items: if uses_rails {
                     AlignItems::Stretch
                 } else {
                     AlignItems::Center
                 },
-                padding: if is_portrait {
+                padding: if is_mobile {
                     UiRect {
                         left: Val::Px(6.0 + safe.left),
                         right: Val::Px(6.0 + safe.right),
@@ -1788,7 +1815,7 @@ pub(super) fn spawn_match3_hud(
                                     })
                                     .with_children(|stats| {
                                         spawn_moves_score_overdrive(
-                                            stats, ctx, session, fjord_art, vfx, true,
+                                            stats, ctx, session, fjord_art, vfx, hud_mode,
                                         );
                                     });
                                 spawn_hud_divider(top_sec);
@@ -1976,6 +2003,305 @@ pub(super) fn spawn_match3_hud(
                             ));
                         });
                 });
+            } else if is_phone_landscape {
+                // Phone Landscape Left Rail: Scrollable moves, score, objectives / boss.
+                root.spawn((
+                    Match3HudBar,
+                    Interaction::None,
+                    FocusPolicy::Block,
+                    sliced_panel_image(vfx),
+                    Node {
+                        width: Val::Px(side_rail_width_px),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Stretch,
+                        padding: UiRect::all(Val::Px(8.0)),
+                        row_gap: Val::Px(6.0),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    panel_shadow(),
+                ))
+                .with_children(|left| {
+                    left.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        flex_grow: 1.0,
+                        flex_shrink: 1.0,
+                        min_height: Val::Px(0.0),
+                        column_gap: Val::Px(3.0),
+                        ..default()
+                    })
+                    .with_children(|scroll_row| {
+                        scroll_row
+                            .spawn((
+                                ScrollablePanel {
+                                    kind: ScrollPanelKind::LeftRail,
+                                },
+                                ScrollPosition {
+                                    offset_x: 0.0,
+                                    offset_y: left_rail_scroll_y,
+                                },
+                                RelativeCursorPosition::default(),
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    flex_grow: 1.0,
+                                    flex_shrink: 1.0,
+                                    min_height: Val::Px(0.0),
+                                    overflow: Overflow::scroll_y(),
+                                    row_gap: Val::Px(6.0),
+                                    align_items: AlignItems::Stretch,
+                                    padding: UiRect::right(Val::Px(2.0)),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|top_sec| {
+                                top_sec
+                                    .spawn(Node {
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(4.0),
+                                        align_items: AlignItems::Stretch,
+                                        ..default()
+                                    })
+                                    .with_children(|stats| {
+                                        spawn_moves_score_overdrive(
+                                            stats, ctx, session, fjord_art, vfx, hud_mode,
+                                        );
+                                    });
+                                spawn_hud_divider(top_sec);
+                                top_sec
+                                    .spawn(Node {
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(4.0),
+                                        align_items: AlignItems::Stretch,
+                                        ..default()
+                                    })
+                                    .with_children(|objs| {
+                                        spawn_objectives_or_boss(
+                                            objs, ctx, session, fjord_art, textures, vfx, hud_mode,
+                                        );
+                                    });
+                            });
+                        spawn_scrollbar_track(scroll_row, ScrollPanelKind::LeftRail);
+                    });
+
+                    left.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        flex_shrink: 0.0,
+                        row_gap: Val::Px(3.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|status_col| {
+                        spawn_status_banner(status_col, i18n, session);
+                    });
+                });
+
+                // Phone Landscape Right Rail: Fury card, Tools drawer button, Menu drawer button.
+                let total_tools: u32 = [
+                    ActiveTool::Mjolnir,
+                    ActiveTool::SurtrEmber,
+                    ActiveTool::ThorBolt,
+                    ActiveTool::BifrostPrism,
+                    ActiveTool::DrakkarCharge,
+                    ActiveTool::LokiShuffle,
+                ]
+                .iter()
+                .map(|tool| ctx.city.tools.count(*tool))
+                .sum();
+                let tool_armed = ctx.armed_tool.is_some() || confirm_loki_shuffle;
+                let tools_open = active_drawer == super::Match3Drawer::Tools;
+                let actions_open = active_drawer == super::Match3Drawer::Actions;
+
+                root.spawn((
+                    Match3HudBar,
+                    Interaction::None,
+                    FocusPolicy::Block,
+                    sliced_panel_image(vfx),
+                    Node {
+                        width: Val::Px(side_rail_width_px),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Stretch,
+                        padding: UiRect::all(Val::Px(8.0)),
+                        row_gap: Val::Px(6.0),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    panel_shadow(),
+                ))
+                .with_children(|right| {
+                    right
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            flex_grow: 1.0,
+                            flex_shrink: 1.0,
+                            min_height: Val::Px(0.0),
+                            row_gap: Val::Px(6.0),
+                            align_items: AlignItems::Stretch,
+                            ..default()
+                        })
+                        .with_children(|col| {
+                            if session.is_trial {
+                                col.spawn((
+                                    Button,
+                                    Match3UiAction::RestartBoard,
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        ..default()
+                                    },
+                                    BackgroundColor(COLOR_ACCENT_TEAL),
+                                    BorderRadius::all(Val::Px(8.0)),
+                                ))
+                                .with_children(|btn| {
+                                    btn.spawn((
+                                        Text::new(i18n.t("match3.hud.restart")),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_TEXT_ON_ACCENT),
+                                    ));
+                                });
+                            } else {
+                                spawn_fury_card(
+                                    col,
+                                    i18n,
+                                    session,
+                                    fjord_art,
+                                    textures,
+                                    hud_mode,
+                                    ctx.colorblind_mode,
+                                );
+                                let tools_bg = if tool_armed {
+                                    COLOR_ACCENT_GOLD
+                                } else if tools_open {
+                                    COLOR_ACCENT_TEAL
+                                } else {
+                                    COLOR_PANEL_CARD
+                                };
+                                let tools_fg = if tool_armed {
+                                    COLOR_TEXT_DARK
+                                } else if tools_open {
+                                    COLOR_TEXT_ON_ACCENT
+                                } else {
+                                    COLOR_TEXT_PRIMARY
+                                };
+                                col.spawn((
+                                    Button,
+                                    Match3UiAction::ToggleDrawer(super::Match3Drawer::Tools),
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border: UiRect::all(Val::Px(1.5)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(tools_bg),
+                                    BorderColor(if tool_armed || tools_open {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_PANEL_BORDER
+                                    }),
+                                    BorderRadius::all(Val::Px(8.0)),
+                                ))
+                                .with_children(|btn| {
+                                    btn.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            "match3.hud.tools_drawer",
+                                            &[("count", total_tools.to_string())],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(tools_fg),
+                                    ));
+                                });
+                            }
+
+                            col.spawn((
+                                Button,
+                                Match3UiAction::ToggleDrawer(super::Match3Drawer::Actions),
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.5)),
+                                    ..default()
+                                },
+                                BackgroundColor(if actions_open {
+                                    COLOR_ACCENT_TEAL
+                                } else {
+                                    COLOR_PANEL_CARD
+                                }),
+                                BorderColor(if actions_open {
+                                    COLOR_ACCENT_GOLD
+                                } else {
+                                    COLOR_PANEL_BORDER
+                                }),
+                                BorderRadius::all(Val::Px(8.0)),
+                            ))
+                            .with_children(|btn| {
+                                btn.spawn((
+                                    Text::new(i18n.t("match3.hud.menu_drawer")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(if actions_open {
+                                        COLOR_TEXT_ON_ACCENT
+                                    } else {
+                                        COLOR_TEXT_PRIMARY
+                                    }),
+                                ));
+                            });
+                        });
+
+                    right
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            flex_shrink: 0.0,
+                            row_gap: Val::Px(4.0),
+                            align_items: AlignItems::Stretch,
+                            ..default()
+                        })
+                        .with_children(|foot| {
+                            spawn_tooltip_section(foot, ctx, confirm_loki_shuffle, in_valhalla);
+                        });
+                });
+
+                if active_drawer != super::Match3Drawer::None
+                    && ctx.active_modal != ActiveModal::Help
+                {
+                    spawn_mobile_drawer_overlay(
+                        root,
+                        ctx,
+                        session,
+                        fjord_art,
+                        vfx,
+                        sound_bank,
+                        hud_mode,
+                        safe,
+                        modal_scroll_y,
+                        active_drawer,
+                        can_undo,
+                        undo_used,
+                        confirm_retreat,
+                        confirm_loki_shuffle,
+                        is_fullscreen,
+                        in_valhalla,
+                    );
+                }
             } else if is_portrait {
                 spawn_portrait_top_bar(root, ctx, session, fjord_art, textures, vfx, hud_mode);
                 spawn_portrait_bottom_dock(
@@ -1993,14 +2319,16 @@ pub(super) fn spawn_match3_hud(
                 if active_drawer != super::Match3Drawer::None
                     && ctx.active_modal != ActiveModal::Help
                 {
-                    spawn_portrait_drawer_overlay(
+                    spawn_mobile_drawer_overlay(
                         root,
                         ctx,
                         session,
                         fjord_art,
                         vfx,
                         sound_bank,
+                        hud_mode,
                         safe,
+                        modal_scroll_y,
                         active_drawer,
                         can_undo,
                         undo_used,
@@ -2044,7 +2372,7 @@ pub(super) fn spawn_match3_hud(
                         ..default()
                     })
                     .with_children(|stats| {
-                        spawn_moves_score_overdrive(stats, ctx, session, fjord_art, vfx, false);
+                        spawn_moves_score_overdrive(stats, ctx, session, fjord_art, vfx, hud_mode);
                     });
 
                     top.spawn(Node {
@@ -2143,11 +2471,20 @@ pub(super) fn spawn_match3_hud(
                         height: Val::Percent(100.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        padding: UiRect {
-                            left: Val::Px(14.0 + safe.left),
-                            right: Val::Px(14.0 + safe.right),
-                            top: Val::Px(14.0 + safe.top),
-                            bottom: Val::Px(14.0 + safe.bottom),
+                        padding: if is_mobile {
+                            UiRect {
+                                left: Val::Px(6.0 + safe.left),
+                                right: Val::Px(6.0 + safe.right),
+                                top: Val::Px(6.0 + safe.top),
+                                bottom: Val::Px(6.0 + safe.bottom),
+                            }
+                        } else {
+                            UiRect {
+                                left: Val::Px(14.0 + safe.left),
+                                right: Val::Px(14.0 + safe.right),
+                                top: Val::Px(14.0 + safe.top),
+                                bottom: Val::Px(14.0 + safe.bottom),
+                            }
                         },
                         ..default()
                     },
@@ -2161,11 +2498,19 @@ pub(super) fn spawn_match3_hud(
                         sliced_panel_image(vfx),
                         Node {
                             width: Val::Px(540.0),
-                            max_width: Val::Percent(94.0),
-                            max_height: Val::Percent(90.0),
+                            max_width: if is_mobile {
+                                Val::Percent(96.0)
+                            } else {
+                                Val::Percent(94.0)
+                            },
+                            max_height: if is_mobile {
+                                Val::Percent(95.0)
+                            } else {
+                                Val::Percent(90.0)
+                            },
                             flex_direction: FlexDirection::Column,
-                            padding: UiRect::all(Val::Px(22.0)),
-                            row_gap: Val::Px(10.0),
+                            padding: UiRect::all(Val::Px(if is_mobile { 12.0 } else { 22.0 })),
+                            row_gap: Val::Px(8.0),
                             overflow: Overflow::clip(),
                             ..default()
                         },
@@ -2186,11 +2531,25 @@ pub(super) fn spawn_match3_hud(
                             BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.35)),
                         ))
                         .with_children(|hdr| {
-                            hdr.spawn((
-                                Text::new(i18n.t("match3.pause.title")),
-                                display_font(fjord_art, FONT_HEADING),
-                                TextColor(COLOR_ACCENT_GOLD),
-                            ));
+                            hdr.spawn(Node {
+                                flex_shrink: 1.0,
+                                min_width: Val::Px(0.0),
+                                ..default()
+                            })
+                            .with_children(|tbox| {
+                                tbox.spawn((
+                                    Text::new(i18n.t("match3.pause.title")),
+                                    display_font(
+                                        fjord_art,
+                                        if is_mobile {
+                                            FONT_HEADING - 3.0
+                                        } else {
+                                            FONT_HEADING
+                                        },
+                                    ),
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            });
                             hdr.spawn((
                                 Button,
                                 Match3UiAction::ToggleHelp,
@@ -2462,7 +2821,53 @@ pub(super) fn spawn_match3_hud(
                                                 },
                                             ),
                                         ];
-                                        #[cfg(not(target_os = "android"))]
+                                        #[cfg(target_arch = "wasm32")]
+                                        if crate::platform::is_fullscreen_supported() {
+                                            if crate::platform::is_orientation_lock_supported() {
+                                                quick_btns.push((
+                                                    i18n.t("app.display.fullscreen_portrait")
+                                                        .to_string(),
+                                                    Match3UiAction::EnterFullscreen(
+                                                        crate::platform::FullscreenOrientation::Portrait,
+                                                    ),
+                                                    COLOR_PANEL_CARD,
+                                                ));
+                                                quick_btns.push((
+                                                    i18n.t("app.display.fullscreen_landscape")
+                                                        .to_string(),
+                                                    Match3UiAction::EnterFullscreen(
+                                                        crate::platform::FullscreenOrientation::Landscape,
+                                                    ),
+                                                    COLOR_PANEL_CARD,
+                                                ));
+                                                if is_fullscreen {
+                                                    quick_btns.push((
+                                                        i18n.t("app.display.windowed").to_string(),
+                                                        Match3UiAction::ToggleFullscreen,
+                                                        COLOR_ACCENT_TEAL,
+                                                    ));
+                                                }
+                                            } else {
+                                                let fs_lbl = if is_fullscreen {
+                                                    i18n.t("app.display.windowed")
+                                                } else {
+                                                    i18n.t("app.display.fullscreen")
+                                                };
+                                                quick_btns.push((
+                                                    fs_lbl.to_string(),
+                                                    Match3UiAction::ToggleFullscreen,
+                                                    if is_fullscreen {
+                                                        COLOR_ACCENT_TEAL
+                                                    } else {
+                                                        COLOR_PANEL_CARD
+                                                    },
+                                                ));
+                                            }
+                                        }
+                                        #[cfg(all(
+                                            not(target_os = "android"),
+                                            not(target_arch = "wasm32")
+                                        ))]
                                         if crate::platform::is_fullscreen_supported() {
                                             let fs_lbl = if is_fullscreen {
                                                 i18n.t("app.display.windowed")
@@ -2589,7 +2994,7 @@ fn spawn_portrait_top_bar(
             ..default()
         })
         .with_children(|stats| {
-            spawn_moves_score_overdrive(stats, ctx, session, fjord_art, vfx, false);
+            spawn_moves_score_overdrive(stats, ctx, session, fjord_art, vfx, hud_mode);
         });
 
         top.spawn(Node {
@@ -2815,14 +3220,16 @@ fn spawn_portrait_bottom_dock(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_portrait_drawer_overlay(
+fn spawn_mobile_drawer_overlay(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     session: &LevelSession,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
     sound_bank: &SoundBank,
+    hud_mode: HudLayoutMode,
     safe: SafeAreaInsets,
+    modal_scroll_y: f32,
     active_drawer: super::Match3Drawer,
     can_undo: bool,
     undo_used: bool,
@@ -2835,56 +3242,22 @@ fn spawn_portrait_drawer_overlay(
     #[cfg(target_os = "android")]
     let _ = is_fullscreen;
 
-    // Full-screen translucent scrim tapping outside dismisses the open drawer cleanly.
-    root.spawn((
-        Button,
-        NoButtonScale,
-        Match3UiAction::CloseDrawer,
-        FocusPolicy::Block,
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            top: Val::Px(0.0),
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.64)),
-        ZIndex(70),
-    ));
-
     let title_key = match active_drawer {
         super::Match3Drawer::Tools => "match3.hud.drawer_tools_title",
         super::Match3Drawer::Actions | super::Match3Drawer::None => {
             "match3.hud.drawer_actions_title"
         }
     };
-    root.spawn((
-        FocusPolicy::Block,
-        Interaction::default(),
-        sliced_panel_image(vfx),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(8.0 + safe.left),
-            right: Val::Px(8.0 + safe.right),
-            bottom: Val::Px(74.0 + safe.bottom),
-            max_height: Val::Vh(72.0),
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::all(Val::Px(12.0)),
-            row_gap: Val::Px(8.0),
-            overflow: Overflow::clip(),
-            ..default()
-        },
-        modal_shadow(),
-        ZIndex(75),
-    ))
-    .with_children(|drawer| {
+    let is_phone_landscape = hud_mode.is_phone_landscape();
+
+    let spawn_card_contents = |drawer: &mut ChildBuilder| {
         drawer
             .spawn((
                 Node {
                     justify_content: JustifyContent::SpaceBetween,
                     align_items: AlignItems::Center,
                     column_gap: Val::Px(8.0),
+                    flex_shrink: 0.0,
                     padding: UiRect::bottom(Val::Px(6.0)),
                     border: UiRect::bottom(Val::Px(1.0)),
                     ..default()
@@ -2892,11 +3265,18 @@ fn spawn_portrait_drawer_overlay(
                 BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.35)),
             ))
             .with_children(|hdr| {
-                hdr.spawn((
-                    Text::new(i18n.t(title_key)),
-                    display_font(fjord_art, FONT_BODY),
-                    TextColor(COLOR_ACCENT_GOLD),
-                ));
+                hdr.spawn(Node {
+                    flex_shrink: 1.0,
+                    min_width: Val::Px(0.0),
+                    ..default()
+                })
+                .with_children(|tbox| {
+                    tbox.spawn((
+                        Text::new(i18n.t(title_key)),
+                        display_font(fjord_art, FONT_BODY),
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                });
                 hdr.spawn((
                     Button,
                     Match3UiAction::CloseDrawer,
@@ -2923,245 +3303,420 @@ fn spawn_portrait_drawer_overlay(
                 });
             });
 
-        match active_drawer {
-            super::Match3Drawer::Tools => {
-                spawn_tooltip_section(drawer, ctx, confirm_loki_shuffle, in_valhalla);
-                let tools = [
-                    (ActiveTool::Mjolnir, "match3.tool.mjolnir"),
-                    (ActiveTool::SurtrEmber, "match3.tool.surtr_ember"),
-                    (ActiveTool::ThorBolt, "match3.tool.thor_bolt"),
-                    (ActiveTool::BifrostPrism, "match3.tool.bifrost_prism"),
-                    (ActiveTool::DrakkarCharge, "match3.tool.drakkar_charge"),
-                    (ActiveTool::LokiShuffle, "match3.tool.loki_shuffle"),
-                ];
-                drawer
-                    .spawn(Node {
-                        flex_wrap: FlexWrap::Wrap,
-                        column_gap: Val::Px(8.0),
-                        row_gap: Val::Px(8.0),
-                        justify_content: JustifyContent::SpaceBetween,
-                        align_items: AlignItems::Stretch,
-                        ..default()
-                    })
-                    .with_children(|grid| {
-                        for (tool, key) in tools {
-                            let count = ctx.city.tools.count(tool);
-                            let armed = ctx.armed_tool == Some(tool)
-                                || (tool == ActiveTool::LokiShuffle && confirm_loki_shuffle);
-                            let bg = if armed {
-                                COLOR_ACCENT_GOLD
-                            } else if count > 0 {
-                                COLOR_PANEL_CARD
-                            } else {
-                                COLOR_BUTTON_DISABLED
-                            };
-                            let fg = if armed {
-                                COLOR_TEXT_DARK
-                            } else if count == 0 {
-                                COLOR_TEXT_MUTED
-                            } else {
-                                COLOR_TEXT_PRIMARY
-                            };
-                            let lbl = if tool == ActiveTool::LokiShuffle && confirm_loki_shuffle {
-                                i18n.t("match3.tool.confirm_loki").to_string()
-                            } else {
-                                i18n.t_fmt(key, &[("count", count.to_string())])
-                            };
-                            let mut btn_cmd = grid.spawn((
-                                Button,
-                                Match3UiAction::SelectTool(tool),
-                                Node {
-                                    flex_grow: 1.0,
-                                    min_width: Val::Px(136.0),
-                                    min_height: Val::Px(48.0),
-                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
-                                    column_gap: Val::Px(8.0),
-                                    justify_content: JustifyContent::FlexStart,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(Val::Px(1.5)),
-                                    ..default()
-                                },
-                                BackgroundColor(bg),
-                                BorderColor(if armed {
-                                    COLOR_ACCENT_GOLD_HOVER
-                                } else {
-                                    COLOR_PANEL_BORDER
-                                }),
-                                BorderRadius::all(Val::Px(8.0)),
-                            ));
-                            if count == 0 {
-                                btn_cmd.insert(NoButtonScale);
-                            }
-                            btn_cmd.with_children(|btn| {
-                                if let Some(icon) = fjord_art.tool_icon(tool) {
-                                    btn.spawn((
-                                        ImageNode {
-                                            image: icon,
-                                            color: if count > 0 {
-                                                Color::WHITE
-                                            } else {
-                                                Color::srgba(0.55, 0.55, 0.60, 0.7)
-                                            },
-                                            ..default()
-                                        },
+        drawer
+            .spawn(Node {
+                flex_direction: FlexDirection::Row,
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                min_height: Val::Px(0.0),
+                column_gap: Val::Px(6.0),
+                ..default()
+            })
+            .with_children(|scroll_row| {
+                scroll_row
+                    .spawn((
+                        ScrollablePanel {
+                            kind: ScrollPanelKind::Modal,
+                        },
+                        ScrollPosition {
+                            offset_x: 0.0,
+                            offset_y: modal_scroll_y,
+                        },
+                        RelativeCursorPosition::default(),
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            flex_grow: 1.0,
+                            flex_shrink: 1.0,
+                            min_height: Val::Px(0.0),
+                            row_gap: Val::Px(8.0),
+                            overflow: Overflow::scroll_y(),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|body| match active_drawer {
+                        super::Match3Drawer::Tools => {
+                            spawn_tooltip_section(body, ctx, confirm_loki_shuffle, in_valhalla);
+                            let tools = [
+                                (ActiveTool::Mjolnir, "match3.tool.mjolnir"),
+                                (ActiveTool::SurtrEmber, "match3.tool.surtr_ember"),
+                                (ActiveTool::ThorBolt, "match3.tool.thor_bolt"),
+                                (ActiveTool::BifrostPrism, "match3.tool.bifrost_prism"),
+                                (ActiveTool::DrakkarCharge, "match3.tool.drakkar_charge"),
+                                (ActiveTool::LokiShuffle, "match3.tool.loki_shuffle"),
+                            ];
+                            body.spawn(Node {
+                                flex_wrap: FlexWrap::Wrap,
+                                column_gap: Val::Px(8.0),
+                                row_gap: Val::Px(8.0),
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Stretch,
+                                ..default()
+                            })
+                            .with_children(|grid| {
+                                for (tool, key) in tools {
+                                    let count = ctx.city.tools.count(tool);
+                                    let armed = ctx.armed_tool == Some(tool)
+                                        || (tool == ActiveTool::LokiShuffle
+                                            && confirm_loki_shuffle);
+                                    let bg = if armed {
+                                        COLOR_ACCENT_GOLD
+                                    } else if count > 0 {
+                                        COLOR_PANEL_CARD
+                                    } else {
+                                        COLOR_BUTTON_DISABLED
+                                    };
+                                    let fg = if armed {
+                                        COLOR_TEXT_DARK
+                                    } else if count == 0 {
+                                        COLOR_TEXT_MUTED
+                                    } else {
+                                        COLOR_TEXT_PRIMARY
+                                    };
+                                    let lbl = if tool == ActiveTool::LokiShuffle
+                                        && confirm_loki_shuffle
+                                    {
+                                        i18n.t("match3.tool.confirm_loki").to_string()
+                                    } else {
+                                        i18n.t_fmt(key, &[("count", count.to_string())])
+                                    };
+                                    let mut btn_cmd = grid.spawn((
+                                        Button,
+                                        Match3UiAction::SelectTool(tool),
                                         Node {
-                                            width: Val::Px(28.0),
-                                            height: Val::Px(28.0),
-                                            flex_shrink: 0.0,
+                                            flex_grow: 1.0,
+                                            min_width: Val::Px(136.0),
+                                            min_height: Val::Px(48.0),
+                                            padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                                            column_gap: Val::Px(8.0),
+                                            justify_content: JustifyContent::FlexStart,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(Val::Px(1.5)),
                                             ..default()
                                         },
-                                        BorderRadius::all(Val::Px(6.0)),
+                                        BackgroundColor(bg),
+                                        BorderColor(if armed {
+                                            COLOR_ACCENT_GOLD_HOVER
+                                        } else {
+                                            COLOR_PANEL_BORDER
+                                        }),
+                                        BorderRadius::all(Val::Px(8.0)),
+                                    ));
+                                    if count == 0 {
+                                        btn_cmd.insert(NoButtonScale);
+                                    }
+                                    btn_cmd.with_children(|btn| {
+                                        if let Some(icon) = fjord_art.tool_icon(tool) {
+                                            btn.spawn((
+                                                ImageNode {
+                                                    image: icon,
+                                                    color: if count > 0 {
+                                                        Color::WHITE
+                                                    } else {
+                                                        Color::srgba(0.55, 0.55, 0.60, 0.7)
+                                                    },
+                                                    ..default()
+                                                },
+                                                Node {
+                                                    width: Val::Px(28.0),
+                                                    height: Val::Px(28.0),
+                                                    flex_shrink: 0.0,
+                                                    ..default()
+                                                },
+                                                BorderRadius::all(Val::Px(6.0)),
+                                            ));
+                                        }
+                                        btn.spawn((
+                                            Text::new(lbl),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(fg),
+                                        ));
+                                    });
+                                }
+                            });
+                        }
+                        super::Match3Drawer::Actions | super::Match3Drawer::None => {
+                            let mut action_btns: Vec<(String, Match3UiAction, Color, Color, bool)> =
+                                Vec::new();
+                            if !in_valhalla {
+                                action_btns.push((
+                                    i18n.t("match3.hud.hint").to_string(),
+                                    Match3UiAction::RequestHint,
+                                    COLOR_PANEL_CARD,
+                                    COLOR_ACCENT_TEAL_TEXT,
+                                    false,
+                                ));
+                            }
+                            let undo_lbl = if undo_used {
+                                i18n.t("match3.hud.undo_used")
+                            } else {
+                                i18n.t("match3.hud.undo_short")
+                            };
+                            action_btns.push((
+                                undo_lbl.to_string(),
+                                Match3UiAction::Undo,
+                                if can_undo {
+                                    COLOR_ACCENT_TEAL
+                                } else {
+                                    COLOR_BUTTON_DISABLED
+                                },
+                                if can_undo {
+                                    COLOR_TEXT_ON_ACCENT
+                                } else {
+                                    COLOR_TEXT_MUTED
+                                },
+                                !can_undo,
+                            ));
+                            action_btns.push((
+                                i18n.t("match3.hud.pause_short").to_string(),
+                                Match3UiAction::ToggleHelp,
+                                COLOR_PANEL_CARD,
+                                COLOR_ACCENT_GOLD,
+                                false,
+                            ));
+                            action_btns.push((
+                                if sound_bank.muted {
+                                    i18n.t("app.audio.off").to_string()
+                                } else {
+                                    i18n.t("app.audio.on").to_string()
+                                },
+                                Match3UiAction::ToggleAudio,
+                                if sound_bank.muted {
+                                    COLOR_BUTTON_DISABLED
+                                } else {
+                                    COLOR_PANEL_CARD
+                                },
+                                COLOR_TEXT_PRIMARY,
+                                false,
+                            ));
+                            #[cfg(target_arch = "wasm32")]
+                            if crate::platform::is_fullscreen_supported() {
+                                if crate::platform::is_orientation_lock_supported() {
+                                    action_btns.push((
+                                        i18n.t("app.display.fullscreen_portrait").to_string(),
+                                        Match3UiAction::EnterFullscreen(
+                                            crate::platform::FullscreenOrientation::Portrait,
+                                        ),
+                                        COLOR_PANEL_CARD,
+                                        COLOR_TEXT_PRIMARY,
+                                        false,
+                                    ));
+                                    action_btns.push((
+                                        i18n.t("app.display.fullscreen_landscape").to_string(),
+                                        Match3UiAction::EnterFullscreen(
+                                            crate::platform::FullscreenOrientation::Landscape,
+                                        ),
+                                        COLOR_PANEL_CARD,
+                                        COLOR_TEXT_PRIMARY,
+                                        false,
+                                    ));
+                                    if is_fullscreen {
+                                        action_btns.push((
+                                            i18n.t("app.display.windowed").to_string(),
+                                            Match3UiAction::ToggleFullscreen,
+                                            COLOR_ACCENT_TEAL,
+                                            COLOR_TEXT_ON_ACCENT,
+                                            false,
+                                        ));
+                                    }
+                                } else {
+                                    action_btns.push((
+                                        if is_fullscreen {
+                                            i18n.t("app.display.windowed").to_string()
+                                        } else {
+                                            i18n.t("app.display.fullscreen").to_string()
+                                        },
+                                        Match3UiAction::ToggleFullscreen,
+                                        if is_fullscreen {
+                                            COLOR_ACCENT_TEAL
+                                        } else {
+                                            COLOR_PANEL_CARD
+                                        },
+                                        if is_fullscreen {
+                                            COLOR_TEXT_ON_ACCENT
+                                        } else {
+                                            COLOR_TEXT_PRIMARY
+                                        },
+                                        false,
                                     ));
                                 }
-                                btn.spawn((
-                                    Text::new(lbl),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
-                                    },
-                                    TextColor(fg),
-                                ));
-                            });
-                        }
-                    });
-            }
-            super::Match3Drawer::Actions | super::Match3Drawer::None => {
-                let mut action_btns: Vec<(String, Match3UiAction, Color, Color, bool)> = Vec::new();
-                if !in_valhalla {
-                    action_btns.push((
-                        i18n.t("match3.hud.hint").to_string(),
-                        Match3UiAction::RequestHint,
-                        COLOR_PANEL_CARD,
-                        COLOR_ACCENT_TEAL_TEXT,
-                        false,
-                    ));
-                }
-                let undo_lbl = if undo_used {
-                    i18n.t("match3.hud.undo_used")
-                } else {
-                    i18n.t("match3.hud.undo_short")
-                };
-                action_btns.push((
-                    undo_lbl.to_string(),
-                    Match3UiAction::Undo,
-                    if can_undo {
-                        COLOR_ACCENT_TEAL
-                    } else {
-                        COLOR_BUTTON_DISABLED
-                    },
-                    if can_undo {
-                        COLOR_TEXT_ON_ACCENT
-                    } else {
-                        COLOR_TEXT_MUTED
-                    },
-                    !can_undo,
-                ));
-                action_btns.push((
-                    i18n.t("match3.hud.pause_short").to_string(),
-                    Match3UiAction::ToggleHelp,
-                    COLOR_PANEL_CARD,
-                    COLOR_ACCENT_GOLD,
-                    false,
-                ));
-                action_btns.push((
-                    if sound_bank.muted {
-                        i18n.t("app.audio.off").to_string()
-                    } else {
-                        i18n.t("app.audio.on").to_string()
-                    },
-                    Match3UiAction::ToggleAudio,
-                    if sound_bank.muted {
-                        COLOR_BUTTON_DISABLED
-                    } else {
-                        COLOR_PANEL_CARD
-                    },
-                    COLOR_TEXT_PRIMARY,
-                    false,
-                ));
-                #[cfg(not(target_os = "android"))]
-                if crate::platform::is_fullscreen_supported() {
-                    action_btns.push((
-                        if is_fullscreen {
-                            i18n.t("app.display.windowed").to_string()
-                        } else {
-                            i18n.t("app.display.fullscreen").to_string()
-                        },
-                        Match3UiAction::ToggleFullscreen,
-                        if is_fullscreen {
-                            COLOR_ACCENT_TEAL
-                        } else {
-                            COLOR_PANEL_CARD
-                        },
-                        if is_fullscreen {
-                            COLOR_TEXT_ON_ACCENT
-                        } else {
-                            COLOR_TEXT_PRIMARY
-                        },
-                        false,
-                    ));
-                }
-                action_btns.push((
-                    if confirm_retreat {
-                        i18n.t("match3.hud.retreat_confirm").to_string()
-                    } else {
-                        i18n.t("match3.hud.back").to_string()
-                    },
-                    Match3UiAction::Retreat,
-                    if confirm_retreat {
-                        Color::srgb(0.92, 0.20, 0.22)
-                    } else {
-                        COLOR_ACCENT_CRIMSON
-                    },
-                    COLOR_TEXT_PRIMARY,
-                    false,
-                ));
-
-                drawer
-                    .spawn(Node {
-                        flex_wrap: FlexWrap::Wrap,
-                        column_gap: Val::Px(8.0),
-                        row_gap: Val::Px(8.0),
-                        justify_content: JustifyContent::SpaceBetween,
-                        ..default()
-                    })
-                    .with_children(|grid| {
-                        for (lbl, act, bg, fg, disabled) in action_btns {
-                            let mut btn_cmd = grid.spawn((
-                                Button,
-                                act,
-                                Node {
-                                    flex_grow: 1.0,
-                                    min_width: Val::Px(134.0),
-                                    min_height: Val::Px(46.0),
-                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border: UiRect::all(Val::Px(1.5)),
-                                    ..default()
-                                },
-                                BackgroundColor(bg),
-                                BorderColor(COLOR_PANEL_BORDER),
-                                BorderRadius::all(Val::Px(8.0)),
-                            ));
-                            if disabled {
-                                btn_cmd.insert(NoButtonScale);
                             }
-                            btn_cmd.with_children(|btn| {
-                                btn.spawn((
-                                    Text::new(lbl),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
+                            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+                            if crate::platform::is_fullscreen_supported() {
+                                action_btns.push((
+                                    if is_fullscreen {
+                                        i18n.t("app.display.windowed").to_string()
+                                    } else {
+                                        i18n.t("app.display.fullscreen").to_string()
                                     },
-                                    TextColor(fg),
+                                    Match3UiAction::ToggleFullscreen,
+                                    if is_fullscreen {
+                                        COLOR_ACCENT_TEAL
+                                    } else {
+                                        COLOR_PANEL_CARD
+                                    },
+                                    if is_fullscreen {
+                                        COLOR_TEXT_ON_ACCENT
+                                    } else {
+                                        COLOR_TEXT_PRIMARY
+                                    },
+                                    false,
                                 ));
+                            }
+                            action_btns.push((
+                                if confirm_retreat {
+                                    i18n.t("match3.hud.retreat_confirm").to_string()
+                                } else {
+                                    i18n.t("match3.hud.back").to_string()
+                                },
+                                Match3UiAction::Retreat,
+                                if confirm_retreat {
+                                    Color::srgb(0.92, 0.20, 0.22)
+                                } else {
+                                    COLOR_ACCENT_CRIMSON
+                                },
+                                COLOR_TEXT_PRIMARY,
+                                false,
+                            ));
+
+                            body.spawn(Node {
+                                flex_wrap: FlexWrap::Wrap,
+                                column_gap: Val::Px(8.0),
+                                row_gap: Val::Px(8.0),
+                                justify_content: JustifyContent::SpaceBetween,
+                                ..default()
+                            })
+                            .with_children(|grid| {
+                                for (lbl, act, bg, fg, disabled) in action_btns {
+                                    let mut btn_cmd = grid.spawn((
+                                        Button,
+                                        act,
+                                        Node {
+                                            flex_grow: 1.0,
+                                            min_width: Val::Px(134.0),
+                                            min_height: Val::Px(46.0),
+                                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(Val::Px(1.5)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(bg),
+                                        BorderColor(COLOR_PANEL_BORDER),
+                                        BorderRadius::all(Val::Px(8.0)),
+                                    ));
+                                    if disabled {
+                                        btn_cmd.insert(NoButtonScale);
+                                    }
+                                    btn_cmd.with_children(|btn| {
+                                        btn.spawn((
+                                            Text::new(lbl),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(fg),
+                                        ));
+                                    });
+                                }
                             });
+                            spawn_active_buffs_card(body, i18n, session);
                         }
                     });
-                spawn_active_buffs_card(drawer, i18n, session);
-            }
-        }
-    });
+                spawn_scrollbar_track(scroll_row, ScrollPanelKind::Modal);
+            });
+    };
+
+    if is_phone_landscape {
+        // Centered modal container over full-screen scrim so clicks inside card do not close drawer.
+        root.spawn((
+            Button,
+            NoButtonScale,
+            Match3UiAction::CloseDrawer,
+            FocusPolicy::Block,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect {
+                    left: Val::Px(8.0 + safe.left),
+                    right: Val::Px(8.0 + safe.right),
+                    top: Val::Px(8.0 + safe.top),
+                    bottom: Val::Px(8.0 + safe.bottom),
+                },
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.68)),
+            ZIndex(70),
+        ))
+        .with_children(|scrim| {
+            scrim
+                .spawn((
+                    FocusPolicy::Block,
+                    Interaction::default(),
+                    sliced_panel_image(vfx),
+                    Node {
+                        width: Val::Px(520.0),
+                        max_width: Val::Percent(94.0),
+                        max_height: Val::Percent(92.0),
+                        min_height: Val::Px(0.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(12.0)),
+                        row_gap: Val::Px(8.0),
+                        overflow: Overflow::clip(),
+                        ..default()
+                    },
+                    modal_shadow(),
+                ))
+                .with_children(spawn_card_contents);
+        });
+    } else {
+        // Portrait scrim + bottom-anchored drawer sheet.
+        root.spawn((
+            Button,
+            NoButtonScale,
+            Match3UiAction::CloseDrawer,
+            FocusPolicy::Block,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.64)),
+            ZIndex(70),
+        ));
+
+        root.spawn((
+            FocusPolicy::Block,
+            Interaction::default(),
+            sliced_panel_image(vfx),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(8.0 + safe.left),
+                right: Val::Px(8.0 + safe.right),
+                bottom: Val::Px(74.0 + safe.bottom),
+                max_height: Val::Vh(72.0),
+                min_height: Val::Px(0.0),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(12.0)),
+                row_gap: Val::Px(8.0),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            modal_shadow(),
+            ZIndex(75),
+        ))
+        .with_children(spawn_card_contents);
+    }
 }
 
 #[cfg(test)]

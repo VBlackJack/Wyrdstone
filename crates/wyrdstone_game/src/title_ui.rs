@@ -18,7 +18,7 @@
 
 use crate::audio::{toggle_mute, BgmTrack, SoundBank};
 use crate::fjord_art::FjordTextures;
-use crate::platform::SafeAreaInsets;
+use crate::platform::{HudLayoutMode, SafeAreaInsets};
 use crate::scroll::{PressArm, UiScrollMemory};
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
@@ -29,7 +29,9 @@ use crate::ui_style::{
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
-use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
+use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode, WindowResized};
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
+use bevy::window::{PrimaryWindow, WindowResized};
 
 const TITLE_SNOWFLAKE_COUNT: usize = 26;
 const TITLE_CONTENT_GAP_PX: f32 = 10.0;
@@ -65,6 +67,8 @@ pub enum TitleAction {
     ToggleAudio,
     #[cfg(not(target_os = "android"))]
     ToggleFullscreen,
+    #[cfg(target_arch = "wasm32")]
+    EnterFullscreen(crate::platform::FullscreenOrientation),
 }
 
 fn title_is_fullscreen(
@@ -92,14 +96,15 @@ pub fn setup_title_ui(
     vfx: Res<VfxTextures>,
     sound_bank: Res<SoundBank>,
     safe_area: Res<SafeAreaInsets>,
-    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] windows: Query<
-        &Window,
-        With<PrimaryWindow>,
-    >,
+    windows: Query<&Window, With<PrimaryWindow>>,
 ) {
+    let win_opt = windows.get_single().ok();
+    let hud_mode = win_opt
+        .map(|w| HudLayoutMode::from_viewport(w.width(), w.height()))
+        .unwrap_or_default();
     let is_fullscreen = title_is_fullscreen(
         #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
-        windows.get_single().ok(),
+        win_opt,
     );
     spawn_title_tree(
         &mut commands,
@@ -109,6 +114,7 @@ pub fn setup_title_ui(
         sound_bank.muted,
         *safe_area,
         is_fullscreen,
+        hud_mode,
     );
 }
 
@@ -128,6 +134,7 @@ pub fn cleanup_title_ui(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_title_tree(
     commands: &mut Commands,
     ctx: &GameContext,
@@ -136,8 +143,11 @@ fn spawn_title_tree(
     muted: bool,
     safe: SafeAreaInsets,
     is_fullscreen: bool,
+    hud_mode: HudLayoutMode,
 ) {
     let i18n = &ctx.data.i18n;
+    let is_phone_landscape = hud_mode.is_phone_landscape();
+    let is_mobile = hud_mode.is_mobile();
     #[cfg(target_os = "android")]
     let _ = is_fullscreen;
     let play_label = if ctx.has_existing_save {
@@ -247,12 +257,16 @@ fn spawn_title_tree(
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(TITLE_CONTENT_GAP_PX),
+                    row_gap: Val::Px(if is_phone_landscape {
+                        6.0
+                    } else {
+                        TITLE_CONTENT_GAP_PX
+                    }),
                     padding: UiRect {
-                        left: Val::Px(14.0 + safe.left),
-                        right: Val::Px(14.0 + safe.right),
-                        top: Val::Px(12.0 + safe.top),
-                        bottom: Val::Px(12.0 + safe.bottom),
+                        left: Val::Px(if is_mobile { 10.0 } else { 14.0 } + safe.left),
+                        right: Val::Px(if is_mobile { 10.0 } else { 14.0 } + safe.right),
+                        top: Val::Px(if is_mobile { 8.0 } else { 12.0 } + safe.top),
+                        bottom: Val::Px(if is_mobile { 8.0 } else { 12.0 } + safe.bottom),
                     },
                     overflow: Overflow::clip(),
                     ..default()
@@ -266,7 +280,11 @@ fn spawn_title_tree(
                         TitleLogoFloat,
                         Node {
                             max_width: Val::Percent(92.0),
-                            max_height: Val::Vh(24.0),
+                            max_height: if is_phone_landscape {
+                                Val::Vh(22.0)
+                            } else {
+                                Val::Vh(24.0)
+                            },
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             flex_shrink: 1.0,
@@ -278,9 +296,13 @@ fn spawn_title_tree(
                         hero.spawn((
                             ImageNode::new(fjord_art.logo.clone()),
                             Node {
-                                width: Val::Px(520.0),
+                                width: Val::Px(if is_phone_landscape { 270.0 } else { 520.0 }),
                                 max_width: Val::Percent(100.0),
-                                max_height: Val::Vh(24.0),
+                                max_height: if is_phone_landscape {
+                                    Val::Vh(22.0)
+                                } else {
+                                    Val::Vh(24.0)
+                                },
                                 flex_shrink: 1.0,
                                 aspect_ratio: Some(16.0 / 9.0),
                                 ..default()
@@ -293,11 +315,17 @@ fn spawn_title_tree(
                     .spawn((
                         sliced_panel_image(vfx),
                         Node {
-                            max_width: Val::Percent(90.0),
+                            max_width: Val::Percent(92.0),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             row_gap: Val::Px(4.0),
-                            padding: UiRect::axes(Val::Px(24.0), Val::Px(12.0)),
+                            padding: if is_phone_landscape {
+                                UiRect::axes(Val::Px(14.0), Val::Px(7.0))
+                            } else if is_mobile {
+                                UiRect::axes(Val::Px(16.0), Val::Px(10.0))
+                            } else {
+                                UiRect::axes(Val::Px(24.0), Val::Px(12.0))
+                            },
                             ..default()
                         },
                         panel_shadow(),
@@ -305,16 +333,25 @@ fn spawn_title_tree(
                     .with_children(|plaque| {
                         plaque.spawn((
                             Text::new(i18n.t("app.title.subtitle")),
-                            display_font(fjord_art, FONT_HEADING + 2.0),
+                            display_font(
+                                fjord_art,
+                                if is_phone_landscape {
+                                    FONT_BODY
+                                } else {
+                                    FONT_HEADING + 2.0
+                                },
+                            ),
                             TextColor(COLOR_ACCENT_GOLD),
+                            TextLayout::new_with_justify(JustifyText::Center),
                         ));
                         plaque.spawn((
                             Text::new(i18n.t("app.title.footer")),
                             TextFont {
-                                font_size: FONT_BODY,
+                                font_size: if is_mobile { FONT_SMALL } else { FONT_BODY },
                                 ..default()
                             },
                             TextColor(COLOR_TEXT_MUTED),
+                            TextLayout::new_with_justify(JustifyText::Center),
                         ));
                     });
 
@@ -325,9 +362,9 @@ fn spawn_title_tree(
                         TitleAction::EnterFjord,
                         sliced_gold_button_image(vfx),
                         Node {
-                            width: Val::Px(320.0),
+                            width: Val::Px(if is_phone_landscape { 260.0 } else { 320.0 }),
                             max_width: Val::Percent(92.0),
-                            height: Val::Px(58.0),
+                            height: Val::Px(if is_phone_landscape { 46.0 } else { 58.0 }),
                             border: UiRect::all(Val::Px(2.5)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
@@ -341,7 +378,14 @@ fn spawn_title_tree(
                     .with_children(|btn| {
                         btn.spawn((
                             Text::new(play_label),
-                            display_font(fjord_art, FONT_HEADING + 1.0),
+                            display_font(
+                                fjord_art,
+                                if is_phone_landscape {
+                                    FONT_BODY + 1.0
+                                } else {
+                                    FONT_HEADING + 1.0
+                                },
+                            ),
                             TextColor(COLOR_TEXT_DARK),
                         ));
                     });
@@ -349,8 +393,8 @@ fn spawn_title_tree(
                 // Utility buttons row (Language + Audio + Optional New Saga)
                 parent
                     .spawn(Node {
-                        column_gap: Val::Px(12.0),
-                        row_gap: Val::Px(8.0),
+                        column_gap: Val::Px(if is_phone_landscape { 8.0 } else { 12.0 }),
+                        row_gap: Val::Px(if is_phone_landscape { 6.0 } else { 8.0 }),
                         flex_wrap: FlexWrap::Wrap,
                         justify_content: JustifyContent::Center,
                         ..default()
@@ -382,7 +426,48 @@ fn spawn_title_tree(
                             };
                             util_btns.push((lbl, TitleAction::NewSaga, col));
                         }
-                        #[cfg(not(target_os = "android"))]
+                        #[cfg(target_arch = "wasm32")]
+                        if crate::platform::is_fullscreen_supported() {
+                            if crate::platform::is_orientation_lock_supported() {
+                                util_btns.push((
+                                    i18n.t("app.display.fullscreen_portrait"),
+                                    TitleAction::EnterFullscreen(
+                                        crate::platform::FullscreenOrientation::Portrait,
+                                    ),
+                                    Color::srgba(0.10, 0.14, 0.22, 0.90),
+                                ));
+                                util_btns.push((
+                                    i18n.t("app.display.fullscreen_landscape"),
+                                    TitleAction::EnterFullscreen(
+                                        crate::platform::FullscreenOrientation::Landscape,
+                                    ),
+                                    Color::srgba(0.10, 0.14, 0.22, 0.90),
+                                ));
+                                if is_fullscreen {
+                                    util_btns.push((
+                                        i18n.t("app.display.windowed"),
+                                        TitleAction::ToggleFullscreen,
+                                        COLOR_ACCENT_TEAL,
+                                    ));
+                                }
+                            } else {
+                                let fs_lbl = if is_fullscreen {
+                                    i18n.t("app.display.windowed")
+                                } else {
+                                    i18n.t("app.display.fullscreen")
+                                };
+                                util_btns.push((
+                                    fs_lbl,
+                                    TitleAction::ToggleFullscreen,
+                                    if is_fullscreen {
+                                        COLOR_ACCENT_TEAL
+                                    } else {
+                                        Color::srgba(0.10, 0.14, 0.22, 0.90)
+                                    },
+                                ));
+                            }
+                        }
+                        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
                         if crate::platform::is_fullscreen_supported() {
                             let fs_lbl = if is_fullscreen {
                                 i18n.t("app.display.windowed")
@@ -404,9 +489,21 @@ fn spawn_title_tree(
                                 Button,
                                 act,
                                 Node {
-                                    min_width: Val::Px(TITLE_UTIL_BTN_MIN_WIDTH_PX),
-                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                    padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                                    min_width: Val::Px(if is_mobile {
+                                        112.0
+                                    } else {
+                                        TITLE_UTIL_BTN_MIN_WIDTH_PX
+                                    }),
+                                    min_height: Val::Px(if is_phone_landscape {
+                                        40.0
+                                    } else {
+                                        MIN_TOUCH_TARGET_PX
+                                    }),
+                                    padding: if is_phone_landscape {
+                                        UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                                    } else {
+                                        UiRect::axes(Val::Px(14.0), Val::Px(8.0))
+                                    },
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
                                     border: UiRect::all(Val::Px(1.5)),
@@ -421,10 +518,11 @@ fn spawn_title_tree(
                                 btn.spawn((
                                     Text::new(label),
                                     TextFont {
-                                        font_size: FONT_BODY,
+                                        font_size: if is_mobile { FONT_SMALL } else { FONT_BODY },
                                         ..default()
                                     },
                                     TextColor(COLOR_TEXT_PRIMARY),
+                                    TextLayout::new_with_justify(JustifyText::Center),
                                 ));
                             });
                         }
@@ -543,18 +641,57 @@ pub fn handle_title_buttons(
         &mut Window,
         With<PrimaryWindow>,
     >,
-    (touches, scroll_mem, safe_area, mut press_arm, mut focus_idx, mut prev_fullscreen): (
+    #[cfg(any(target_os = "android", target_arch = "wasm32"))] windows: Query<
+        &Window,
+        With<PrimaryWindow>,
+    >,
+    (
+        touches,
+        scroll_mem,
+        safe_area,
+        mut press_arm,
+        mut focus_idx,
+        mut prev_fullscreen,
+        mut prev_hud_mode,
+        mut resize_events,
+    ): (
         Res<Touches>,
         Res<UiScrollMemory>,
         Res<SafeAreaInsets>,
         Local<PressArm>,
         Local<Option<usize>>,
         Local<Option<bool>>,
+        Local<Option<HudLayoutMode>>,
+        EventReader<WindowResized>,
     ),
     mut buttons: TitleButtonQuery,
     mut focus_buttons: TitleFocusQuery,
     mut text_colors: Query<&mut TextColor>,
 ) {
+    let mut hud_mode_now = prev_hud_mode.unwrap_or_else(|| {
+        windows
+            .get_single()
+            .map(|w| HudLayoutMode::from_viewport(w.width(), w.height()))
+            .unwrap_or_default()
+    });
+    for ev in resize_events.read() {
+        if ev.width.is_finite() && ev.height.is_finite() && ev.width >= 100.0 && ev.height >= 100.0
+        {
+            hud_mode_now = HudLayoutMode::from_viewport(ev.width, ev.height);
+        }
+    }
+    let mode_changed = match *prev_hud_mode {
+        None => {
+            *prev_hud_mode = Some(hud_mode_now);
+            false
+        }
+        Some(prev) if prev != hud_mode_now => {
+            *prev_hud_mode = Some(hud_mode_now);
+            true
+        }
+        _ => false,
+    };
+
     let fs_now = {
         #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
         {
@@ -587,7 +724,7 @@ pub fn handle_title_buttons(
         }
     }
 
-    if fs_changed {
+    if fs_changed || mode_changed {
         for entity in &roots {
             commands.entity(entity).try_despawn_recursive();
         }
@@ -599,6 +736,7 @@ pub fn handle_title_buttons(
             sound_bank.muted,
             *safe_area,
             fs_now,
+            hud_mode_now,
         );
         return;
     }
@@ -617,6 +755,7 @@ pub fn handle_title_buttons(
             sound_bank.muted,
             *safe_area,
             fs_now,
+            hud_mode_now,
         );
         return;
     }
@@ -683,6 +822,7 @@ pub fn handle_title_buttons(
             sound_bank.muted,
             *safe_area,
             fs_now,
+            hud_mode_now,
         );
         return;
     }
@@ -726,6 +866,7 @@ pub fn handle_title_buttons(
                             sound_bank.muted,
                             *safe_area,
                             fs_now,
+                            hud_mode_now,
                         );
                     }
                 } else {
@@ -742,6 +883,7 @@ pub fn handle_title_buttons(
                         sound_bank.muted,
                         *safe_area,
                         fs_now,
+                        hud_mode_now,
                     );
                 }
                 return;
@@ -761,6 +903,7 @@ pub fn handle_title_buttons(
                     sound_bank.muted,
                     *safe_area,
                     fs_now,
+                    hud_mode_now,
                 );
                 return;
             }
@@ -789,6 +932,7 @@ pub fn handle_title_buttons(
                         sound_bank.muted,
                         *safe_area,
                         next_fs,
+                        hud_mode_now,
                     );
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -813,8 +957,30 @@ pub fn handle_title_buttons(
                         sound_bank.muted,
                         *safe_area,
                         next_fs,
+                        hud_mode_now,
                     );
                 }
+                return;
+            }
+            #[cfg(target_arch = "wasm32")]
+            TitleAction::EnterFullscreen(ori) => {
+                ctx.confirm_reset = false;
+                crate::platform::enter_web_fullscreen(ori);
+                let next_fs = crate::platform::is_web_fullscreen();
+                *prev_fullscreen = Some(next_fs);
+                for entity in &roots {
+                    commands.entity(entity).try_despawn_recursive();
+                }
+                spawn_title_tree(
+                    &mut commands,
+                    &ctx,
+                    &fjord_art,
+                    &vfx,
+                    sound_bank.muted,
+                    *safe_area,
+                    next_fs,
+                    hud_mode_now,
+                );
                 return;
             }
         }
@@ -857,6 +1023,17 @@ pub fn handle_title_buttons(
                         }
                     }
                 }
+                #[cfg(target_arch = "wasm32")]
+                TitleAction::EnterFullscreen(_) => {
+                    *bg = BackgroundColor(COLOR_ACCENT_TEAL);
+                    if let Some(children) = children_opt {
+                        for &child in children {
+                            if let Ok(mut tc) = text_colors.get_mut(child) {
+                                tc.0 = COLOR_TEXT_ON_ACCENT;
+                            }
+                        }
+                    }
+                }
             },
             Interaction::None => match action {
                 TitleAction::EnterFjord => {
@@ -889,6 +1066,17 @@ pub fn handle_title_buttons(
                     } else {
                         Color::srgba(0.10, 0.14, 0.22, 0.90)
                     });
+                    if let Some(children) = children_opt {
+                        for &child in children {
+                            if let Ok(mut tc) = text_colors.get_mut(child) {
+                                tc.0 = COLOR_TEXT_PRIMARY;
+                            }
+                        }
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                TitleAction::EnterFullscreen(_) => {
+                    *bg = BackgroundColor(Color::srgba(0.10, 0.14, 0.22, 0.90));
                     if let Some(children) = children_opt {
                         for &child in children {
                             if let Ok(mut tc) = text_colors.get_mut(child) {
