@@ -349,6 +349,7 @@ pub struct Match3InputState {
     /// despawner, must clear and redraw them on its next idle frame, then lower the flag.
     pub overlays_stale: bool,
     pub shake_secs: f32,
+    pub hit_stop_secs: f32,
     pub boss_hit_flash_secs: f32,
     pub phase: BoardAnimPhase,
 }

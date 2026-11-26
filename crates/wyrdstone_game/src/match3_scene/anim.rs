@@ -990,6 +990,12 @@ pub fn tick_board_animation(
     if ctx.active_modal == ActiveModal::Help {
         return;
     }
+    if input_state.reduced_motion {
+        input_state.hit_stop_secs = 0.0;
+    } else if input_state.hit_stop_secs > 0.0 {
+        input_state.hit_stop_secs = (input_state.hit_stop_secs - dt).max(0.0);
+        return;
+    }
 
     let phase = std::mem::take(&mut input_state.phase);
     match phase {
@@ -1321,6 +1327,17 @@ pub fn tick_board_animation(
                         ctx.anim_duration(0.58),
                     );
                 }
+                if !input_state.reduced_motion {
+                    if !preview.prepared.converted_boosters.is_empty()
+                        || preview.fired_boosters.len() >= 2
+                    {
+                        input_state.hit_stop_secs =
+                            input_state.hit_stop_secs.max(ctx.anim_duration(0.045));
+                    } else if !preview.fired_boosters.is_empty() || preview.combo >= 3 {
+                        input_state.hit_stop_secs =
+                            input_state.hit_stop_secs.max(ctx.anim_duration(0.030));
+                    }
+                }
                 particles_spawned = true;
             }
 
@@ -1444,6 +1461,10 @@ pub fn tick_board_animation(
                 }
                 if let Some(stagger_boss) = boss_staggered_name {
                     play_sfx(&mut commands, &sound_bank, SfxKind::FuryReady);
+                    if !input_state.reduced_motion {
+                        input_state.hit_stop_secs =
+                            input_state.hit_stop_secs.max(ctx.anim_duration(0.045));
+                    }
                     spawn_floating_score(
                         &mut commands,
                         &report.cells,
@@ -1780,6 +1801,18 @@ pub fn tick_board_animation(
                                 );
                             }
                             LevelOutcome::InProgress => {
+                                if consumes_turn
+                                    && curse_hits.is_empty()
+                                    && boss_riposte_hits.is_empty()
+                                    && ctx.active_session.as_ref().is_some_and(|s| {
+                                        !s.is_blitz
+                                            && !s.is_trial
+                                            && (1..=super::LOW_MOVES_THRESHOLD)
+                                                .contains(&s.moves_left)
+                                    })
+                                {
+                                    play_sfx(&mut commands, &sound_bank, SfxKind::LowMovesTick);
+                                }
                                 input_state.phase = BoardAnimPhase::Idle;
                             }
                         }
@@ -2156,6 +2189,7 @@ fn finalize_level_transition(
             s.fury,
             s.overdrive_turns_left,
             s.trial_moves_used(),
+            s.last_stand_used,
         )),
     });
 
@@ -2172,8 +2206,11 @@ fn finalize_level_transition(
         fury,
         overdrive_turns,
         trial_moves_used,
+        last_stand_used,
     )) = finished
     {
+        let aid_eligible = building_id == wyrdstone_core::BOSS_RAID_BUILDING_ID
+            || ctx.data.level_by_id(&level_id).is_some();
         ctx.last_outcome = Some(outcome);
         ctx.last_rewards = rewards;
         ctx.last_score = score;
@@ -2362,8 +2399,14 @@ fn finalize_level_transition(
                 before_modes_mask,
                 ctx.city.unlocked_modes_mask(),
             );
+            if aid_eligible {
+                ctx.city.clear_level_fail_streak(&level_id);
+            }
         } else {
             ctx.last_skald_xp_gained = 0;
+            if aid_eligible && !last_stand_used {
+                ctx.city.record_level_defeat(&level_id);
+            }
             if building_id == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID {
                 ctx.active_expedition = None;
             }

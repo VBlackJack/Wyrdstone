@@ -594,8 +594,18 @@ pub(super) fn spawn_building_inspector(
                                 },
                                 TextColor(COLOR_ACCENT_GOLD),
                             ));
-                            // Visual Board Mode Badges (Blitz, Relics, Ice, Frost, Fog, Cursed)
+                            // Visual Board Mode Badges (Threat, Blitz, Relics, Ice, Frost, Fog, Cursed)
                             let mut mode_badges: Vec<(&str, Color)> = Vec::new();
+                            let threat = level.threat_rating();
+                            let threat_col = match threat {
+                                wyrdstone_core::ThreatRating::Skirmish => COLOR_ACCENT_TEAL_TEXT,
+                                wyrdstone_core::ThreatRating::Battle => COLOR_ACCENT_GOLD,
+                                wyrdstone_core::ThreatRating::Fierce => {
+                                    Color::srgb(0.98, 0.58, 0.24)
+                                }
+                                wyrdstone_core::ThreatRating::Ragnarok => COLOR_ACCENT_CRIMSON_TEXT,
+                            };
+                            mode_badges.push((i18n.t(threat.label_key()), threat_col));
                             if level.time_limit_seconds.is_some() {
                                 mode_badges.push((i18n.t("city.mode.blitz"), COLOR_ACCENT_GOLD));
                             }
@@ -718,6 +728,26 @@ pub(super) fn spawn_building_inspector(
                                     ..default()
                                 },
                                 TextColor(COLOR_ACCENT_GREEN_TEXT),
+                            ));
+                            if let Some(aid_key) =
+                                ctx.city.valkyrie_aid_for_level(preview_level_id).desc_key()
+                            {
+                                prev.spawn((
+                                    Text::new(i18n.t(aid_key)),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                            }
+                            prev.spawn((
+                                Text::new(i18n.t(level.tactical_tip_key())),
+                                TextFont {
+                                    font_size: FONT_SMALL - 1.0,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_MUTED),
                             ));
                         });
                     }

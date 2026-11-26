@@ -72,6 +72,80 @@ pub const LEGEND_SPOILS_PCT_PER_LEVEL: u32 = 2;
 /// Maximum spoils bonus percentage attainable from Legend Ranks.
 pub const LEGEND_SPOILS_MAX_BONUS_PCT: u32 = 40;
 
+/// Maximum consecutive defeats tracked per level for Valkyrie's Aid.
+pub const MAX_VALKYRIE_FAIL_STREAK: u8 = 5;
+/// Consecutive defeats required for Skirmish-tier Valkyrie's Aid.
+pub const VALKYRIE_AID_TIER1_FAILS: u8 = 2;
+/// Consecutive defeats required for Vanguard-tier Valkyrie's Aid.
+pub const VALKYRIE_AID_TIER2_FAILS: u8 = 3;
+/// Bonus moves granted by Skirmish-tier Valkyrie's Aid.
+pub const VALKYRIE_AID_TIER1_MOVES: u32 = 2;
+/// Bonus seconds granted on timed boards by Skirmish-tier Valkyrie's Aid.
+pub const VALKYRIE_AID_TIER1_SECS: f32 = 10.0;
+/// Bonus moves granted by Vanguard-tier Valkyrie's Aid.
+pub const VALKYRIE_AID_TIER2_MOVES: u32 = 3;
+/// Bonus seconds granted on timed boards by Vanguard-tier Valkyrie's Aid.
+pub const VALKYRIE_AID_TIER2_SECS: f32 = 15.0;
+/// Bonus starting Divine Fury granted by Vanguard-tier Valkyrie's Aid.
+pub const VALKYRIE_AID_TIER2_FURY: u32 = 20;
+
+/// Anti-frustration pity assist unlocked automatically after consecutive defeats on a level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ValkyrieAidTier {
+    #[default]
+    None,
+    Skirmish,
+    Vanguard,
+}
+
+impl ValkyrieAidTier {
+    /// Maps consecutive defeats on a level to its active Valkyrie's Aid tier.
+    pub const fn from_fails(fails: u8) -> Self {
+        if fails < VALKYRIE_AID_TIER1_FAILS {
+            Self::None
+        } else if fails < VALKYRIE_AID_TIER2_FAILS {
+            Self::Skirmish
+        } else {
+            Self::Vanguard
+        }
+    }
+
+    pub const fn extra_moves(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Skirmish => VALKYRIE_AID_TIER1_MOVES,
+            Self::Vanguard => VALKYRIE_AID_TIER2_MOVES,
+        }
+    }
+
+    pub const fn extra_secs(self) -> f32 {
+        match self {
+            Self::None => 0.0,
+            Self::Skirmish => VALKYRIE_AID_TIER1_SECS,
+            Self::Vanguard => VALKYRIE_AID_TIER2_SECS,
+        }
+    }
+
+    pub const fn starting_fury(self) -> u32 {
+        match self {
+            Self::Vanguard => VALKYRIE_AID_TIER2_FURY,
+            _ => 0,
+        }
+    }
+
+    pub const fn spawns_booster(self) -> bool {
+        matches!(self, Self::Vanguard)
+    }
+
+    pub const fn desc_key(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Skirmish => Some("valkyrie.aid.skirmish"),
+            Self::Vanguard => Some("valkyrie.aid.vanguard"),
+        }
+    }
+}
+
 /// Returns the resource cost required to invoke Last Stand once on defeat.
 pub const fn last_stand_cost() -> ResourceBundle {
     ResourceBundle {
@@ -811,6 +885,22 @@ mod tests {
             vec![PlayMode::ValhallaBlitz, PlayMode::BossRaids]
         );
         assert!(newly_unlocked_modes(0b000011, 0b000001).is_empty());
+    }
+
+    #[test]
+    fn valkyrie_aid_tier_scales_with_consecutive_failures() {
+        assert_eq!(ValkyrieAidTier::from_fails(0), ValkyrieAidTier::None);
+        assert_eq!(ValkyrieAidTier::from_fails(1), ValkyrieAidTier::None);
+        assert_eq!(ValkyrieAidTier::from_fails(2), ValkyrieAidTier::Skirmish);
+        assert_eq!(ValkyrieAidTier::from_fails(3), ValkyrieAidTier::Vanguard);
+        assert_eq!(ValkyrieAidTier::from_fails(5), ValkyrieAidTier::Vanguard);
+
+        assert_eq!(ValkyrieAidTier::None.desc_key(), None);
+        assert_eq!(ValkyrieAidTier::Skirmish.extra_moves(), 2);
+        assert!(!ValkyrieAidTier::Skirmish.spawns_booster());
+        assert_eq!(ValkyrieAidTier::Vanguard.extra_moves(), 3);
+        assert!(ValkyrieAidTier::Vanguard.spawns_booster());
+        assert_eq!(ValkyrieAidTier::Vanguard.starting_fury(), 20);
     }
 
     #[test]

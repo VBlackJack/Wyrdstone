@@ -46,6 +46,7 @@ pub enum SfxKind {
     Upgrade,
     Victory,
     Defeat,
+    LowMovesTick,
 }
 
 /// Marker component for the looping background music entity.
@@ -72,6 +73,7 @@ pub struct SoundBank {
     pub upgrade: Handle<AudioSource>,
     pub victory: Handle<AudioSource>,
     pub defeat: Handle<AudioSource>,
+    pub low_moves_tick: Handle<AudioSource>,
     pub bgm_fjord: Handle<AudioSource>,
     pub bgm_match3: Handle<AudioSource>,
     pub bgm_boss: Handle<AudioSource>,
@@ -132,6 +134,7 @@ pub fn init_sound_bank(
         &mut audio_assets,
         synth_arpeggio(0.65, &[293.66, 261.63, 220.0, 174.61]),
     );
+    let low_moves_tick = add_wav(&mut audio_assets, synth_low_drum(0.13));
     let bgm_fjord = add_wav(&mut audio_assets, synth_nordic_ambient_loop(8.0));
     let bgm_match3 = add_wav(&mut audio_assets, synth_nordic_battle_loop(6.4));
     let bgm_boss = add_wav(&mut audio_assets, synth_nordic_boss_loop(6.4));
@@ -165,6 +168,7 @@ pub fn init_sound_bank(
         upgrade,
         victory,
         defeat,
+        low_moves_tick,
         bgm_fjord,
         bgm_match3,
         bgm_boss,
@@ -252,6 +256,18 @@ pub fn play_sfx(commands: &mut Commands, bank: &SoundBank, kind: SfxKind) {
         SfxKind::Upgrade => bank.upgrade.clone(),
         SfxKind::Victory => bank.victory.clone(),
         SfxKind::Defeat => bank.defeat.clone(),
+        SfxKind::LowMovesTick => bank.low_moves_tick.clone(),
+    };
+    let speed = match kind {
+        SfxKind::MatchCombo(combo) => {
+            let max_notes = COMBO_NOTES_HZ.len() as u32;
+            if combo > max_notes {
+                (1.0 + (combo - max_notes) as f32 * 0.04).min(1.24)
+            } else {
+                1.0
+            }
+        }
+        _ => 1.0,
     };
 
     commands.spawn((
@@ -259,6 +275,7 @@ pub fn play_sfx(commands: &mut Commands, bank: &SoundBank, kind: SfxKind) {
         PlaybackSettings {
             mode: PlaybackMode::Despawn,
             volume: Volume::new(bank.sfx_volume),
+            speed,
             ..default()
         },
     ));
@@ -523,6 +540,20 @@ fn synth_boss_roar(duration_secs: f32) -> Vec<f32> {
             + (TAU * (116.5 - 40.0 * norm) * t).sin() * 0.30;
         let env = (norm * 18.0).min(1.0) * (1.0 - norm).powf(1.5);
         out.push(((growl + noise * 0.28) * env * 0.70).clamp(-0.95, 0.95));
+    }
+    out
+}
+
+fn synth_low_drum(duration_secs: f32) -> Vec<f32> {
+    let n = (duration_secs * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let norm = i as f32 / n.max(1) as f32;
+        let freq = 105.0 - 43.0 * norm;
+        let env = (1.0 - norm).powf(2.4);
+        let hit = (TAU * freq * t).sin() * 0.75 + (TAU * (freq * 0.5) * t).sin() * 0.25;
+        out.push((hit * env * 0.52).clamp(-0.9, 0.9));
     }
     out
 }

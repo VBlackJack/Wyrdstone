@@ -2193,6 +2193,18 @@ pub(super) fn spawn_raids_modal(
                                     },
                                     TextColor(COLOR_ACCENT_GREEN_TEXT),
                                 ));
+                                if let Some(aid_key) =
+                                    ctx.city.valkyrie_aid_for_level(&boss.id).desc_key()
+                                {
+                                    info.spawn((
+                                        Text::new(i18n.t(aid_key)),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_GOLD),
+                                    ));
+                                }
                             });
                         });
 

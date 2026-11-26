@@ -874,6 +874,8 @@ impl GameContext {
             .city
             .building_mastery_spoils_pct(&session.level.building_id);
         session.apply_building_mastery_bonus(mastery_pct);
+        let aid = self.city.valkyrie_aid_for_level(level_id);
+        session.apply_valkyrie_aid(aid, &mut self.rng);
         self.active_gauntlet = None;
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
@@ -910,6 +912,8 @@ impl GameContext {
         session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        let aid = self.city.valkyrie_aid_for_level(boss_id);
+        session.apply_valkyrie_aid(aid, &mut self.rng);
         self.active_gauntlet = None;
         self.active_level_id = Some(boss_id.to_string());
         self.active_session = Some(session);

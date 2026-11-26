@@ -3474,3 +3474,126 @@ fn building_mastery_perks_and_repeatable_collection_charging_work() {
     assert!(!legacy.is_collection_ready(midgard));
     assert_eq!(legacy.total_relics_collected(&data.collections), 3);
 }
+
+#[test]
+fn valkyrie_aid_threat_ratings_and_defeat_tips_work() {
+    use wyrdstone_core::{
+        ThreatRating, ValkyrieAidTier, MAX_VALKYRIE_FAIL_STREAK, VALKYRIE_AID_TIER1_MOVES,
+        VALKYRIE_AID_TIER2_FURY, VALKYRIE_AID_TIER2_MOVES, VALKYRIE_AID_TIER2_SECS,
+    };
+
+    let data = GameDataBundle::load_bundled(Language::En).expect("bundled data loads");
+    let mut rng = StdRng::seed_from_u64(909);
+    let mut city = CityState::new(&data.balance);
+    let timed_lvl_id = "meadery_2";
+
+    assert_eq!(
+        city.valkyrie_aid_for_level(timed_lvl_id),
+        ValkyrieAidTier::None
+    );
+    city.record_level_defeat(timed_lvl_id);
+    assert_eq!(city.level_fail_streak(timed_lvl_id), 1);
+    assert_eq!(
+        city.valkyrie_aid_for_level(timed_lvl_id),
+        ValkyrieAidTier::None
+    );
+
+    city.record_level_defeat(timed_lvl_id);
+    assert_eq!(city.level_fail_streak(timed_lvl_id), 2);
+    assert_eq!(
+        city.valkyrie_aid_for_level(timed_lvl_id),
+        ValkyrieAidTier::Skirmish
+    );
+
+    for _ in 0..5 {
+        city.record_level_defeat(timed_lvl_id);
+    }
+    assert_eq!(
+        city.level_fail_streak(timed_lvl_id),
+        MAX_VALKYRIE_FAIL_STREAK
+    );
+    assert_eq!(
+        city.valkyrie_aid_for_level(timed_lvl_id),
+        ValkyrieAidTier::Vanguard
+    );
+
+    // Clamp & prune zero streaks during sanitize.
+    city.level_fail_streaks.insert("bogus".to_string(), 99);
+    city.level_fail_streaks.insert("zero".to_string(), 0);
+    city.sanitize(&data.buildings, &data.balance);
+    assert_eq!(city.level_fail_streak("bogus"), MAX_VALKYRIE_FAIL_STREAK);
+    assert!(!city.level_fail_streaks.contains_key("zero"));
+
+    // Apply Skirmish & Vanguard Valkyrie Aid to a timed session (preserves initial_moves invariant).
+    let lvl = data.level_by_id(timed_lvl_id).unwrap().clone();
+    let mut session = LevelSession::start_full(
+        lvl,
+        None,
+        city.compute_bonuses(&data.balance),
+        PatronGod::Thor,
+        None,
+        &mut rng,
+    );
+    let base_moves = session.initial_moves;
+    let base_time = session.time_left_secs.unwrap();
+    session.apply_valkyrie_aid(ValkyrieAidTier::Skirmish, &mut rng);
+    assert_eq!(session.initial_moves, base_moves + VALKYRIE_AID_TIER1_MOVES);
+    assert_eq!(session.moves_left, base_moves + VALKYRIE_AID_TIER1_MOVES);
+
+    session.apply_valkyrie_aid(ValkyrieAidTier::Vanguard, &mut rng);
+    assert_eq!(
+        session.initial_moves,
+        base_moves + VALKYRIE_AID_TIER1_MOVES + VALKYRIE_AID_TIER2_MOVES
+    );
+    assert_eq!(session.moves_left, session.initial_moves);
+    assert!(session.time_left_secs.unwrap() > base_time + VALKYRIE_AID_TIER2_SECS);
+    assert!(session.fury >= VALKYRIE_AID_TIER2_FURY);
+
+    // Trial and Blitz sessions ignore Valkyrie's Aid.
+    let mut trial = LevelSession::start_trial(&data.trials[0], &data.balance).expect("trial");
+    let trial_moves = trial.moves_left;
+    trial.apply_valkyrie_aid(ValkyrieAidTier::Vanguard, &mut rng);
+    assert_eq!(trial.moves_left, trial_moves);
+    assert_eq!(trial.defeat_tip_key(), "tip.defeat.trial");
+
+    let mut blitz = LevelSession::start_valhalla_blitz_with(
+        None,
+        city.compute_bonuses(&data.balance),
+        PatronGod::Odin,
+        &data.balance,
+        &mut rng,
+    );
+    let blitz_time = blitz.time_left_secs;
+    blitz.apply_valkyrie_aid(ValkyrieAidTier::Vanguard, &mut rng);
+    assert_eq!(blitz.time_left_secs, blitz_time);
+
+    let boss = data.boss_by_id("boss_fenrir").expect("boss exists").clone();
+    let boss_session = LevelSession::start_boss_with(
+        boss,
+        None,
+        city.compute_bonuses(&data.balance),
+        PatronGod::Thor,
+        &data.balance,
+        &mut rng,
+    );
+    assert_eq!(boss_session.defeat_tip_key(), "tip.defeat.boss");
+
+    // Victory clears the fail streak cleanly.
+    city.clear_level_fail_streak(timed_lvl_id);
+    assert_eq!(city.level_fail_streak(timed_lvl_id), 0);
+    assert_eq!(
+        city.valkyrie_aid_for_level(timed_lvl_id),
+        ValkyrieAidTier::None
+    );
+
+    // All 4 ThreatRating tiers must appear across the 18 bundled building levels.
+    let mut seen_threats = std::collections::HashSet::new();
+    for level in &data.levels {
+        seen_threats.insert(level.threat_rating() as u8);
+        assert!(!level.tactical_tip_key().is_empty());
+    }
+    assert!(seen_threats.contains(&(ThreatRating::Skirmish as u8)));
+    assert!(seen_threats.contains(&(ThreatRating::Battle as u8)));
+    assert!(seen_threats.contains(&(ThreatRating::Fierce as u8)));
+    assert!(seen_threats.contains(&(ThreatRating::Ragnarok as u8)));
+}

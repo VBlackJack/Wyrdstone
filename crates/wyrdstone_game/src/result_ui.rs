@@ -1320,6 +1320,67 @@ fn spawn_result_ui(
                                                 }
                                             },
                                         );
+                                        let aid_eligible = session.level.building_id
+                                            == wyrdstone_core::BOSS_RAID_BUILDING_ID
+                                            || ctx.data.level_by_id(&session.level.id).is_some();
+                                        if aid_eligible {
+                                            if let Some(aid_key) = ctx
+                                                .city
+                                                .valkyrie_aid_for_level(&session.level.id)
+                                                .desc_key()
+                                            {
+                                                card.spawn((
+                                                    Node {
+                                                        padding: UiRect::axes(
+                                                            Val::Px(12.0),
+                                                            Val::Px(7.0),
+                                                        ),
+                                                        border: UiRect::all(Val::Px(1.5)),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgba(
+                                                        0.18, 0.13, 0.07, 0.92,
+                                                    )),
+                                                    BorderColor(COLOR_ACCENT_GOLD),
+                                                    BorderRadius::all(Val::Px(8.0)),
+                                                ))
+                                                .with_children(|abox| {
+                                                    abox.spawn((
+                                                        Text::new(i18n.t_fmt(
+                                                            "result.valkyrie.ready",
+                                                            &[("aid", i18n.t(aid_key).to_string())],
+                                                        )),
+                                                        TextFont {
+                                                            font_size: FONT_SMALL,
+                                                            ..default()
+                                                        },
+                                                        TextColor(COLOR_ACCENT_GOLD),
+                                                    ));
+                                                });
+                                            }
+                                        }
+                                        card.spawn((
+                                            Node {
+                                                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::srgba(0.08, 0.14, 0.20, 0.90)),
+                                            BorderColor(COLOR_ACCENT_TEAL),
+                                            BorderRadius::all(Val::Px(8.0)),
+                                        ))
+                                        .with_children(
+                                            |tbox| {
+                                                tbox.spawn((
+                                                    Text::new(i18n.t(session.defeat_tip_key())),
+                                                    TextFont {
+                                                        font_size: FONT_SMALL,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                                ));
+                                            },
+                                        );
                                         if session.can_use_last_stand() {
                                             let ls_cost = last_stand_cost();
                                             let can_afford_ls =

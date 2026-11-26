@@ -30,10 +30,10 @@ use crate::patron::{
     PatronGod, FURY_CHARGE_MAX, FURY_PER_COMBO_STEP, FURY_PER_OBSTACLE, FURY_PER_TILE,
 };
 use crate::retention::{
-    ValhallaFlameTier, LAST_STAND_EXTRA_MOVES, LAST_STAND_EXTRA_SECS, MAX_PATRON_DEVOTION_TIER,
-    PATRON_DEVOTION_BOSS_DMG_PCT_AT_TIER5, PATRON_DEVOTION_FURY_PCT_PER_TIER,
-    PATRON_DEVOTION_SCORE_PCT_PER_TIER, PATRON_DEVOTION_START_FURY_AT_TIER3,
-    WEEKLY_CHALLENGE_BUILDING_ID, WEEKLY_MEDAL_THRESHOLDS,
+    ValhallaFlameTier, ValkyrieAidTier, LAST_STAND_EXTRA_MOVES, LAST_STAND_EXTRA_SECS,
+    MAX_PATRON_DEVOTION_TIER, PATRON_DEVOTION_BOSS_DMG_PCT_AT_TIER5,
+    PATRON_DEVOTION_FURY_PCT_PER_TIER, PATRON_DEVOTION_SCORE_PCT_PER_TIER,
+    PATRON_DEVOTION_START_FURY_AT_TIER3, WEEKLY_CHALLENGE_BUILDING_ID, WEEKLY_MEDAL_THRESHOLDS,
 };
 use crate::trials::TrialDef;
 use crate::turn::{Turn, TurnStep};
@@ -186,6 +186,26 @@ pub struct ObjectiveProgress {
 impl ObjectiveProgress {
     pub fn is_complete(&self) -> bool {
         self.done >= self.target
+    }
+}
+
+/// Sawtooth threat tier summarizing obstacle, hazard, and timer pressure on a board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatRating {
+    Skirmish,
+    Battle,
+    Fierce,
+    Ragnarok,
+}
+
+impl ThreatRating {
+    pub const fn label_key(self) -> &'static str {
+        match self {
+            Self::Skirmish => "city.threat.skirmish",
+            Self::Battle => "city.threat.battle",
+            Self::Fierce => "city.threat.fierce",
+            Self::Ragnarok => "city.threat.ragnarok",
+        }
     }
 }
 
@@ -482,6 +502,60 @@ impl LevelDef {
                 gold: 150,
                 mead: 25,
             },
+        }
+    }
+
+    /// Computes a weighted structural threat score from obstacles, hazards, timers, and rune count.
+    pub fn threat_score(&self) -> u32 {
+        let ice_layers: u32 = self.ice_cells.iter().map(|&(_, _, l)| u32::from(l)).sum();
+        let crate_layers: u32 = self.crate_cells.iter().map(|&(_, _, l)| u32::from(l)).sum();
+        ice_layers
+            .saturating_add((self.chained_cells.len() as u32).saturating_mul(2))
+            .saturating_add(crate_layers.saturating_mul(2))
+            .saturating_add((self.relic_cells.len() as u32).saturating_mul(3))
+            .saturating_add(if self.rune_types_count >= 6 { 4 } else { 0 })
+            .saturating_add(if self.time_limit_seconds.is_some() {
+                10
+            } else {
+                0
+            })
+            .saturating_add(if self.frost_spread { 14 } else { 0 })
+            .saturating_add(if self.fog_cells.is_empty() { 0 } else { 8 })
+            .saturating_add(if self.portals.is_empty() { 0 } else { 6 })
+            .saturating_add(if self.cursed_cells.is_empty() { 0 } else { 18 })
+            .saturating_add(if self.objectives.len() >= 3 { 6 } else { 0 })
+    }
+
+    /// Maps the board's structural complexity score onto one of four ThreatRating tiers.
+    pub fn threat_rating(&self) -> ThreatRating {
+        match self.threat_score() {
+            0..=19 => ThreatRating::Skirmish,
+            20..=44 => ThreatRating::Battle,
+            45..=79 => ThreatRating::Fierce,
+            _ => ThreatRating::Ragnarok,
+        }
+    }
+
+    /// Returns a pre-launch tactical hint matching the board's dominant hazard or objective.
+    pub fn tactical_tip_key(&self) -> &'static str {
+        if !self.cursed_cells.is_empty() {
+            "tip.tactical.cursed"
+        } else if self.frost_spread {
+            "tip.tactical.frost"
+        } else if !self.fog_cells.is_empty() {
+            "tip.tactical.fog"
+        } else if self.time_limit_seconds.is_some() {
+            "tip.tactical.timed"
+        } else if self
+            .objectives
+            .iter()
+            .any(|o| matches!(o, Objective::DropRelics { .. }))
+        {
+            "tip.tactical.relics"
+        } else if !self.chained_cells.is_empty() || !self.crate_cells.is_empty() {
+            "tip.tactical.obstacles"
+        } else {
+            "tip.tactical.boosters"
         }
     }
 }
@@ -1004,6 +1078,32 @@ impl LevelSession {
     pub fn apply_building_mastery_bonus(&mut self, extra_resource_pct: u32) {
         if !self.is_trial && extra_resource_pct > 0 {
             self.resource_bonus_pct = self.resource_bonus_pct.saturating_add(extra_resource_pct);
+        }
+    }
+
+    /// Applies anti-frustration Valkyrie's Aid bonuses after consecutive defeats (moves, optional
+    /// time extension, starting booster, and starting Divine Fury). Ignored on Trials and Blitz.
+    pub fn apply_valkyrie_aid<R: Rng>(&mut self, tier: ValkyrieAidTier, rng: &mut R) {
+        if self.is_trial || self.is_blitz || tier == ValkyrieAidTier::None {
+            return;
+        }
+        let extra_moves = tier.extra_moves();
+        self.initial_moves = self.initial_moves.saturating_add(extra_moves);
+        self.moves_left = self.moves_left.saturating_add(extra_moves);
+        if let Some(secs) = self.time_left_secs.as_mut() {
+            *secs += tier.extra_secs();
+        }
+        if tier.spawns_booster() {
+            let booster = match rng.gen_range(0..3usize) {
+                0 => Booster::LineHorizontal,
+                1 => Booster::LineVertical,
+                _ => Booster::Bomb,
+            };
+            let _ = self.board.spawn_specific_starting_booster(booster, rng);
+        }
+        let fury_bonus = tier.starting_fury();
+        if fury_bonus > 0 {
+            self.fury = self.fury.saturating_add(fury_bonus).min(self.fury_max);
         }
     }
 
@@ -1684,5 +1784,27 @@ impl LevelSession {
             gold: scale(self.level.base_reward.gold),
             mead: scale(self.level.base_reward.mead),
         }
+    }
+
+    /// Returns a targeted defeat coaching tip based on the failed session's mode and incomplete objective.
+    pub fn defeat_tip_key(&self) -> &'static str {
+        if self.is_trial {
+            return "tip.defeat.trial";
+        }
+        if self.boss.is_some() {
+            return "tip.defeat.boss";
+        }
+        if self.time_left_secs == Some(0.0) {
+            return "tip.defeat.time";
+        }
+        if let Some(unfinished) = self.objectives.iter().find(|p| !p.is_complete()) {
+            return match unfinished.objective {
+                Objective::DropRelics { .. } => "tip.defeat.relics",
+                Objective::ClearIce { .. } => "tip.defeat.ice",
+                Objective::CollectRune { .. } => "tip.defeat.runes",
+                Objective::ReachScore { .. } => "tip.defeat.score",
+            };
+        }
+        "tip.tactical.boosters"
     }
 }

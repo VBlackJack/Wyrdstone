@@ -27,10 +27,10 @@ use crate::level::LevelDef;
 use crate::patron::PatronGod;
 use crate::retention::{
     patron_devotion_upgrade_cost, DailyBountyBoard, OfflineVaultSummary, PlayMode, SkaldPassState,
-    ValhallaFlameTier, WeeklyChallengeState, LEGEND_RANK_GLORY_STEP, LEGEND_SPOILS_MAX_BONUS_PCT,
-    LEGEND_SPOILS_PCT_PER_LEVEL, MAX_PATRON_DEVOTION_TIER, OFFLINE_VAULT_BASE_MAX_HOURS,
-    OFFLINE_VAULT_CYCLE_SECS, OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER,
-    OFFLINE_VAULT_MIN_ABSENCE_SECS,
+    ValhallaFlameTier, ValkyrieAidTier, WeeklyChallengeState, LEGEND_RANK_GLORY_STEP,
+    LEGEND_SPOILS_MAX_BONUS_PCT, LEGEND_SPOILS_PCT_PER_LEVEL, MAX_PATRON_DEVOTION_TIER,
+    MAX_VALKYRIE_FAIL_STREAK, OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
+    OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS,
 };
 use crate::trials::{TrialDef, TRIAL_PAR_BONUS_GLORY};
 use crate::turn::ClearStatsDelta;
@@ -511,6 +511,8 @@ pub struct CityState {
     pub patron_devotion: HashMap<PatronGod, u8>,
     #[serde(default)]
     pub weekly_challenge: WeeklyChallengeState,
+    #[serde(default)]
+    pub level_fail_streaks: HashMap<String, u8>,
 }
 
 impl CityState {
@@ -560,6 +562,7 @@ impl CityState {
             skald_pass: SkaldPassState::default(),
             patron_devotion: HashMap::new(),
             weekly_challenge: WeeklyChallengeState::default(),
+            level_fail_streaks: HashMap::new(),
         }
     }
 
@@ -609,6 +612,10 @@ impl CityState {
             *tier = (*tier).min(MAX_PATRON_DEVOTION_TIER);
         }
         self.weekly_challenge.sanitize();
+        for fails in self.level_fail_streaks.values_mut() {
+            *fails = (*fails).min(MAX_VALKYRIE_FAIL_STREAK);
+        }
+        self.level_fail_streaks.retain(|_, v| *v > 0);
     }
 
     /// Returns true if the 7-day Fjord Login Tribute has not yet been claimed today.
@@ -815,6 +822,30 @@ impl CityState {
     /// Resets the active win streak on defeat or retreat.
     pub fn reset_win_streak(&mut self) {
         self.stats.win_streak = 0;
+    }
+
+    /// Records a non-Last-Stand defeat on `level_id` for anti-frustration Valkyrie's Aid.
+    pub fn record_level_defeat(&mut self, level_id: &str) {
+        let entry = self
+            .level_fail_streaks
+            .entry(level_id.to_string())
+            .or_insert(0);
+        *entry = entry.saturating_add(1).min(MAX_VALKYRIE_FAIL_STREAK);
+    }
+
+    /// Clears the consecutive defeat streak for `level_id` upon victory.
+    pub fn clear_level_fail_streak(&mut self, level_id: &str) {
+        self.level_fail_streaks.remove(level_id);
+    }
+
+    /// Returns the consecutive defeat streak recorded for `level_id`.
+    pub fn level_fail_streak(&self, level_id: &str) -> u8 {
+        self.level_fail_streaks.get(level_id).copied().unwrap_or(0)
+    }
+
+    /// Returns the active Valkyrie's Aid tier unlocked for `level_id`.
+    pub fn valkyrie_aid_for_level(&self, level_id: &str) -> ValkyrieAidTier {
+        ValkyrieAidTier::from_fails(self.level_fail_streak(level_id))
     }
 
     /// Returns the active Valhalla Flame win-streak tier.
