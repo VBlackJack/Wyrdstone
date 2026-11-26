@@ -50,14 +50,20 @@ pub struct ToastLife(pub f32);
 /// Spawns an absolutely positioned notice toast near the bottom of its parent.
 ///
 /// The toast does not take part in the flex layout and never intercepts pointer input.
-pub fn spawn_notice_toast(parent: &mut ChildBuilder, text: &str, life_secs: Option<f32>) {
+pub fn spawn_notice_toast(
+    parent: &mut ChildBuilder,
+    text: &str,
+    life_secs: Option<f32>,
+    bottom_offset_px: f32,
+) {
     let mut cmd = parent.spawn((
         NoticeToast,
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(0.0),
             right: Val::Px(0.0),
-            bottom: Val::Px(NOTICE_TOAST_BOTTOM_PX),
+            bottom: Val::Px(NOTICE_TOAST_BOTTOM_PX + bottom_offset_px),
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(0.0)),
             justify_content: JustifyContent::Center,
             ..default()
         },

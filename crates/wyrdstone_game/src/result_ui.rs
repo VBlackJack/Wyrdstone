@@ -18,6 +18,7 @@
 
 use crate::audio::{play_sfx, SfxKind, SoundBank};
 use crate::fjord_art::FjordTextures;
+use crate::platform::SafeAreaInsets;
 use crate::scroll::{
     spawn_scrollbar_track, PressArm, ScrollMoreHint, ScrollPanelKind, ScrollablePanel,
     UiScrollMemory,
@@ -168,6 +169,7 @@ pub fn setup_result_ui(
     fjord_art: Res<FjordTextures>,
     vfx: Res<VfxTextures>,
     sound_bank: Res<SoundBank>,
+    safe_area: Res<SafeAreaInsets>,
     mut scroll_mem: ResMut<UiScrollMemory>,
 ) {
     scroll_mem.modal_offset_y = 0.0;
@@ -176,7 +178,7 @@ pub fn setup_result_ui(
     if !is_victory {
         play_sfx(&mut commands, &sound_bank, SfxKind::Defeat);
     }
-    spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx);
+    spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx, *safe_area);
 }
 
 fn spawn_result_ui(
@@ -184,6 +186,7 @@ fn spawn_result_ui(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
 ) {
     let i18n = &ctx.data.i18n;
     let is_victory = ctx.last_outcome == Some(LevelOutcome::Victory);
@@ -232,7 +235,12 @@ fn spawn_result_ui(
                     height: Val::Percent(100.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    padding: UiRect::all(Val::Px(24.0)),
+                    padding: UiRect {
+                        left: Val::Px(16.0 + safe.left),
+                        right: Val::Px(16.0 + safe.right),
+                        top: Val::Px(16.0 + safe.top),
+                        bottom: Val::Px(16.0 + safe.bottom),
+                    },
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.03, 0.05, 0.09, 0.76)),
@@ -1654,7 +1662,12 @@ pub fn handle_result_buttons(
     mut next_state: ResMut<NextState<AppState>>,
     touches: Res<Touches>,
     scroll_mem: Res<UiScrollMemory>,
-    (fjord_art, vfx, sound_bank): (Res<FjordTextures>, Res<VfxTextures>, Res<SoundBank>),
+    (fjord_art, vfx, sound_bank, safe_area): (
+        Res<FjordTextures>,
+        Res<VfxTextures>,
+        Res<SoundBank>,
+        Res<SafeAreaInsets>,
+    ),
     (mut press_arm, mut focus_idx): (Local<PressArm>, Local<Option<usize>>),
     roots: Query<Entity, With<ResultRoot>>,
     buttons: Query<(Entity, &Interaction, &ResultAction), Changed<Interaction>>,
@@ -1721,7 +1734,7 @@ pub fn handle_result_buttons(
                 for root in &roots {
                     commands.entity(root).try_despawn_recursive();
                 }
-                spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx);
+                spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx, *safe_area);
             }
             return;
         }
@@ -1787,7 +1800,7 @@ pub fn handle_result_buttons(
             for root in &roots {
                 commands.entity(root).try_despawn_recursive();
             }
-            spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx);
+            spawn_result_ui(&mut commands, &ctx, &fjord_art, &vfx, *safe_area);
         }
         return;
     }

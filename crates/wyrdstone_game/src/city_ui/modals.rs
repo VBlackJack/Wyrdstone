@@ -22,6 +22,7 @@ use super::{
 };
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
+use crate::platform::SafeAreaInsets;
 use crate::scroll::{spawn_scrollbar_track, ScrollMoreHint, ScrollPanelKind, ScrollablePanel};
 use crate::state::{today_day_index, ActiveModal, GameContext};
 use crate::theme::*;
@@ -206,6 +207,7 @@ fn spawn_modal_shell<F>(
     title: &str,
     close_label: &str,
     close_action: CityAction,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
     body_fn: F,
 ) where
@@ -220,6 +222,7 @@ fn spawn_modal_shell<F>(
         title,
         close_label,
         close_action,
+        safe,
         scroll_offset_y,
         true,
         true,
@@ -237,6 +240,7 @@ fn spawn_modal_shell_ex<F>(
     title: &str,
     close_label: &str,
     close_action: CityAction,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
     dismiss_on_backdrop: bool,
     show_header_close: bool,
@@ -255,7 +259,12 @@ fn spawn_modal_shell_ex<F>(
             height: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            padding: UiRect::all(Val::Px(14.0)),
+            padding: UiRect {
+                left: Val::Px(14.0 + safe.left),
+                right: Val::Px(14.0 + safe.right),
+                top: Val::Px(14.0 + safe.top),
+                bottom: Val::Px(14.0 + safe.bottom),
+            },
             ..default()
         },
         BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),
@@ -435,6 +444,7 @@ pub(super) fn spawn_amulets_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -447,6 +457,7 @@ pub(super) fn spawn_amulets_modal(
         i18n.t("city.panel.amulets.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Amulets),
+        safe,
         scroll_offset_y,
         |modal| {
             spawn_modal_resource_strip(modal, ctx, vfx);
@@ -706,6 +717,7 @@ pub(super) fn spawn_collections_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -718,6 +730,7 @@ pub(super) fn spawn_collections_modal(
         i18n.t("city.panel.collections.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Collections),
+        safe,
         scroll_offset_y,
         |modal| {
             let claimable_cols = ctx.city.claimable_collection_count(&ctx.data.collections);
@@ -953,6 +966,7 @@ pub(super) fn spawn_tool_shop_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -965,6 +979,7 @@ pub(super) fn spawn_tool_shop_modal(
         i18n.t("city.panel.shop.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Shop),
+        safe,
         scroll_offset_y,
         |modal| {
             spawn_modal_resource_strip(modal, ctx, vfx);
@@ -1144,6 +1159,7 @@ pub(super) fn spawn_stats_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -1157,6 +1173,7 @@ pub(super) fn spawn_stats_modal(
         i18n.t("city.panel.stats.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Stats),
+        safe,
         scroll_offset_y,
         |card| {
             let bal = &ctx.data.balance;
@@ -1308,12 +1325,14 @@ pub(super) fn spawn_stats_modal(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_settings_modal(
     root: &mut ChildBuilder,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
     sound_bank: &SoundBank,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
     #[cfg(not(target_os = "android"))] is_fullscreen: bool,
 ) {
@@ -1327,6 +1346,7 @@ pub(super) fn spawn_settings_modal(
         i18n.t("city.panel.settings.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Settings),
+        safe,
         scroll_offset_y,
         |card| {
             let sound_label = if sound_bank.muted {
@@ -1544,6 +1564,7 @@ pub(super) fn spawn_help_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -1556,6 +1577,7 @@ pub(super) fn spawn_help_modal(
         i18n.t("city.panel.help.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Help),
+        safe,
         scroll_offset_y,
         |card| {
             for (t_key, b_key) in [
@@ -1606,6 +1628,7 @@ pub(super) fn spawn_patrons_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -1618,6 +1641,7 @@ pub(super) fn spawn_patrons_modal(
         i18n.t("city.panel.patrons.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Patrons),
+        safe,
         scroll_offset_y,
         |modal| {
             for god in PatronGod::ALL {
@@ -1848,6 +1872,7 @@ pub(super) fn spawn_raids_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -1862,6 +1887,7 @@ pub(super) fn spawn_raids_modal(
         i18n.t("city.panel.raids.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Raids),
+        safe,
         scroll_offset_y,
         |modal| {
             let glory_lbl = i18n.t_fmt(
@@ -2199,6 +2225,7 @@ pub(super) fn spawn_trials_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -2211,6 +2238,7 @@ pub(super) fn spawn_trials_modal(
         i18n.t("city.panel.trials.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Trials),
+        safe,
         scroll_offset_y,
         |modal| {
             modal.spawn((
@@ -2358,6 +2386,7 @@ pub(super) fn spawn_achievements_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -2370,6 +2399,7 @@ pub(super) fn spawn_achievements_modal(
         i18n.t("city.panel.feats.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::ToggleModal(ActiveModal::Achievements),
+        safe,
         scroll_offset_y,
         |modal| {
             let claimable_feats = ctx.city.claimable_achievement_count(
@@ -2546,6 +2576,7 @@ pub(super) fn spawn_expedition_boons_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -2565,6 +2596,7 @@ pub(super) fn spawn_expedition_boons_modal(
         &title,
         i18n.t("city.panel.expedition.later"),
         CityAction::CloseModal,
+        safe,
         scroll_offset_y,
         |modal| {
             if (run.wave + 1).is_multiple_of(5) {
@@ -2790,6 +2822,7 @@ pub(super) fn spawn_login_calendar_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -2806,6 +2839,7 @@ pub(super) fn spawn_login_calendar_modal(
         i18n.t("city.panel.tribute.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::CloseModal,
+        safe,
         scroll_offset_y,
         |modal| {
             modal.spawn((
@@ -2989,6 +3023,7 @@ pub(super) fn spawn_chapter_dialogue_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -3004,6 +3039,7 @@ pub(super) fn spawn_chapter_dialogue_modal(
         i18n.t(&dlg.title_key),
         i18n.t("city.chapter.continue"),
         CityAction::CloseModal,
+        safe,
         scroll_offset_y,
         false,
         false,
@@ -3080,6 +3116,7 @@ pub(super) fn spawn_welcome_back_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -3117,6 +3154,7 @@ pub(super) fn spawn_welcome_back_modal(
         i18n.t("city.vault.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::CloseModal,
+        safe,
         scroll_offset_y,
         false,
         false,
@@ -3191,6 +3229,7 @@ pub(super) fn spawn_bounties_modal(
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
+    safe: SafeAreaInsets,
     scroll_offset_y: f32,
 ) {
     let i18n = &ctx.data.i18n;
@@ -3203,6 +3242,7 @@ pub(super) fn spawn_bounties_modal(
         i18n.t("city.panel.bounties.title"),
         i18n.t("city.panel.amulets.close"),
         CityAction::CloseModal,
+        safe,
         scroll_offset_y,
         |modal| {
             let claimable_bounties = ctx.city.daily_bounties.claimable_count();

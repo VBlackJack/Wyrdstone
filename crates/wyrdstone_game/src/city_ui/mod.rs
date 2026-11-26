@@ -1225,8 +1225,8 @@ fn spawn_city_tree(
                 } else {
                     Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Px(14.0),
-                        bottom: Val::Px(14.0),
+                        left: Val::Px(14.0 + safe.left),
+                        bottom: Val::Px(14.0 + safe.bottom),
                         max_width: Val::Px(460.0),
                         justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::Center,
@@ -1356,9 +1356,9 @@ fn spawn_city_tree(
                 } else {
                     Node {
                         position_type: PositionType::Absolute,
-                        top: Val::Px(82.0),
-                        bottom: Val::Px(14.0),
-                        right: Val::Px(14.0),
+                        top: Val::Px(82.0 + safe.top),
+                        bottom: Val::Px(14.0 + safe.bottom),
+                        right: Val::Px(14.0 + safe.right),
                         width: Val::Px(390.0),
                         max_width: Val::Percent(92.0),
                         min_height: Val::Px(0.0),
@@ -1558,9 +1558,9 @@ fn spawn_city_tree(
                         Node {
                             display: Display::None,
                             position_type: PositionType::Absolute,
-                            left: Val::Px(0.0),
-                            right: Val::Px(0.0),
-                            bottom: Val::Px(14.0),
+                            left: Val::Px(safe.left),
+                            right: Val::Px(safe.right),
+                            bottom: Val::Px(14.0 + safe.bottom),
                             justify_content: JustifyContent::Center,
                             ..default()
                         },
@@ -1601,16 +1601,16 @@ fn spawn_city_tree(
             match ctx.active_modal {
                 ActiveModal::None => {}
                 ActiveModal::Amulets => {
-                    modals::spawn_amulets_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_amulets_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Collections => {
-                    modals::spawn_collections_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_collections_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Shop => {
-                    modals::spawn_tool_shop_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_tool_shop_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Stats => {
-                    modals::spawn_stats_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_stats_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Settings => modals::spawn_settings_modal(
                     viewport,
@@ -1618,46 +1618,52 @@ fn spawn_city_tree(
                     fjord_art,
                     vfx,
                     sound_bank,
+                    safe,
                     m_scroll,
                     #[cfg(not(target_os = "android"))]
                     is_fullscreen,
                 ),
                 ActiveModal::Help => {
-                    modals::spawn_help_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_help_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Raids => {
-                    modals::spawn_raids_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_raids_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Trials => {
-                    modals::spawn_trials_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_trials_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Patrons => {
-                    modals::spawn_patrons_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_patrons_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Achievements => {
-                    modals::spawn_achievements_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_achievements_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
-                ActiveModal::ExpeditionBoons => {
-                    modals::spawn_expedition_boons_modal(viewport, ctx, fjord_art, vfx, m_scroll)
-                }
-                ActiveModal::LoginCalendar => {
-                    modals::spawn_login_calendar_modal(viewport, ctx, fjord_art, vfx, m_scroll)
-                }
-                ActiveModal::ChapterDialogue => {
-                    modals::spawn_chapter_dialogue_modal(viewport, ctx, fjord_art, vfx, m_scroll)
-                }
+                ActiveModal::ExpeditionBoons => modals::spawn_expedition_boons_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll,
+                ),
+                ActiveModal::LoginCalendar => modals::spawn_login_calendar_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll,
+                ),
+                ActiveModal::ChapterDialogue => modals::spawn_chapter_dialogue_modal(
+                    viewport, ctx, fjord_art, vfx, safe, m_scroll,
+                ),
                 ActiveModal::WelcomeBack => {
-                    modals::spawn_welcome_back_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_welcome_back_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
                 ActiveModal::Bounties => {
-                    modals::spawn_bounties_modal(viewport, ctx, fjord_art, vfx, m_scroll)
+                    modals::spawn_bounties_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
             }
 
             // 5. Hub-level notice toast (modals and the inspector render notices themselves).
             if ctx.active_modal == ActiveModal::None && !inspector_open {
                 if let Some(notice_key) = &ctx.status_notice_key {
-                    spawn_notice_toast(viewport, i18n.t(notice_key), None);
+                    let toast_bottom = if is_portrait {
+                        PORTRAIT_BOTTOM_NAV_HEIGHT_PX + 10.0 + safe.bottom
+                    } else {
+                        safe.bottom
+                    };
+                    spawn_notice_toast(viewport, i18n.t(notice_key), None, toast_bottom);
                 }
             }
         });

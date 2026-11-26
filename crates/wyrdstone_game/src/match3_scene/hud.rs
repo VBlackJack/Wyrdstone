@@ -1911,7 +1911,12 @@ pub(super) fn spawn_match3_hud(
                         height: Val::Percent(100.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        padding: UiRect::all(Val::Px(14.0)),
+                        padding: UiRect {
+                            left: Val::Px(14.0 + safe.left),
+                            right: Val::Px(14.0 + safe.right),
+                            top: Val::Px(14.0 + safe.top),
+                            bottom: Val::Px(14.0 + safe.bottom),
+                        },
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.80)),

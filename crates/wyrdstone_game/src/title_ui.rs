@@ -384,7 +384,7 @@ fn spawn_title_tree(
             // Save and recovery notices (restored from backup, read-only, unreadable save).
             if let Some(notice_key) = &ctx.status_notice_key {
                 let life = (!ctx.save_read_only).then_some(NOTICE_TOAST_DURATION_SECS);
-                spawn_notice_toast(bg, i18n.t(notice_key), life);
+                spawn_notice_toast(bg, i18n.t(notice_key), life, safe.bottom);
             }
         });
 }
