@@ -2407,6 +2407,7 @@ pub(super) fn spawn_match3_hud(
                                         } else {
                                             i18n.t("city.panel.reduced_motion.off")
                                         };
+                                        #[cfg_attr(target_os = "android", allow(unused_mut))]
                                         let mut quick_btns: Vec<(
                                             String,
                                             Match3UiAction,

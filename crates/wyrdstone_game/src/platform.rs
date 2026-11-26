@@ -115,12 +115,9 @@ pub fn handle_haptic_events(mut events: EventReader<HapticEvent>) {
 }
 
 /// True when the current platform supports toggling fullscreen mode from in-game UI.
+#[cfg(not(target_os = "android"))]
 pub fn is_fullscreen_supported() -> bool {
-    #[cfg(target_os = "android")]
-    {
-        false
-    }
-    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         true
     }
