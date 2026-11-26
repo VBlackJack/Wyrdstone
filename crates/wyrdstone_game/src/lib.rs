@@ -107,115 +107,117 @@ pub fn run_app() {
         .init_resource::<platform::SafeAreaInsets>()
         .add_event::<platform::HapticEvent>()
         .init_resource::<scroll::UiScrollMemory>()
-        .init_state::<AppState>()
-        .add_systems(
-            PreStartup,
-            (
-                setup_camera,
-                runes_art::init_rune_textures,
-                vfx_art::init_vfx_textures,
-                fjord_art::init_fjord_textures,
-                audio::init_sound_bank,
-            ),
+        .init_state::<AppState>();
+    ui_style::install_box_shadow_cull_guard(&mut app);
+
+    app.add_systems(
+        PreStartup,
+        (
+            setup_camera,
+            runes_art::init_rune_textures,
+            vfx_art::init_vfx_textures,
+            fjord_art::init_fjord_textures,
+            audio::init_sound_bank,
+        ),
+    )
+    .add_systems(Startup, enter_title_after_boot)
+    .add_systems(PreUpdate, map_back_key_to_escape.after(InputSystem))
+    .add_systems(
+        Update,
+        (
+            tick_energy_regen,
+            handle_global_shortcuts,
+            audio::handle_app_lifecycle,
+            scroll::handle_ui_scroll,
+            ui_style::tick_screen_fades,
+            ui_style::animate_button_feedback,
+            platform::handle_haptic_events,
+        ),
+    )
+    // Title screen
+    .add_systems(
+        OnEnter(AppState::Title),
+        (title_ui::setup_title_ui, ui_style::spawn_screen_fade),
+    )
+    .add_systems(
+        Update,
+        title_ui::handle_title_buttons.run_if(in_state(AppState::Title)),
+    )
+    .add_systems(
+        PostUpdate,
+        title_ui::animate_title_ambience
+            .after(bevy::ui::UiSystem::Layout)
+            .before(bevy::transform::TransformSystem::TransformPropagate)
+            .run_if(in_state(AppState::Title)),
+    )
+    .add_systems(OnExit(AppState::Title), title_ui::cleanup_title_ui)
+    // Fjord City hub
+    .add_systems(
+        OnEnter(AppState::FjordCity),
+        (city_ui::setup_city_ui, ui_style::spawn_screen_fade),
+    )
+    .add_systems(
+        Update,
+        (
+            city_ui::handle_city_buttons,
+            city_ui::update_city_hover_tooltip,
+            city_ui::sync_map_building_layout,
+            city_ui::animate_fjord_harvest_orbs,
         )
-        .add_systems(Startup, enter_title_after_boot)
-        .add_systems(PreUpdate, map_back_key_to_escape.after(InputSystem))
-        .add_systems(
-            Update,
-            (
-                tick_energy_regen,
-                handle_global_shortcuts,
-                audio::handle_app_lifecycle,
-                scroll::handle_ui_scroll,
-                ui_style::tick_screen_fades,
-                ui_style::animate_button_feedback,
-                platform::handle_haptic_events,
-            ),
+            .chain()
+            .run_if(in_state(AppState::FjordCity)),
+    )
+    .add_systems(
+        PostUpdate,
+        city_ui::animate_city_ambience
+            .after(bevy::ui::UiSystem::Layout)
+            .before(bevy::transform::TransformSystem::TransformPropagate)
+            .run_if(in_state(AppState::FjordCity)),
+    )
+    .add_systems(OnExit(AppState::FjordCity), city_ui::cleanup_city_ui)
+    // Match-3 board scene
+    .add_systems(
+        OnEnter(AppState::Match3),
+        (
+            match3_scene::setup_match3_scene,
+            audio::switch_bgm_to_match3,
+            ui_style::spawn_screen_fade,
+        ),
+    )
+    .add_systems(
+        Update,
+        (
+            match3_scene::handle_match3_hud_buttons,
+            match3_scene::handle_board_pointer_input,
+            match3_scene::tick_board_animation,
+            match3_scene::sync_match3_visuals,
+            match3_scene::animate_particles,
         )
-        // Title screen
-        .add_systems(
-            OnEnter(AppState::Title),
-            (title_ui::setup_title_ui, ui_style::spawn_screen_fade),
+            .chain()
+            .run_if(in_state(AppState::Match3)),
+    )
+    .add_systems(
+        OnExit(AppState::Match3),
+        (
+            match3_scene::cleanup_match3_scene,
+            audio::switch_bgm_to_fjord,
+        ),
+    )
+    // Level Result modal
+    .add_systems(
+        OnEnter(AppState::LevelResult),
+        (result_ui::setup_result_ui, ui_style::spawn_screen_fade),
+    )
+    .add_systems(
+        Update,
+        (
+            result_ui::handle_result_buttons,
+            result_ui::animate_result_stars,
         )
-        .add_systems(
-            Update,
-            title_ui::handle_title_buttons.run_if(in_state(AppState::Title)),
-        )
-        .add_systems(
-            PostUpdate,
-            title_ui::animate_title_ambience
-                .after(bevy::ui::UiSystem::Layout)
-                .before(bevy::transform::TransformSystem::TransformPropagate)
-                .run_if(in_state(AppState::Title)),
-        )
-        .add_systems(OnExit(AppState::Title), title_ui::cleanup_title_ui)
-        // Fjord City hub
-        .add_systems(
-            OnEnter(AppState::FjordCity),
-            (city_ui::setup_city_ui, ui_style::spawn_screen_fade),
-        )
-        .add_systems(
-            Update,
-            (
-                city_ui::handle_city_buttons,
-                city_ui::update_city_hover_tooltip,
-                city_ui::sync_map_building_layout,
-                city_ui::animate_fjord_harvest_orbs,
-            )
-                .chain()
-                .run_if(in_state(AppState::FjordCity)),
-        )
-        .add_systems(
-            PostUpdate,
-            city_ui::animate_city_ambience
-                .after(bevy::ui::UiSystem::Layout)
-                .before(bevy::transform::TransformSystem::TransformPropagate)
-                .run_if(in_state(AppState::FjordCity)),
-        )
-        .add_systems(OnExit(AppState::FjordCity), city_ui::cleanup_city_ui)
-        // Match-3 board scene
-        .add_systems(
-            OnEnter(AppState::Match3),
-            (
-                match3_scene::setup_match3_scene,
-                audio::switch_bgm_to_match3,
-                ui_style::spawn_screen_fade,
-            ),
-        )
-        .add_systems(
-            Update,
-            (
-                match3_scene::handle_match3_hud_buttons,
-                match3_scene::handle_board_pointer_input,
-                match3_scene::tick_board_animation,
-                match3_scene::sync_match3_visuals,
-                match3_scene::animate_particles,
-            )
-                .chain()
-                .run_if(in_state(AppState::Match3)),
-        )
-        .add_systems(
-            OnExit(AppState::Match3),
-            (
-                match3_scene::cleanup_match3_scene,
-                audio::switch_bgm_to_fjord,
-            ),
-        )
-        // Level Result modal
-        .add_systems(
-            OnEnter(AppState::LevelResult),
-            (result_ui::setup_result_ui, ui_style::spawn_screen_fade),
-        )
-        .add_systems(
-            Update,
-            (
-                result_ui::handle_result_buttons,
-                result_ui::animate_result_stars,
-            )
-                .run_if(in_state(AppState::LevelResult)),
-        )
-        .add_systems(OnExit(AppState::LevelResult), result_ui::cleanup_result_ui)
-        .run();
+            .run_if(in_state(AppState::LevelResult)),
+    )
+    .add_systems(OnExit(AppState::LevelResult), result_ui::cleanup_result_ui)
+    .run();
 }
 
 fn setup_camera(

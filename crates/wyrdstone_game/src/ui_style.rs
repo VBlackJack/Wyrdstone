@@ -20,7 +20,10 @@ use crate::fjord_art::FjordTextures;
 use crate::state::GameContext;
 use crate::theme::*;
 use crate::vfx_art::VfxTextures;
+use bevy::math::Vec4Swizzles;
 use bevy::prelude::*;
+use bevy::render::{Render, RenderApp, RenderSet};
+use bevy::ui::box_shadow::{queue_shadows, ExtractedBoxShadows};
 use bevy::ui::widget::NodeImageMode;
 
 /// Marker placed on buttons that must not receive hover/press scale animation
@@ -274,5 +277,135 @@ pub fn animate_button_feedback(
         };
         let next = tf.scale.x + (target - tf.scale.x) * blend;
         tf.scale = Vec3::splat(next);
+    }
+}
+
+const SHADOW_QUAD_POSITIONS: [Vec3; 4] = [
+    Vec3::new(-0.5, -0.5, 0.0),
+    Vec3::new(0.5, -0.5, 0.0),
+    Vec3::new(0.5, 0.5, 0.0),
+    Vec3::new(-0.5, 0.5, 0.0),
+];
+
+/// Returns `true` when Bevy 0.15's `box_shadow::prepare_shadows` would cull or enter an
+/// infinite loop on a completely clipped or degenerate `BoxShadow` quad.
+fn box_shadow_is_fully_clipped(bounds: Vec2, transform: Mat4, clip: Option<Rect>) -> bool {
+    if !bounds.is_finite() || bounds.x <= 0.0 || bounds.y <= 0.0 {
+        return true;
+    }
+    let rect_size = bounds.extend(1.0);
+    let positions =
+        SHADOW_QUAD_POSITIONS.map(|pos| (transform * (pos * rect_size).extend(1.0)).xyz());
+    let positions_diff = if let Some(clip) = clip {
+        [
+            Vec2::new(
+                f32::max(clip.min.x - positions[0].x, 0.0),
+                f32::max(clip.min.y - positions[0].y, 0.0),
+            ),
+            Vec2::new(
+                f32::min(clip.max.x - positions[1].x, 0.0),
+                f32::max(clip.min.y - positions[1].y, 0.0),
+            ),
+            Vec2::new(
+                f32::min(clip.max.x - positions[2].x, 0.0),
+                f32::min(clip.max.y - positions[2].y, 0.0),
+            ),
+            Vec2::new(
+                f32::max(clip.min.x - positions[3].x, 0.0),
+                f32::min(clip.max.y - positions[3].y, 0.0),
+            ),
+        ]
+    } else {
+        [Vec2::ZERO; 4]
+    };
+    let transformed_rect_size = transform.transform_vector3(rect_size);
+    if !transformed_rect_size.is_finite() {
+        return true;
+    }
+    transform.x_axis[1] == 0.0
+        && (positions_diff[0].x - positions_diff[1].x >= transformed_rect_size.x
+            || positions_diff[1].y - positions_diff[2].y >= transformed_rect_size.y)
+}
+
+fn prune_clipped_box_shadows(mut extracted_shadows: ResMut<ExtractedBoxShadows>) {
+    let clipped_entities: Vec<Entity> = extracted_shadows
+        .box_shadows
+        .iter()
+        .filter_map(|(&entity, shadow)| {
+            box_shadow_is_fully_clipped(shadow.bounds, shadow.transform, shadow.clip)
+                .then_some(entity)
+        })
+        .collect();
+    for entity in clipped_entities {
+        extracted_shadows.box_shadows.remove(entity);
+    }
+}
+
+/// Registers a render-world guard that strips completely clipped `BoxShadow` quads before
+/// `queue_shadows` runs, avoiding Bevy 0.15's infinite loop in `prepare_shadows`.
+pub fn install_box_shadow_cull_guard(app: &mut App) {
+    if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+        render_app.add_systems(
+            Render,
+            prune_clipped_box_shadows
+                .in_set(RenderSet::Queue)
+                .before(queue_shadows),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::box_shadow_is_fully_clipped;
+    use bevy::math::{Mat4, Rect, Vec2, Vec3};
+
+    #[test]
+    fn unclipped_shadow_is_retained() {
+        let tf = Mat4::from_translation(Vec3::new(100.0, 100.0, 0.0));
+        assert!(!box_shadow_is_fully_clipped(
+            Vec2::new(80.0, 40.0),
+            tf,
+            None
+        ));
+    }
+
+    #[test]
+    fn partially_clipped_shadow_is_retained() {
+        let tf = Mat4::from_translation(Vec3::new(100.0, 100.0, 0.0));
+        let clip = Rect::new(80.0, 80.0, 160.0, 120.0);
+        assert!(!box_shadow_is_fully_clipped(
+            Vec2::new(80.0, 40.0),
+            tf,
+            Some(clip)
+        ));
+    }
+
+    #[test]
+    fn fully_clipped_shadow_is_pruned_horizontally_and_vertically() {
+        let tf = Mat4::from_translation(Vec3::new(100.0, 100.0, 0.0));
+        let clip_x = Rect::new(200.0, 0.0, 400.0, 400.0);
+        assert!(box_shadow_is_fully_clipped(
+            Vec2::new(80.0, 40.0),
+            tf,
+            Some(clip_x)
+        ));
+
+        let clip_y = Rect::new(0.0, 200.0, 400.0, 400.0);
+        assert!(box_shadow_is_fully_clipped(
+            Vec2::new(80.0, 40.0),
+            tf,
+            Some(clip_y)
+        ));
+    }
+
+    #[test]
+    fn zero_or_non_finite_shadow_is_pruned() {
+        let tf = Mat4::IDENTITY;
+        assert!(box_shadow_is_fully_clipped(Vec2::ZERO, tf, None));
+        assert!(box_shadow_is_fully_clipped(
+            Vec2::new(f32::NAN, 20.0),
+            tf,
+            None
+        ));
     }
 }
