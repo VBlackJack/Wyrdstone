@@ -18,25 +18,28 @@
 
 use super::{
     format_countdown, spawn_cost_pills, spawn_full_button, spawn_small_button, CityAction,
-    InspectorHarvestTimerText,
+    InspectorHarvestTimerText, InspectorTab,
 };
 use crate::fjord_art::FjordTextures;
 use crate::scroll::{spawn_scrollbar_track, ScrollMoreHint, ScrollPanelKind, ScrollablePanel};
 use crate::state::{now_unix_secs, GameContext};
 use crate::theme::*;
-use crate::ui_style::{button_shadow, display_font};
+use crate::ui_style::display_font;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use wyrdstone_core::{
     format_building_bonus, BuildingDef, I18nCatalog, Objective, ValhallaFlameTier, HUB_BUILDING_ID,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_building_inspector(
     inspector: &mut ChildBuilder,
     b: &BuildingDef,
     ctx: &GameContext,
     fjord_art: &FjordTextures,
     scroll_offset_y: f32,
+    is_portrait: bool,
+    active_tab: InspectorTab,
 ) {
     let i18n = &ctx.data.i18n;
     let tier = ctx.city.building_tier(&b.id);
@@ -46,6 +49,33 @@ pub(super) fn spawn_building_inspector(
     let can_afford = next_cost
         .map(|c| ctx.city.resources.can_afford(c))
         .unwrap_or(false);
+    let can_upgrade_now = unlocked && next_cost.is_some() && can_afford;
+    let harvest_rem = ctx
+        .city
+        .harvest_remaining_secs(&b.id, now_unix_secs(), &ctx.data.balance);
+    let harvest_ready = harvest_rem == Some(0);
+
+    let level_text = if tier == 0 {
+        i18n.t("city.panel.building.status.ruined").to_string()
+    } else {
+        i18n.t_fmt(
+            "city.panel.building.level",
+            &[("level", tier.to_string()), ("max", b.max_tier.to_string())],
+        )
+    };
+    let status_line = i18n.t_fmt(
+        "city.panel.building.status_line",
+        &[
+            ("level", level_text),
+            (
+                "mastery",
+                i18n.t_fmt(
+                    "city.panel.building.mastery",
+                    &[("stars", stars.to_string())],
+                ),
+            ),
+        ],
+    );
 
     let has_mastery = unlocked && stars >= 1 && b.mastery_level_id.is_some();
     let has_legendary = unlocked && stars >= 3 && b.legendary_level_id.is_some();
@@ -64,7 +94,7 @@ pub(super) fn spawn_building_inspector(
         0u8
     };
 
-    // Sticky drawer header with building title and Close button
+    // Sticky drawer header with optional portrait thumbnail, building title, and Close button
     inspector
         .spawn((
             Node {
@@ -79,11 +109,78 @@ pub(super) fn spawn_building_inspector(
             BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.35)),
         ))
         .with_children(|hdr| {
-            hdr.spawn((
-                Text::new(i18n.t(&b.name_key)),
-                display_font(fjord_art, FONT_TITLE_MD - 4.0),
-                TextColor(COLOR_ACCENT_GOLD),
-            ));
+            hdr.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(8.0),
+                flex_shrink: 1.0,
+                min_width: Val::Px(0.0),
+                ..default()
+            })
+            .with_children(|left| {
+                if is_portrait {
+                    if let Some(img) = fjord_art.building_image(&b.id) {
+                        let tint = if !unlocked {
+                            Color::srgb(0.42, 0.46, 0.54)
+                        } else if tier == 0 {
+                            Color::srgb(0.68, 0.76, 0.86)
+                        } else {
+                            Color::WHITE
+                        };
+                        left.spawn((
+                            ImageNode {
+                                image: img,
+                                color: tint,
+                                ..default()
+                            },
+                            Node {
+                                width: Val::Px(44.0),
+                                height: Val::Px(44.0),
+                                flex_shrink: 0.0,
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BorderColor(if tier > 0 {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_BORDER
+                            }),
+                            BorderRadius::all(Val::Px(RADIUS_SM)),
+                        ));
+                    }
+                }
+                left.spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(1.0),
+                    flex_shrink: 1.0,
+                    min_width: Val::Px(0.0),
+                    ..default()
+                })
+                .with_children(|tcol| {
+                    tcol.spawn((
+                        Text::new(i18n.t(&b.name_key)),
+                        display_font(
+                            fjord_art,
+                            if is_portrait {
+                                FONT_TITLE_MD - 7.0
+                            } else {
+                                FONT_TITLE_MD - 4.0
+                            },
+                        ),
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    if is_portrait {
+                        tcol.spawn((
+                            Text::new(status_line.clone()),
+                            TextFont {
+                                font_size: FONT_SMALL - 1.0,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_MUTED),
+                        ));
+                    }
+                });
+            });
             spawn_small_button(
                 hdr,
                 i18n.t("city.panel.amulets.close"),
@@ -91,6 +188,80 @@ pub(super) fn spawn_building_inspector(
                 COLOR_ACCENT_CRIMSON,
                 true,
             );
+        });
+
+    // Segmented 2-tab switch (Raid vs Upgrade & Mastery)
+    let upgrade_attention = can_upgrade_now || harvest_ready;
+    inspector
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(6.0),
+            flex_shrink: 0.0,
+            ..default()
+        })
+        .with_children(|tabs| {
+            for (tab, label, attention) in [
+                (
+                    InspectorTab::Raid,
+                    i18n.t("city.inspector.tab_raid").to_string(),
+                    false,
+                ),
+                (
+                    InspectorTab::Upgrade,
+                    if upgrade_attention {
+                        i18n.t("city.inspector.tab_upgrade_ready").to_string()
+                    } else {
+                        i18n.t("city.inspector.tab_upgrade").to_string()
+                    },
+                    upgrade_attention,
+                ),
+            ] {
+                let selected = active_tab == tab;
+                let (bg, fg, border_w, border_col) = if selected {
+                    (
+                        COLOR_ACCENT_TEAL,
+                        COLOR_TEXT_ON_ACCENT,
+                        2.0,
+                        COLOR_ACCENT_GOLD_HOVER,
+                    )
+                } else if attention {
+                    (COLOR_PANEL_CARD, COLOR_ACCENT_GOLD, 1.5, COLOR_ACCENT_GOLD)
+                } else {
+                    (
+                        COLOR_PANEL_CARD,
+                        COLOR_TEXT_PRIMARY,
+                        1.0,
+                        COLOR_PANEL_BORDER,
+                    )
+                };
+                tabs.spawn((
+                    Button,
+                    CityAction::SelectInspectorTab(tab),
+                    Node {
+                        flex_grow: 1.0,
+                        flex_basis: Val::Px(0.0),
+                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(border_w)),
+                        ..default()
+                    },
+                    BackgroundColor(bg),
+                    BorderColor(border_col),
+                    BorderRadius::all(Val::Px(RADIUS_SM)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new(label),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(fg),
+                    ));
+                });
+            }
         });
 
     inspector
@@ -124,291 +295,299 @@ pub(super) fn spawn_building_inspector(
                     },
                 ))
                 .with_children(|top| {
-                    if let Some(img) = fjord_art.building_image(&b.id) {
-                        let tint = if !unlocked {
-                            Color::srgb(0.42, 0.46, 0.54)
-                        } else if tier == 0 {
-                            Color::srgb(0.68, 0.76, 0.86)
-                        } else {
-                            Color::WHITE
-                        };
-                        top.spawn((
-                            ImageNode {
-                                image: img,
-                                color: tint,
-                                ..default()
-                            },
-                            Node {
-                                width: Val::Px(210.0),
-                                height: Val::Px(124.0),
-                                align_self: AlignSelf::Center,
-                                flex_shrink: 0.0,
-                                border: UiRect::all(Val::Px(2.0)),
-                                ..default()
-                            },
-                            BorderColor(if tier > 0 {
-                                COLOR_ACCENT_GOLD
-                            } else {
-                                COLOR_PANEL_BORDER
-                            }),
-                            BorderRadius::all(Val::Px(RADIUS_LG)),
-                            button_shadow(),
-                        ));
-                    }
-
-                    let level_text = if tier == 0 {
-                        i18n.t("city.panel.building.status.ruined").to_string()
-                    } else {
-                        i18n.t_fmt(
-                            "city.panel.building.level",
-                            &[("level", tier.to_string()), ("max", b.max_tier.to_string())],
-                        )
-                    };
-                    let status_line = i18n.t_fmt(
-                        "city.panel.building.status_line",
-                        &[
-                            ("level", level_text),
-                            (
-                                "mastery",
-                                i18n.t_fmt(
-                                    "city.panel.building.mastery",
-                                    &[("stars", stars.to_string())],
-                                ),
-                            ),
-                        ],
-                    );
-                    top.spawn((
-                        Text::new(status_line),
-                        TextFont {
-                            font_size: FONT_SMALL,
-                            ..default()
-                        },
-                        TextColor(COLOR_TEXT_MUTED),
-                    ));
-
-                    // Live passive tribute timer when the building is rebuilt (tier > 0)
-                    if let Some(rem) =
-                        ctx.city
-                            .harvest_remaining_secs(&b.id, now_unix_secs(), &ctx.data.balance)
-                    {
-                        let (h_lbl, h_col) = if rem == 0 {
-                            (
-                                i18n.t("city.panel.building.harvest_ready").to_string(),
-                                COLOR_ACCENT_GOLD,
-                            )
-                        } else {
-                            (
-                                i18n.t_fmt(
-                                    "city.panel.building.harvest_in",
-                                    &[("time", format_countdown(i18n, rem))],
-                                ),
-                                COLOR_ACCENT_TEAL_TEXT,
-                            )
-                        };
-                        top.spawn((
-                            InspectorHarvestTimerText,
-                            Text::new(h_lbl),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(h_col),
-                        ));
-                        if rem == 0 {
-                            super::spawn_small_button_colored(
-                                top,
-                                i18n.t("city.harvest.ready"),
-                                CityAction::CollectHarvest(b.id.clone()),
-                                COLOR_ACCENT_GOLD,
-                                COLOR_TEXT_DARK,
-                                true,
-                            );
+                    if active_tab == InspectorTab::Upgrade {
+                        if !is_portrait {
+                            if let Some(img) = fjord_art.building_image(&b.id) {
+                                let tint = if !unlocked {
+                                    Color::srgb(0.42, 0.46, 0.54)
+                                } else if tier == 0 {
+                                    Color::srgb(0.68, 0.76, 0.86)
+                                } else {
+                                    Color::WHITE
+                                };
+                                top.spawn((
+                                    ImageNode {
+                                        image: img,
+                                        color: tint,
+                                        ..default()
+                                    },
+                                    Node {
+                                        width: Val::Px(210.0),
+                                        height: Val::Px(124.0),
+                                        align_self: AlignSelf::Center,
+                                        flex_shrink: 0.0,
+                                        border: UiRect::all(Val::Px(2.0)),
+                                        ..default()
+                                    },
+                                    BorderColor(if tier > 0 {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_PANEL_BORDER
+                                    }),
+                                    BorderRadius::all(Val::Px(RADIUS_LG)),
+                                ));
+                            }
+                            top.spawn((
+                                Text::new(status_line),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_MUTED),
+                            ));
                         }
-                    }
 
-                    top.spawn((
-                        Text::new(i18n.t(&b.desc_key)),
-                        TextFont {
-                            font_size: FONT_SMALL,
-                            ..default()
-                        },
-                        TextColor(COLOR_TEXT_PRIMARY),
-                    ));
+                        // Live passive tribute timer when the building is rebuilt (tier > 0)
+                        if let Some(rem) = harvest_rem {
+                            let (h_lbl, h_col) = if rem == 0 {
+                                (
+                                    i18n.t("city.panel.building.harvest_ready").to_string(),
+                                    COLOR_ACCENT_GOLD,
+                                )
+                            } else {
+                                (
+                                    i18n.t_fmt(
+                                        "city.panel.building.harvest_in",
+                                        &[("time", format_countdown(i18n, rem))],
+                                    ),
+                                    COLOR_ACCENT_TEAL_TEXT,
+                                )
+                            };
+                            top.spawn((
+                                InspectorHarvestTimerText,
+                                Text::new(h_lbl),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(h_col),
+                            ));
+                            if rem == 0 {
+                                super::spawn_small_button_colored(
+                                    top,
+                                    i18n.t("city.harvest.ready"),
+                                    CityAction::CollectHarvest(b.id.clone()),
+                                    COLOR_ACCENT_GOLD,
+                                    COLOR_TEXT_DARK,
+                                    true,
+                                );
+                            }
+                        }
 
-                    // Village Effect box
-                    top.spawn((
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            padding: UiRect::all(Val::Px(9.0)),
-                            row_gap: Val::Px(3.0),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.10, 0.22, 0.26, 0.90)),
-                        BorderColor(COLOR_ACCENT_TEAL),
-                        BorderRadius::all(Val::Px(8.0)),
-                    ))
-                    .with_children(|box_node| {
-                        box_node.spawn((
-                            Text::new(i18n.t("city.panel.building.benefit_title")),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_ACCENT_GOLD),
-                        ));
-                        box_node.spawn((
-                            Text::new(format_building_bonus(i18n, b, &ctx.data.balance)),
+                        top.spawn((
+                            Text::new(i18n.t(&b.desc_key)),
                             TextFont {
                                 font_size: FONT_SMALL,
                                 ..default()
                             },
                             TextColor(COLOR_TEXT_PRIMARY),
                         ));
-                        if next_cost.is_some() && b.glory_per_tier > 0 {
-                            box_node.spawn((
-                                Text::new(i18n.t_fmt(
-                                    "city.panel.building.glory_gain",
-                                    &[("glory", b.glory_per_tier.to_string())],
-                                )),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_ACCENT_TEAL_TEXT),
-                            ));
-                        }
-                    });
 
-                    // 5-Star Building Mastery Progress Card
-                    if unlocked {
-                        let spoils_pct = ctx.city.building_mastery_spoils_pct(&b.id);
-                        let harvest_pct = ctx.city.building_mastery_harvest_pct(&b.id);
-                        let rank_name = i18n
-                            .t(wyrdstone_core::CityState::mastery_rank_name_key(stars))
-                            .to_string();
+                        // Village Effect box
                         top.spawn((
                             Node {
                                 flex_direction: FlexDirection::Column,
-                                padding: UiRect::all(Val::Px(8.0)),
-                                row_gap: Val::Px(4.0),
-                                border: UiRect::all(Val::Px(1.0)),
+                                padding: UiRect::all(Val::Px(9.0)),
+                                row_gap: Val::Px(3.0),
+                                border: UiRect::all(Val::Px(1.5)),
                                 ..default()
                             },
-                            BackgroundColor(COLOR_PANEL_CARD),
-                            BorderColor(if stars >= 5 {
-                                COLOR_ACCENT_GOLD
-                            } else {
-                                COLOR_PANEL_BORDER
-                            }),
+                            BackgroundColor(Color::srgba(0.10, 0.22, 0.26, 0.90)),
+                            BorderColor(COLOR_ACCENT_TEAL),
                             BorderRadius::all(Val::Px(8.0)),
                         ))
-                        .with_children(|mbox| {
-                            mbox.spawn((
-                                Text::new(i18n.t_fmt(
-                                    "city.inspector.mastery_title",
-                                    &[("rank", rank_name), ("stars", stars.to_string())],
-                                )),
+                        .with_children(|box_node| {
+                            box_node.spawn((
+                                Text::new(i18n.t("city.panel.building.benefit_title")),
                                 TextFont {
                                     font_size: FONT_SMALL,
                                     ..default()
                                 },
                                 TextColor(COLOR_ACCENT_GOLD),
                             ));
-                            // 5-pip mastery bar (NO BoxShadow inside ScrollablePanel)
-                            mbox.spawn(Node {
-                                flex_direction: FlexDirection::Row,
-                                column_gap: Val::Px(4.0),
-                                ..default()
-                            })
-                            .with_children(|pips| {
-                                for idx in 1u8..=wyrdstone_core::MAX_MASTERY_STARS {
-                                    let lit = idx <= stars;
-                                    pips.spawn((
-                                        Node {
-                                            flex_grow: 1.0,
-                                            height: Val::Px(6.0),
-                                            ..default()
-                                        },
-                                        BackgroundColor(if lit {
-                                            COLOR_ACCENT_GOLD
-                                        } else {
-                                            COLOR_PANEL_DARK
-                                        }),
-                                        BorderRadius::all(Val::Px(3.0)),
-                                    ));
-                                }
-                            });
-                            if stars > 0 {
-                                let active_line = if harvest_pct > 0 {
-                                    i18n.t_fmt(
-                                        "city.inspector.mastery_bonus_harvest",
-                                        &[
-                                            ("spoils", spoils_pct.to_string()),
-                                            ("harvest", harvest_pct.to_string()),
-                                        ],
-                                    )
-                                } else {
-                                    i18n.t_fmt(
-                                        "city.inspector.mastery_bonus",
-                                        &[("spoils", spoils_pct.to_string())],
-                                    )
-                                };
-                                mbox.spawn((
-                                    Text::new(active_line),
+                            box_node.spawn((
+                                Text::new(format_building_bonus(i18n, b, &ctx.data.balance)),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_PRIMARY),
+                            ));
+                            if next_cost.is_some() && b.glory_per_tier > 0 {
+                                box_node.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.panel.building.glory_gain",
+                                        &[("glory", b.glory_per_tier.to_string())],
+                                    )),
                                     TextFont {
-                                        font_size: FONT_SMALL - 1.0,
+                                        font_size: FONT_SMALL,
                                         ..default()
                                     },
                                     TextColor(COLOR_ACCENT_TEAL_TEXT),
                                 ));
                             }
-                            let next_line = match stars {
-                                0 => i18n.t("city.inspector.mastery_next_mastery").to_string(),
-                                1 => i18n.t_fmt(
-                                    "city.inspector.mastery_next_spoils",
-                                    &[("stars", "2".to_string()), ("spoils", "10".to_string())],
-                                ),
-                                2 => i18n.t("city.inspector.mastery_next_legendary").to_string(),
-                                3 => i18n.t_fmt(
-                                    "city.inspector.mastery_next_harvest",
-                                    &[
-                                        ("stars", "4".to_string()),
-                                        ("spoils", "20".to_string()),
-                                        (
-                                            "harvest",
-                                            wyrdstone_core::MASTERY_HARVEST_PCT_AT_4_STARS
-                                                .to_string(),
-                                        ),
-                                    ],
-                                ),
-                                4 => i18n.t_fmt(
-                                    "city.inspector.mastery_next_harvest",
-                                    &[
-                                        ("stars", "5".to_string()),
-                                        ("spoils", "25".to_string()),
-                                        (
-                                            "harvest",
-                                            wyrdstone_core::MASTERY_HARVEST_PCT_AT_5_STARS
-                                                .to_string(),
-                                        ),
-                                    ],
-                                ),
-                                _ => i18n.t("city.inspector.mastery_maxed").to_string(),
-                            };
-                            mbox.spawn((
-                                Text::new(next_line),
-                                TextFont {
-                                    font_size: FONT_SMALL - 1.0,
+                        });
+
+                        // 5-Star Building Mastery Progress Card
+                        if unlocked {
+                            let spoils_pct = ctx.city.building_mastery_spoils_pct(&b.id);
+                            let harvest_pct = ctx.city.building_mastery_harvest_pct(&b.id);
+                            let rank_name = i18n
+                                .t(wyrdstone_core::CityState::mastery_rank_name_key(stars))
+                                .to_string();
+                            top.spawn((
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    padding: UiRect::all(Val::Px(8.0)),
+                                    row_gap: Val::Px(4.0),
+                                    border: UiRect::all(Val::Px(1.0)),
                                     ..default()
                                 },
-                                TextColor(if stars >= 5 {
+                                BackgroundColor(COLOR_PANEL_CARD),
+                                BorderColor(if stars >= 5 {
                                     COLOR_ACCENT_GOLD
                                 } else {
-                                    COLOR_TEXT_MUTED
+                                    COLOR_PANEL_BORDER
                                 }),
-                            ));
-                        });
+                                BorderRadius::all(Val::Px(8.0)),
+                            ))
+                            .with_children(|mbox| {
+                                mbox.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.inspector.mastery_title",
+                                        &[("rank", rank_name), ("stars", stars.to_string())],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_GOLD),
+                                ));
+                                // 5-pip mastery bar (NO BoxShadow inside ScrollablePanel)
+                                mbox.spawn(Node {
+                                    flex_direction: FlexDirection::Row,
+                                    column_gap: Val::Px(4.0),
+                                    ..default()
+                                })
+                                .with_children(|pips| {
+                                    for idx in 1u8..=wyrdstone_core::MAX_MASTERY_STARS {
+                                        let lit = idx <= stars;
+                                        pips.spawn((
+                                            Node {
+                                                flex_grow: 1.0,
+                                                height: Val::Px(6.0),
+                                                ..default()
+                                            },
+                                            BackgroundColor(if lit {
+                                                COLOR_ACCENT_GOLD
+                                            } else {
+                                                COLOR_PANEL_DARK
+                                            }),
+                                            BorderRadius::all(Val::Px(3.0)),
+                                        ));
+                                    }
+                                });
+                                if stars > 0 {
+                                    let active_line = if harvest_pct > 0 {
+                                        i18n.t_fmt(
+                                            "city.inspector.mastery_bonus_harvest",
+                                            &[
+                                                ("spoils", spoils_pct.to_string()),
+                                                ("harvest", harvest_pct.to_string()),
+                                            ],
+                                        )
+                                    } else {
+                                        i18n.t_fmt(
+                                            "city.inspector.mastery_bonus",
+                                            &[("spoils", spoils_pct.to_string())],
+                                        )
+                                    };
+                                    mbox.spawn((
+                                        Text::new(active_line),
+                                        TextFont {
+                                            font_size: FONT_SMALL - 1.0,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                    ));
+                                }
+                                let next_line = match stars {
+                                    0 => i18n.t("city.inspector.mastery_next_mastery").to_string(),
+                                    1 => i18n.t_fmt(
+                                        "city.inspector.mastery_next_spoils",
+                                        &[("stars", "2".to_string()), ("spoils", "10".to_string())],
+                                    ),
+                                    2 => {
+                                        i18n.t("city.inspector.mastery_next_legendary").to_string()
+                                    }
+                                    3 => i18n.t_fmt(
+                                        "city.inspector.mastery_next_harvest",
+                                        &[
+                                            ("stars", "4".to_string()),
+                                            ("spoils", "20".to_string()),
+                                            (
+                                                "harvest",
+                                                wyrdstone_core::MASTERY_HARVEST_PCT_AT_4_STARS
+                                                    .to_string(),
+                                            ),
+                                        ],
+                                    ),
+                                    4 => i18n.t_fmt(
+                                        "city.inspector.mastery_next_harvest",
+                                        &[
+                                            ("stars", "5".to_string()),
+                                            ("spoils", "25".to_string()),
+                                            (
+                                                "harvest",
+                                                wyrdstone_core::MASTERY_HARVEST_PCT_AT_5_STARS
+                                                    .to_string(),
+                                            ),
+                                        ],
+                                    ),
+                                    _ => i18n.t("city.inspector.mastery_maxed").to_string(),
+                                };
+                                mbox.spawn((
+                                    Text::new(next_line),
+                                    TextFont {
+                                        font_size: FONT_SMALL - 1.0,
+                                        ..default()
+                                    },
+                                    TextColor(if stars >= 5 {
+                                        COLOR_ACCENT_GOLD
+                                    } else {
+                                        COLOR_TEXT_MUTED
+                                    }),
+                                ));
+                            });
+                        }
+
+                        // Upgrade cost breakdown
+                        if unlocked {
+                            if let Some(cost) = next_cost {
+                                top.spawn((
+                                    Text::new(i18n.t("city.panel.building.cost_title")),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_TEXT_MUTED),
+                                ));
+                                spawn_cost_pills(top, i18n, ctx.city.resources, *cost);
+                            }
+                        }
+                        return;
+                    }
+
+                    // Raid Tab: Shortage guidance, difficulty tabs, board preview, relics & combat loadout.
+                    if !is_portrait {
+                        top.spawn((
+                            Text::new(status_line),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_MUTED),
+                        ));
                     }
 
                     // Shortage Guidance callout when jumped from a missing resource pill
@@ -1004,21 +1183,6 @@ pub(super) fn spawn_building_inspector(
                             }
                         });
                     }
-
-                    // Upgrade cost breakdown
-                    if unlocked {
-                        if let Some(cost) = next_cost {
-                            top.spawn((
-                                Text::new(i18n.t("city.panel.building.cost_title")),
-                                TextFont {
-                                    font_size: FONT_SMALL,
-                                    ..default()
-                                },
-                                TextColor(COLOR_TEXT_MUTED),
-                            ));
-                            spawn_cost_pills(top, i18n, ctx.city.resources, *cost);
-                        }
-                    }
                 });
             spawn_scrollbar_track(scroll_row, ScrollPanelKind::Inspector);
         });
@@ -1090,202 +1254,214 @@ pub(super) fn spawn_building_inspector(
                 ));
             }
 
-            // 1-click Pre-Combat Loadout strip (Patron God + Amulet) with live effect summary
-            if unlocked {
-                actions
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(4.0),
-                        margin: UiRect::bottom(Val::Px(2.0)),
-                        ..default()
-                    })
-                    .with_children(|loadout| {
-                        loadout.spawn((
-                            Text::new(i18n.t("city.loadout.title")),
-                            TextFont {
-                                font_size: FONT_SMALL,
-                                ..default()
-                            },
-                            TextColor(COLOR_TEXT_MUTED),
-                        ));
-                        let active_amulet = ctx
-                            .city
-                            .equipped_amulet
-                            .as_deref()
-                            .and_then(|id| ctx.data.amulet_by_id(id));
-                        loadout
-                            .spawn(Node {
-                                column_gap: Val::Px(6.0),
-                                row_gap: Val::Px(4.0),
-                                flex_wrap: FlexWrap::Wrap,
-                                ..default()
-                            })
-                            .with_children(|lrow| {
-                                // 1-click Patron God switcher
-                                lrow.spawn((
-                                    Button,
-                                    CityAction::CyclePatron,
-                                    Node {
-                                        flex_grow: 1.0,
-                                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                        padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
-                                        column_gap: Val::Px(6.0),
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::Center,
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(COLOR_PANEL_CARD),
-                                    BorderColor(COLOR_ACCENT_GOLD),
-                                    BorderRadius::all(Val::Px(RADIUS_SM)),
-                                ))
-                                .with_children(|btn| {
-                                    if let Some(img) =
-                                        fjord_art.patron_portrait(ctx.city.selected_patron)
-                                    {
-                                        btn.spawn((
-                                            ImageNode::new(img),
-                                            Node {
-                                                width: Val::Px(22.0),
-                                                height: Val::Px(22.0),
-                                                ..default()
-                                            },
-                                            BorderRadius::all(Val::Px(4.0)),
-                                        ));
-                                    }
-                                    btn.spawn((
-                                        Text::new(i18n.t(ctx.city.selected_patron.name_key())),
-                                        TextFont {
-                                            font_size: FONT_SMALL,
+            // Tab-contextual bottom action strip so portrait viewports preserve vertical scroll room
+            if active_tab == InspectorTab::Raid {
+                // 1-click Pre-Combat Loadout strip (Patron God + Amulet)
+                if unlocked {
+                    actions
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(4.0),
+                            margin: UiRect::bottom(Val::Px(2.0)),
+                            ..default()
+                        })
+                        .with_children(|loadout| {
+                            loadout.spawn((
+                                Text::new(i18n.t("city.loadout.title")),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_TEXT_MUTED),
+                            ));
+                            let active_amulet = ctx
+                                .city
+                                .equipped_amulet
+                                .as_deref()
+                                .and_then(|id| ctx.data.amulet_by_id(id));
+                            loadout
+                                .spawn(Node {
+                                    column_gap: Val::Px(6.0),
+                                    row_gap: Val::Px(4.0),
+                                    flex_wrap: FlexWrap::Wrap,
+                                    ..default()
+                                })
+                                .with_children(|lrow| {
+                                    // 1-click Patron God switcher
+                                    lrow.spawn((
+                                        Button,
+                                        CityAction::CyclePatron,
+                                        Node {
+                                            flex_grow: 1.0,
+                                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                            padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
+                                            column_gap: Val::Px(6.0),
+                                            align_items: AlignItems::Center,
+                                            justify_content: JustifyContent::Center,
+                                            border: UiRect::all(Val::Px(1.0)),
                                             ..default()
                                         },
-                                        TextColor(COLOR_ACCENT_GOLD),
-                                    ));
-                                });
+                                        BackgroundColor(COLOR_PANEL_CARD),
+                                        BorderColor(COLOR_ACCENT_GOLD),
+                                        BorderRadius::all(Val::Px(RADIUS_SM)),
+                                    ))
+                                    .with_children(|btn| {
+                                        if let Some(img) =
+                                            fjord_art.patron_portrait(ctx.city.selected_patron)
+                                        {
+                                            btn.spawn((
+                                                ImageNode::new(img),
+                                                Node {
+                                                    width: Val::Px(22.0),
+                                                    height: Val::Px(22.0),
+                                                    ..default()
+                                                },
+                                                BorderRadius::all(Val::Px(4.0)),
+                                            ));
+                                        }
+                                        btn.spawn((
+                                            Text::new(i18n.t(ctx.city.selected_patron.name_key())),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(COLOR_ACCENT_GOLD),
+                                        ));
+                                    });
 
-                                // 1-click Amulet switcher (cycles crafted amulets or opens Amulets modal)
-                                let amulet_lbl = active_amulet
-                                    .map(|a| i18n.t(&a.name_key))
-                                    .unwrap_or_else(|| i18n.t("city.loadout.amulet_none"));
-                                lrow.spawn((
-                                    Button,
-                                    CityAction::CycleAmulet,
-                                    Node {
-                                        flex_grow: 1.0,
-                                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                        padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
-                                        column_gap: Val::Px(6.0),
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::Center,
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(COLOR_PANEL_CARD),
-                                    BorderColor(if active_amulet.is_some() {
-                                        COLOR_ACCENT_TEAL
-                                    } else {
-                                        COLOR_PANEL_BORDER
-                                    }),
-                                    BorderRadius::all(Val::Px(RADIUS_SM)),
-                                ))
-                                .with_children(|btn| {
-                                    if let Some(icon) =
-                                        active_amulet.and_then(|a| fjord_art.amulet_icon(&a.id))
-                                    {
-                                        btn.spawn((
-                                            ImageNode::new(icon),
-                                            Node {
-                                                width: Val::Px(22.0),
-                                                height: Val::Px(22.0),
-                                                ..default()
-                                            },
-                                            BorderRadius::all(Val::Px(4.0)),
-                                        ));
-                                    }
-                                    btn.spawn((
-                                        Text::new(amulet_lbl),
-                                        TextFont {
-                                            font_size: FONT_SMALL,
+                                    // 1-click Amulet switcher (cycles crafted amulets or opens Amulets modal)
+                                    let amulet_lbl = active_amulet
+                                        .map(|a| i18n.t(&a.name_key))
+                                        .unwrap_or_else(|| i18n.t("city.loadout.amulet_none"));
+                                    lrow.spawn((
+                                        Button,
+                                        CityAction::CycleAmulet,
+                                        Node {
+                                            flex_grow: 1.0,
+                                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                            padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
+                                            column_gap: Val::Px(6.0),
+                                            align_items: AlignItems::Center,
+                                            justify_content: JustifyContent::Center,
+                                            border: UiRect::all(Val::Px(1.0)),
                                             ..default()
                                         },
-                                        TextColor(if active_amulet.is_some() {
-                                            COLOR_TEXT_PRIMARY
+                                        BackgroundColor(COLOR_PANEL_CARD),
+                                        BorderColor(if active_amulet.is_some() {
+                                            COLOR_ACCENT_TEAL
                                         } else {
-                                            COLOR_TEXT_MUTED
+                                            COLOR_PANEL_BORDER
                                         }),
-                                    ));
+                                        BorderRadius::all(Val::Px(RADIUS_SM)),
+                                    ))
+                                    .with_children(|btn| {
+                                        if let Some(icon) =
+                                            active_amulet.and_then(|a| fjord_art.amulet_icon(&a.id))
+                                        {
+                                            btn.spawn((
+                                                ImageNode::new(icon),
+                                                Node {
+                                                    width: Val::Px(22.0),
+                                                    height: Val::Px(22.0),
+                                                    ..default()
+                                                },
+                                                BorderRadius::all(Val::Px(4.0)),
+                                            ));
+                                        }
+                                        btn.spawn((
+                                            Text::new(amulet_lbl),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(if active_amulet.is_some() {
+                                                COLOR_TEXT_PRIMARY
+                                            } else {
+                                                COLOR_TEXT_MUTED
+                                            }),
+                                        ));
+                                    });
                                 });
-                            });
-                    });
-            }
-            let (base_play_label, raw_play_bg, raw_play_fg) = match active_diff {
-                2 => (
-                    i18n.t("city.button.play_legendary"),
-                    COLOR_ACCENT_LEGENDARY,
-                    COLOR_TEXT_PRIMARY,
-                ),
-                1 => (
-                    i18n.t("city.button.play_mastery"),
-                    COLOR_ACCENT_GOLD,
-                    COLOR_TEXT_DARK,
-                ),
-                _ => (
-                    i18n.t("city.button.play_level"),
-                    COLOR_ACCENT_TEAL,
-                    COLOR_TEXT_ON_ACCENT,
-                ),
-            };
-            let (play_bg, play_fg) = if can_play {
-                (raw_play_bg, raw_play_fg)
-            } else {
-                (COLOR_BUTTON_DISABLED, COLOR_TEXT_PRIMARY)
-            };
-            let play_label = i18n.t_fmt(
-                "city.button.play_cost",
-                &[
-                    ("label", base_play_label.to_string()),
-                    ("cost", energy_cost.to_string()),
-                ],
-            );
-            spawn_full_button(
-                actions,
-                &play_label,
-                CityAction::PlayBuildingLevel(preview_level_id.to_string()),
-                play_bg,
-                play_fg,
-                can_play,
-            );
-
-            let can_upgrade_now = unlocked && next_cost.is_some() && can_afford;
-            let upg_bg = if can_upgrade_now {
-                COLOR_ACCENT_GREEN
-            } else {
-                COLOR_BUTTON_DISABLED
-            };
-            let upg_label = if next_cost.is_some() {
-                if tier == 0 {
-                    i18n.t("city.button.rebuild").to_string()
-                } else {
-                    i18n.t_fmt(
-                        "city.button.upgrade_tier",
-                        &[("tier", (tier + 1).to_string())],
-                    )
+                        });
                 }
-            } else {
-                i18n.t("city.button.max_level").to_string()
-            };
-            spawn_full_button(
-                actions,
-                &upg_label,
-                CityAction::UpgradeBuilding(b.id.clone()),
-                upg_bg,
-                if can_upgrade_now {
-                    COLOR_TEXT_ON_ACCENT
+                let (base_play_label, raw_play_bg, raw_play_fg) = match active_diff {
+                    2 => (
+                        i18n.t("city.button.play_legendary"),
+                        COLOR_ACCENT_LEGENDARY,
+                        COLOR_TEXT_PRIMARY,
+                    ),
+                    1 => (
+                        i18n.t("city.button.play_mastery"),
+                        COLOR_ACCENT_GOLD,
+                        COLOR_TEXT_DARK,
+                    ),
+                    _ => (
+                        i18n.t("city.button.play_level"),
+                        COLOR_ACCENT_TEAL,
+                        COLOR_TEXT_ON_ACCENT,
+                    ),
+                };
+                let (play_bg, play_fg) = if can_play {
+                    (raw_play_bg, raw_play_fg)
                 } else {
-                    COLOR_TEXT_PRIMARY
-                },
-                can_upgrade_now,
-            );
+                    (COLOR_BUTTON_DISABLED, COLOR_TEXT_PRIMARY)
+                };
+                let play_label = i18n.t_fmt(
+                    "city.button.play_cost",
+                    &[
+                        ("label", base_play_label.to_string()),
+                        ("cost", energy_cost.to_string()),
+                    ],
+                );
+                spawn_full_button(
+                    actions,
+                    &play_label,
+                    CityAction::PlayBuildingLevel(preview_level_id.to_string()),
+                    play_bg,
+                    play_fg,
+                    can_play,
+                );
+            } else {
+                if harvest_ready {
+                    super::spawn_small_button_colored(
+                        actions,
+                        i18n.t("city.harvest.ready"),
+                        CityAction::CollectHarvest(b.id.clone()),
+                        COLOR_ACCENT_GOLD,
+                        COLOR_TEXT_DARK,
+                        true,
+                    );
+                }
+                let upg_bg = if can_upgrade_now {
+                    COLOR_ACCENT_GREEN
+                } else {
+                    COLOR_BUTTON_DISABLED
+                };
+                let upg_label = if next_cost.is_some() {
+                    if tier == 0 {
+                        i18n.t("city.button.rebuild").to_string()
+                    } else {
+                        i18n.t_fmt(
+                            "city.button.upgrade_tier",
+                            &[("tier", (tier + 1).to_string())],
+                        )
+                    }
+                } else {
+                    i18n.t("city.button.max_level").to_string()
+                };
+                spawn_full_button(
+                    actions,
+                    &upg_label,
+                    CityAction::UpgradeBuilding(b.id.clone()),
+                    upg_bg,
+                    if can_upgrade_now {
+                        COLOR_TEXT_ON_ACCENT
+                    } else {
+                        COLOR_TEXT_PRIMARY
+                    },
+                    can_upgrade_now,
+                );
+            }
         });
 }
 

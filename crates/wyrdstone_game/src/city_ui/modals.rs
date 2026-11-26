@@ -922,8 +922,8 @@ pub(super) fn spawn_collections_modal(
                                         Button,
                                         CityAction::HuntCollectionSource(bid.clone()),
                                         Node {
-                                            min_height: Val::Px(32.0),
-                                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
                                             justify_content: JustifyContent::Center,
                                             align_items: AlignItems::Center,
                                             border: UiRect::all(Val::Px(1.5)),
@@ -2801,7 +2801,7 @@ pub(super) fn spawn_expedition_boons_modal(
                                 COLOR_ACCENT_GOLD
                             },
                             if accepted {
-                                COLOR_TEXT_ON_ACCENT
+                                COLOR_TEXT_PRIMARY
                             } else {
                                 COLOR_TEXT_DARK
                             },

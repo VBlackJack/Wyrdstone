@@ -46,7 +46,7 @@ impl HudLayoutMode {
     }
 
     pub fn is_compact(self) -> bool {
-        self == Self::Portrait
+        self != Self::DesktopWide
     }
 
     pub fn is_desktop_wide(self) -> bool {
@@ -132,6 +132,9 @@ mod tests {
             HudLayoutMode::from_viewport(800.0, 600.0),
             HudLayoutMode::Compact
         );
+        assert!(HudLayoutMode::Compact.is_compact());
+        assert!(!HudLayoutMode::DesktopWide.is_compact());
+        assert!(HudLayoutMode::Portrait.is_compact());
         assert_eq!(
             HudLayoutMode::from_viewport(1280.0, 720.0),
             HudLayoutMode::DesktopWide

@@ -361,6 +361,9 @@
   "match3.hud.pause": "Pause [Esc]",
   "match3.hud.paused_banner": "RAID PAUSED",
   "match3.hud.restart": "Restart Raid",
+  "match3.hud.restart_cost": "Restart Raid (-{cost} End.)",
+  "match3.pause.title": "Raid Paused",
+  "match3.pause.resume": "Resume Raid",
   "match3.hud.restart_confirm": "Confirm Restart?",
   "match3.defeat.out_of_moves": "OUT OF MOVES!",
   "match3.defeat.out_of_time": "TIME EXPIRED!",
@@ -760,5 +763,8 @@
   "tip.defeat.relics": "Tip: Use vertical Line Bolts or Thor's Bolt to drop Relics fast.",
   "tip.defeat.ice": "Tip: Target corner Ice early with Bombs or Surtr's Ember.",
   "tip.defeat.runes": "Tip: Combine a Bifrost Shard with a target rune to sweep the whole color.",
-  "tip.defeat.score": "Tip: Chain cascades to fill Ragnarok Overdrive for 2x score."
+  "tip.defeat.score": "Tip: Chain cascades to fill Ragnarok Overdrive for 2x score.",
+  "city.inspector.tab_raid": "Raid",
+  "city.inspector.tab_upgrade": "Upgrade",
+  "city.inspector.tab_upgrade_ready": "Upgrade (!)"
 }

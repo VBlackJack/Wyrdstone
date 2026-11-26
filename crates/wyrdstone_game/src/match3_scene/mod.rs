@@ -78,6 +78,14 @@ pub struct Match3HudRoot;
 #[derive(Component)]
 pub(super) struct Match3HudBar;
 
+/// Marker on the non-wide top Match-3 HUD bar for dynamic height measurement.
+#[derive(Component)]
+pub(super) struct Match3TopHudBar;
+
+/// Marker on the non-wide bottom Match-3 HUD bar for dynamic height measurement.
+#[derive(Component)]
+pub(super) struct Match3BottomHudBar;
+
 /// Marker on the HUD countdown text so timer ticks update in-place without rebuilding the HUD.
 #[derive(Component)]
 pub struct Match3TimerText;
@@ -322,6 +330,8 @@ pub struct Match3InputState {
     pub board_origin: Vec2,
     pub board_center_y: f32,
     pub hud_mode: HudLayoutMode,
+    pub measured_top_hud_px: f32,
+    pub measured_bottom_hud_px: f32,
     pub dirty_static_board: bool,
     pub dirty_board: bool,
     pub dirty_hud: bool,
@@ -566,8 +576,9 @@ pub(super) fn compute_board_layout(
             (aw, ah, top_res, bot_res)
         }
         HudLayoutMode::Compact => {
-            let top_res = BOARD_TOP_RESERVED_PX + safe.top;
-            let bot_res = BOARD_BOTTOM_RESERVED_PX + safe.bottom;
+            let top_res = (BOARD_TOP_RESERVED_PX + safe.top).max(layout.measured_top_hud_px);
+            let bot_res =
+                (BOARD_BOTTOM_RESERVED_PX + safe.bottom).max(layout.measured_bottom_hud_px);
             let side_margin = BOARD_SIDE_MARGIN_PX + safe.left.max(safe.right);
             let aw = (win_w - side_margin * 2.0 - BOARD_FRAME_PAD_PX).max(180.0);
             let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
@@ -575,8 +586,10 @@ pub(super) fn compute_board_layout(
         }
         HudLayoutMode::Portrait => {
             let narrow = win_w < 500.0;
-            let top_res = (if narrow { 178.0 } else { 152.0 }) + safe.top;
-            let bot_res = (if narrow { 174.0 } else { 148.0 }) + safe.bottom;
+            let base_top = (if narrow { 178.0 } else { 152.0 }) + safe.top;
+            let base_bot = (if narrow { 174.0 } else { 148.0 }) + safe.bottom;
+            let top_res = base_top.max(layout.measured_top_hud_px);
+            let bot_res = base_bot.max(layout.measured_bottom_hud_px);
             let side_margin = 12.0 + safe.left.max(safe.right);
             let aw = (win_w - side_margin * 2.0 - BOARD_FRAME_PAD_PX).max(180.0);
             let ah = (win_h - top_res - bot_res - BOARD_FRAME_PAD_PX).max(180.0);
@@ -1783,20 +1796,18 @@ pub fn handle_match3_hud_buttons(
                     continue;
                 }
                 input_state.confirm_restart = false;
-                if let Some(level_id) = ctx.active_level_id.clone() {
-                    let res = if is_trial_now {
-                        ctx.start_trial(&level_id)
-                    } else if level_id.starts_with("gauntlet_") {
-                        ctx.start_gauntlet()
-                    } else if level_id.starts_with("boss_") {
-                        ctx.start_boss_raid(&level_id)
-                    } else {
-                        ctx.start_level(&level_id)
-                    };
+                let prev_streak = ctx.city.stats.win_streak;
+                if !is_trial_now {
+                    ctx.city.reset_win_streak();
+                }
+                if ctx.active_level_id.is_some() {
+                    let res = ctx.restart_active_level();
                     if res.is_ok() {
                         *input_state = Match3InputState {
                             reduced_motion: ctx.reduced_motion,
                             hud_mode: input_state.hud_mode,
+                            measured_top_hud_px: input_state.measured_top_hud_px,
+                            measured_bottom_hud_px: input_state.measured_bottom_hud_px,
                             dirty_static_board: true,
                             dirty_board: true,
                             dirty_hud: true,
@@ -1808,10 +1819,13 @@ pub fn handle_match3_hud_buttons(
                         scroll_mem.right_rail_offset_y = 0.0;
                         play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     } else {
+                        ctx.city.stats.win_streak = prev_streak;
                         play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
                         haptics.send(HapticEvent(HapticKind::Error));
                         input_state.dirty_hud = true;
                     }
+                } else {
+                    ctx.city.stats.win_streak = prev_streak;
                 }
             }
             Match3UiAction::TriggerFury => {
@@ -2529,8 +2543,14 @@ pub(super) fn start_swap_animation(
     true
 }
 
+type HudBarMeasureQueries<'w, 's> = (
+    Query<'w, 's, &'static ComputedNode, With<Match3TopHudBar>>,
+    Query<'w, 's, &'static ComputedNode, With<Match3BottomHudBar>>,
+    Query<'w, 's, &'static Node, With<Match3TooltipText>>,
+);
+
 /// Rebuilds static/dynamic board sprites and/or HUD when dirty flags are raised.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn sync_match3_visuals(
     mut commands: Commands,
     ctx: Res<GameContext>,
@@ -2545,6 +2565,7 @@ pub fn sync_match3_visuals(
     sprites: Query<Entity, With<Match3Entity>>,
     huds: Query<Entity, With<Match3HudRoot>>,
     mut hud_texts: hud::HudTextQueries,
+    hud_measure_q: HudBarMeasureQueries,
     mut was_idle: Local<Option<bool>>,
 ) {
     // The HUD derives Idle-dependent state (Undo, tools); refresh it on any Idle edge.
@@ -2641,6 +2662,58 @@ pub fn sync_match3_visuals(
         );
         input_state.dirty_hud = false;
     }
+
+    if !input_state.hud_mode.is_desktop_wide()
+        && input_state.is_idle()
+        && ctx.active_modal != ActiveModal::Help
+    {
+        let (top_bar_q, bottom_bar_q, tooltip_vis_q) = &hud_measure_q;
+        let mut needs_board_refit = false;
+        const HUD_OUTER_PAD_PX: f32 = 12.0;
+        const HUD_CLEARANCE_PX: f32 = 8.0;
+        const HUD_REFIT_EPSILON_PX: f32 = 4.0;
+        if let Ok(top_c) = top_bar_q.get_single() {
+            let inv = top_c.inverse_scale_factor();
+            if inv.is_finite() && inv > 0.0 {
+                let bar_h = top_c.size().y * inv;
+                if bar_h.is_finite() && bar_h > 1.0 {
+                    let needed = bar_h + HUD_OUTER_PAD_PX + safe_area.top + HUD_CLEARANCE_PX;
+                    if input_state.measured_top_hud_px == 0.0
+                        || (needed - input_state.measured_top_hud_px).abs() >= HUD_REFIT_EPSILON_PX
+                    {
+                        input_state.measured_top_hud_px = needed;
+                        needs_board_refit = true;
+                    }
+                }
+            }
+        }
+        let tooltip_hidden =
+            tooltip_vis_q.iter().all(|n| n.display == Display::None) || ctx.armed_tool.is_some();
+        if (input_state.measured_bottom_hud_px == 0.0 || tooltip_hidden)
+            && bottom_bar_q.get_single().is_ok()
+        {
+            if let Ok(bot_c) = bottom_bar_q.get_single() {
+                let inv = bot_c.inverse_scale_factor();
+                if inv.is_finite() && inv > 0.0 {
+                    let bar_h = bot_c.size().y * inv;
+                    if bar_h.is_finite() && bar_h > 1.0 {
+                        let needed = bar_h + HUD_OUTER_PAD_PX + safe_area.bottom + HUD_CLEARANCE_PX;
+                        if input_state.measured_bottom_hud_px == 0.0
+                            || (needed - input_state.measured_bottom_hud_px).abs()
+                                >= HUD_REFIT_EPSILON_PX
+                        {
+                            input_state.measured_bottom_hud_px = needed;
+                            needs_board_refit = true;
+                        }
+                    }
+                }
+            }
+        }
+        if needs_board_refit {
+            input_state.dirty_static_board = true;
+            input_state.dirty_board = true;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2724,5 +2797,29 @@ mod tests {
         let board_w = state.cell_step * 8.0 + 28.0;
         assert!(board_w <= 360.0 - 24.0 + 0.5);
         assert!(state.cell_step >= MIN_TILE_SIZE_PX);
+    }
+
+    #[test]
+    fn compact_board_layout_respects_measured_top_and_bottom_hud_heights() {
+        let mut state = Match3InputState {
+            measured_top_hud_px: 150.0,
+            measured_bottom_hud_px: 170.0,
+            ..default()
+        };
+        let safe = SafeAreaInsets::default();
+        compute_board_layout(800.0, 600.0, 8, 8, safe, &mut state);
+        assert_eq!(state.hud_mode, HudLayoutMode::Compact);
+        assert!(state.is_compact_hud());
+        let board_h = state.cell_step * 8.0;
+        let top_edge_px = 600.0 * 0.5 - (state.board_center_y + board_h * 0.5);
+        let bottom_edge_px = 600.0 * 0.5 + (state.board_center_y - board_h * 0.5);
+        assert!(
+            top_edge_px >= 150.0 - 0.5,
+            "board top edge ({top_edge_px}) overlapped measured top bar (150)"
+        );
+        assert!(
+            bottom_edge_px >= 170.0 - 0.5,
+            "board bottom edge ({bottom_edge_px}) overlapped measured bottom bar (170)"
+        );
     }
 }

@@ -135,6 +135,7 @@ pub struct GameContext {
     pub last_gauntlet_stages: Option<(u32, u32)>,
     pub last_defeat_out_of_time: bool,
     pub open_inspector_on_city_enter: bool,
+    pub open_inspector_upgrade_tab: bool,
     pub last_discovered_relic_key: Option<String>,
     pub status_notice_key: Option<String>,
     pub celebration_message: Option<String>,
@@ -351,6 +352,7 @@ impl GameContext {
             last_gauntlet_stages: None,
             last_defeat_out_of_time: false,
             open_inspector_on_city_enter: false,
+            open_inspector_upgrade_tab: false,
             last_discovered_relic_key: None,
             status_notice_key,
             celebration_message: None,
@@ -621,6 +623,7 @@ impl GameContext {
         self.last_gauntlet_stages = None;
         self.last_defeat_out_of_time = false;
         self.open_inspector_on_city_enter = false;
+        self.open_inspector_upgrade_tab = false;
         self.pending_dialogue = None;
         self.pending_offline_vault = None;
         self.last_stand_pre_defeat_streak = 0;
@@ -688,6 +691,7 @@ impl GameContext {
         self.last_gauntlet_stages = None;
         self.last_defeat_out_of_time = false;
         self.open_inspector_on_city_enter = false;
+        self.open_inspector_upgrade_tab = false;
         self.last_discovered_relic_key = None;
         self.status_notice_key = None;
         self.celebration_message = None;
@@ -1042,6 +1046,34 @@ impl GameContext {
         self.last_unlocked_modes.clear();
         self.last_mastery_rank_up = None;
         Ok(())
+    }
+
+    /// Restarts or replays `active_level_id` by dispatching to the corresponding mode launcher.
+    pub fn restart_active_level(&mut self) -> Result<(), &'static str> {
+        let Some(level_id) = self.active_level_id.clone() else {
+            return Err("city.error.level_not_found");
+        };
+        if level_id.starts_with("daily_") {
+            if self.city.is_daily_available(today_day_index()) {
+                self.start_daily_trial()
+            } else {
+                Err("city.panel.daily.done")
+            }
+        } else if level_id.starts_with("weekly_") {
+            self.start_weekly_challenge()
+        } else if level_id.starts_with("trial_") {
+            self.start_trial(&level_id)
+        } else if level_id.starts_with("gauntlet_") {
+            self.start_gauntlet()
+        } else if level_id.starts_with("boss_") {
+            self.start_boss_raid(&level_id)
+        } else if level_id.starts_with("expedition_") {
+            self.start_expedition()
+        } else if level_id == wyrdstone_core::BLITZ_BUILDING_ID {
+            self.start_valhalla_blitz()
+        } else {
+            self.start_level(&level_id)
+        }
     }
 
     /// Launches the 4-boss Ragnarok Gauntlet rush, consuming 1 Endurance.
@@ -1410,6 +1442,7 @@ mod read_only_notice_tests {
             last_gauntlet_stages: None,
             last_defeat_out_of_time: false,
             open_inspector_on_city_enter: false,
+            open_inspector_upgrade_tab: false,
             last_discovered_relic_key: None,
             status_notice_key: None,
             celebration_message: None,

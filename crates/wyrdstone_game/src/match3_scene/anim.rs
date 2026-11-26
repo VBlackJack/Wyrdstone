@@ -2500,6 +2500,8 @@ pub fn animate_particles(
             input_state.hud_mode = now_mode;
             input_state.dirty_hud = true;
         }
+        input_state.measured_top_hud_px = 0.0;
+        input_state.measured_bottom_hud_px = 0.0;
         input_state.dirty_static_board = true;
         input_state.dirty_board = true;
     }

@@ -39,6 +39,10 @@ use wyrdstone_core::{
 #[derive(Component)]
 pub struct ResultRoot;
 
+/// Preserves a button's resting border color across keyboard focus navigation updates.
+#[derive(Component)]
+pub struct BaseBorderColor(Color);
+
 /// Sequential pop-in animation for the 1..=3 Victory mastery stars.
 #[derive(Component)]
 pub struct ResultStarAnim {
@@ -1038,8 +1042,12 @@ fn spawn_result_ui(
                                                         .unwrap_or(false)
                                             })
                                             .map(|b| b.id.clone());
-                                        let mut ready_badges: Vec<(String, Color, ResultAction)> =
-                                            Vec::new();
+                                        let mut ready_badges: Vec<(
+                                            String,
+                                            Color,
+                                            Color,
+                                            ResultAction,
+                                        )> = Vec::new();
                                         for &mode in &ctx.last_unlocked_modes {
                                             ready_badges.push((
                                                 i18n.t_fmt(
@@ -1050,12 +1058,14 @@ fn spawn_result_ui(
                                                     )],
                                                 ),
                                                 COLOR_ACCENT_GOLD,
+                                                COLOR_ACCENT_GOLD,
                                                 ResultAction::ReturnToFjord,
                                             ));
                                         }
                                         if quest_ready {
                                             ready_badges.push((
                                                 i18n.t("result.ready.quest").to_string(),
+                                                COLOR_ACCENT_GOLD,
                                                 COLOR_ACCENT_GOLD,
                                                 ResultAction::ReturnToFjord,
                                             ));
@@ -1067,6 +1077,7 @@ fn spawn_result_ui(
                                                     &[("count", claimable_feats.to_string())],
                                                 ),
                                                 COLOR_ACCENT_GREEN,
+                                                COLOR_ACCENT_GREEN_TEXT,
                                                 ResultAction::OpenFjordModal(
                                                     ActiveModal::Achievements,
                                                 ),
@@ -1076,6 +1087,7 @@ fn spawn_result_ui(
                                             ready_badges.push((
                                                 i18n.t("result.ready.upgrade").to_string(),
                                                 COLOR_ACCENT_TEAL,
+                                                COLOR_ACCENT_TEAL_TEXT,
                                                 ResultAction::OpenUpgradeBuilding(bldg_id),
                                             ));
                                         }
@@ -1087,6 +1099,7 @@ fn spawn_result_ui(
                                                     "result.ready.bounties",
                                                     &[("count", claimable_bounties.to_string())],
                                                 ),
+                                                COLOR_ACCENT_GOLD,
                                                 COLOR_ACCENT_GOLD,
                                                 ResultAction::OpenFjordModal(ActiveModal::Bounties),
                                             ));
@@ -1101,6 +1114,7 @@ fn spawn_result_ui(
                                                     &[("count", claimable_cols.to_string())],
                                                 ),
                                                 COLOR_ACCENT_GREEN,
+                                                COLOR_ACCENT_GREEN_TEXT,
                                                 ResultAction::OpenFjordModal(
                                                     ActiveModal::Collections,
                                                 ),
@@ -1116,15 +1130,19 @@ fn spawn_result_ui(
                                                 ..default()
                                             })
                                             .with_children(|brow| {
-                                                for (lbl, col, act) in ready_badges {
+                                                for (lbl, border_col, text_col, act) in ready_badges
+                                                {
                                                     brow.spawn((
                                                         Button,
                                                         act,
+                                                        BaseBorderColor(border_col),
                                                         Node {
-                                                            min_height: Val::Px(32.0),
+                                                            min_height: Val::Px(
+                                                                MIN_TOUCH_TARGET_PX,
+                                                            ),
                                                             padding: UiRect::axes(
                                                                 Val::Px(12.0),
-                                                                Val::Px(5.0),
+                                                                Val::Px(6.0),
                                                             ),
                                                             justify_content: JustifyContent::Center,
                                                             align_items: AlignItems::Center,
@@ -1132,7 +1150,7 @@ fn spawn_result_ui(
                                                             ..default()
                                                         },
                                                         BackgroundColor(COLOR_PANEL_CARD),
-                                                        BorderColor(col),
+                                                        BorderColor(border_col),
                                                         BorderRadius::all(Val::Px(8.0)),
                                                     ))
                                                     .with_children(|pill| {
@@ -1142,7 +1160,7 @@ fn spawn_result_ui(
                                                                 font_size: FONT_SMALL,
                                                                 ..default()
                                                             },
-                                                            TextColor(col),
+                                                            TextColor(text_col),
                                                         ));
                                                     });
                                                 }
@@ -1590,9 +1608,10 @@ fn spawn_result_ui(
                                         erow.spawn((
                                             Button,
                                             ResultAction::DrinkMead,
+                                            BaseBorderColor(COLOR_ACCENT_GOLD),
                                             Node {
-                                                min_height: Val::Px(34.0),
-                                                padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
+                                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                                                 justify_content: JustifyContent::Center,
                                                 align_items: AlignItems::Center,
                                                 border: UiRect::all(Val::Px(1.5)),
@@ -1702,8 +1721,14 @@ fn spawn_result_btn(
     text_color: Color,
     is_primary: bool,
 ) {
+    let base_border = if is_primary {
+        COLOR_ACCENT_GOLD_HOVER
+    } else {
+        Color::NONE
+    };
     let mut cmd = parent.spawn((
         Button,
+        BaseBorderColor(base_border),
         Node {
             min_height: Val::Px(MIN_TOUCH_TARGET_PX),
             padding: UiRect::axes(Val::Px(20.0), Val::Px(12.0)),
@@ -1713,11 +1738,7 @@ fn spawn_result_btn(
             ..default()
         },
         BackgroundColor(bg),
-        BorderColor(if is_primary {
-            COLOR_ACCENT_GOLD_HOVER
-        } else {
-            Color::NONE
-        }),
+        BorderColor(base_border),
         BorderRadius::all(Val::Px(8.0)),
         button_shadow(),
     ));
@@ -1818,30 +1839,7 @@ pub fn cleanup_result_ui(mut commands: Commands, roots: Query<Entity, With<Resul
 }
 
 fn try_replay_active_level(ctx: &mut GameContext) -> Result<(), &'static str> {
-    let Some(level_id) = ctx.active_level_id.clone() else {
-        return Err("city.error.level_not_found");
-    };
-    if level_id.starts_with("daily_") {
-        if ctx.city.is_daily_available(today_day_index()) {
-            ctx.start_daily_trial()
-        } else {
-            Err("city.panel.daily.done")
-        }
-    } else if level_id.starts_with("weekly_") {
-        ctx.start_weekly_challenge()
-    } else if level_id.starts_with("trial_") {
-        ctx.start_trial(&level_id)
-    } else if level_id.starts_with("gauntlet_") {
-        ctx.start_gauntlet()
-    } else if level_id.starts_with("boss_") {
-        ctx.start_boss_raid(&level_id)
-    } else if level_id.starts_with("expedition_") {
-        ctx.start_expedition()
-    } else if level_id == wyrdstone_core::BLITZ_BUILDING_ID {
-        ctx.start_valhalla_blitz()
-    } else {
-        ctx.start_level(&level_id)
-    }
+    ctx.restart_active_level()
 }
 
 fn execute_result_action(
@@ -1905,6 +1903,7 @@ fn execute_result_action(
         ResultAction::OpenUpgradeBuilding(id) => {
             ctx.selected_building_id = id.clone();
             ctx.open_inspector_on_city_enter = true;
+            ctx.open_inspector_upgrade_tab = true;
             next_state.set(AppState::FjordCity);
             false
         }
@@ -1937,7 +1936,12 @@ pub fn handle_result_buttons(
     (mut press_arm, mut focus_idx): (Local<PressArm>, Local<Option<usize>>),
     roots: Query<Entity, With<ResultRoot>>,
     buttons: Query<(Entity, &Interaction, &ResultAction), Changed<Interaction>>,
-    mut focus_buttons: Query<(Entity, &ResultAction, &mut BorderColor)>,
+    mut focus_buttons: Query<(
+        Entity,
+        &ResultAction,
+        &mut BorderColor,
+        Option<&BaseBorderColor>,
+    )>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         *focus_idx = None;
@@ -1973,11 +1977,11 @@ pub fn handle_result_buttons(
                 }
             };
             *focus_idx = Some(next);
-            for (idx, (_, _, mut border)) in focus_buttons.iter_mut().enumerate() {
+            for (idx, (_, _, mut border, base)) in focus_buttons.iter_mut().enumerate() {
                 border.0 = if idx == next {
-                    COLOR_ACCENT_GOLD_HOVER
+                    COLOR_ACCENT_TEAL_TEXT
                 } else {
-                    Color::NONE
+                    base.map(|b| b.0).unwrap_or(Color::NONE)
                 };
             }
         }
@@ -1985,9 +1989,12 @@ pub fn handle_result_buttons(
     }
 
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-        if let Some(chosen) =
-            focus_idx.and_then(|idx| focus_buttons.iter().nth(idx).map(|(_, act, _)| act.clone()))
-        {
+        if let Some(chosen) = focus_idx.and_then(|idx| {
+            focus_buttons
+                .iter()
+                .nth(idx)
+                .map(|(_, act, _, _)| act.clone())
+        }) {
             *focus_idx = None;
             if execute_result_action(
                 &mut commands,

@@ -51,6 +51,7 @@ const BACKUP_NOTICE_DURATION_SECS: f32 = 6.0;
 const SNOWFLAKE_COUNT: usize = 22;
 const HARVEST_POLL_SECS: f32 = 5.0;
 const CITY_TOP_EDGE_LANDSCAPE_PX: f32 = 10.0;
+const CITY_TOP_EDGE_PORTRAIT_PX: f32 = 6.0;
 const CITY_DRAWER_TOP_GAP_PX: f32 = 8.0;
 const MIN_CITY_TOP_BAR_HEIGHT_PX: f32 = 24.0;
 /// Native aspect ratio of `assets/sprites/fjord_map.png` (1280x720 = 16:9).
@@ -215,6 +216,14 @@ pub enum CityDrawer {
     Menu,
 }
 
+/// Active tab inside the building inspector drawer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum InspectorTab {
+    #[default]
+    Raid,
+    Upgrade,
+}
+
 /// Tracks City layout mode, displayed endurance, audio state, and periodic harvest readiness checks.
 #[derive(Resource)]
 pub struct CityLayoutMode {
@@ -223,6 +232,7 @@ pub struct CityLayoutMode {
     pub last_fullscreen: bool,
     pub active_drawer: CityDrawer,
     pub inspector_open: bool,
+    pub(super) inspector_tab: InspectorTab,
     pub last_displayed_energy: u32,
     pub last_ready_harvests: usize,
     pub last_muted: bool,
@@ -250,6 +260,7 @@ pub(crate) struct CityRightDrawerPanel;
 pub enum CityAction {
     SelectBuilding(String),
     CloseInspector,
+    SelectInspectorTab(InspectorTab),
     SelectDifficulty(u8),
     CyclePatron,
     CycleAmulet,
@@ -351,6 +362,11 @@ pub fn setup_city_ui(
         apply_mode_unlock_celebration(&mut ctx, &modes, 4.5);
     }
     let inspector_open = std::mem::take(&mut ctx.open_inspector_on_city_enter);
+    let inspector_tab = if std::mem::take(&mut ctx.open_inspector_upgrade_tab) {
+        InspectorTab::Upgrade
+    } else {
+        InspectorTab::Raid
+    };
     let ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
     commands.insert_resource(CityLayoutMode {
         is_portrait,
@@ -358,6 +374,7 @@ pub fn setup_city_ui(
         last_fullscreen: _is_fullscreen,
         active_drawer: CityDrawer::None,
         inspector_open,
+        inspector_tab,
         last_displayed_energy: ctx.city.energy,
         last_ready_harvests: ready_harvests,
         last_muted: sound_bank.muted,
@@ -387,6 +404,7 @@ pub fn setup_city_ui(
         *safe_area,
         CityDrawer::None,
         inspector_open,
+        inspector_tab,
         None,
     );
 }
@@ -529,6 +547,7 @@ fn spawn_city_tree(
     safe: SafeAreaInsets,
     active_drawer: CityDrawer,
     inspector_open: bool,
+    inspector_tab: InspectorTab,
     just_built_id: Option<&str>,
 ) {
     let i18n = &ctx.data.i18n;
@@ -1507,7 +1526,8 @@ fn spawn_city_tree(
                         left: Val::Px(6.0 + safe.left),
                         right: Val::Px(6.0 + safe.right),
                         bottom: Val::Px(PORTRAIT_BOTTOM_NAV_HEIGHT_PX + 10.0 + safe.bottom),
-                        height: Val::Percent(60.0),
+                        height: Val::Percent(74.0),
+                        max_height: Val::Percent(76.0),
                         min_height: Val::Px(0.0),
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
@@ -1581,6 +1601,8 @@ fn spawn_city_tree(
                                     ctx,
                                     fjord_art,
                                     scroll_mem.inspector_offset_y,
+                                    is_portrait,
+                                    inspector_tab,
                                 );
                             }
                         }
@@ -2428,8 +2450,8 @@ pub(super) fn spawn_cost_pills(
                             i18n.t_fmt("city.shortage.tooltip", &[("resource", label.to_string())]),
                         ),
                         Node {
-                            min_height: Val::Px(32.0),
-                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             border: UiRect::all(Val::Px(1.5)),
@@ -3072,6 +3094,7 @@ pub fn handle_city_buttons(
                 ctx.shortage_guidance = None;
                 layout_mode.active_drawer = CityDrawer::None;
                 layout_mode.inspector_open = true;
+                layout_mode.inspector_tab = InspectorTab::Raid;
                 scroll_mem.inspector_offset_y = 0.0;
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 haptics.send(HapticEvent(HapticKind::LightTap));
@@ -3089,6 +3112,12 @@ pub fn handle_city_buttons(
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     rebuild = true;
                 }
+            }
+            CityAction::SelectInspectorTab(tab) => {
+                layout_mode.inspector_tab = *tab;
+                scroll_mem.inspector_offset_y = 0.0;
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                rebuild = true;
             }
             CityAction::SelectDifficulty(diff) => {
                 let allowed = if *diff == 0 {
@@ -3624,6 +3653,7 @@ pub fn handle_city_buttons(
                     ctx.selected_difficulty = diff;
                     ctx.shortage_guidance = Some((*kind, bldg_id, diff, amount));
                     layout_mode.inspector_open = true;
+                    layout_mode.inspector_tab = InspectorTab::Raid;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     haptics.send(HapticEvent(HapticKind::LightTap));
                 } else {
@@ -3668,6 +3698,7 @@ pub fn handle_city_buttons(
                     ctx.selected_building_id = b.id;
                     ctx.selected_difficulty = 0;
                     layout_mode.inspector_open = true;
+                    layout_mode.inspector_tab = InspectorTab::Raid;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                     haptics.send(HapticEvent(HapticKind::LightTap));
                     rebuild = true;
@@ -4151,6 +4182,7 @@ pub fn handle_city_buttons(
             *safe_area,
             layout_mode.active_drawer,
             layout_mode.inspector_open,
+            layout_mode.inspector_tab,
             just_built.as_deref(),
         );
     }
@@ -4211,6 +4243,7 @@ fn focus_active_quest(
             ctx.selected_difficulty = 0;
             layout_mode.active_drawer = CityDrawer::None;
             layout_mode.inspector_open = true;
+            layout_mode.inspector_tab = InspectorTab::Raid;
             scroll_mem.inspector_offset_y = 0.0;
             play_sfx(commands, sound_bank, SfxKind::Swap);
             FocusQuestResult::UpdatedHub(true)
@@ -4236,6 +4269,7 @@ fn focus_active_quest(
             ctx.selected_difficulty = diff;
             layout_mode.active_drawer = CityDrawer::None;
             layout_mode.inspector_open = true;
+            layout_mode.inspector_tab = InspectorTab::Raid;
             scroll_mem.inspector_offset_y = 0.0;
             play_sfx(commands, sound_bank, SfxKind::Swap);
             FocusQuestResult::UpdatedHub(true)
@@ -4868,17 +4902,25 @@ pub fn sync_map_building_layout(
         ),
     >,
 ) {
-    if !layout_mode.is_portrait {
-        if let Ok(top_computed) = top_bar_q.get_single() {
-            let top_inv = top_computed.inverse_scale_factor();
-            if top_inv.is_finite() && top_inv > 0.0 {
-                let bar_h = top_computed.size().y * top_inv;
-                if bar_h.is_finite()
-                    && bar_h >= MIN_CITY_TOP_BAR_HEIGHT_PX
-                    && (layout_mode.last_top_bar_height == 0.0
-                        || (bar_h - layout_mode.last_top_bar_height).abs() >= 1.0)
-                {
-                    layout_mode.last_top_bar_height = bar_h;
+    if let Ok(top_computed) = top_bar_q.get_single() {
+        let top_inv = top_computed.inverse_scale_factor();
+        if top_inv.is_finite() && top_inv > 0.0 {
+            let bar_h = top_computed.size().y * top_inv;
+            if bar_h.is_finite()
+                && bar_h >= MIN_CITY_TOP_BAR_HEIGHT_PX
+                && (layout_mode.last_top_bar_height == 0.0
+                    || (bar_h - layout_mode.last_top_bar_height).abs() >= 1.0)
+            {
+                layout_mode.last_top_bar_height = bar_h;
+                if layout_mode.is_portrait {
+                    let top_edge =
+                        CITY_TOP_EDGE_PORTRAIT_PX + safe_area.top + bar_h + CITY_DRAWER_TOP_GAP_PX;
+                    let bottom_edge = PORTRAIT_BOTTOM_NAV_HEIGHT_PX + 10.0 + safe_area.bottom;
+                    let max_h = (layout_mode.window_size.y - top_edge - bottom_edge).max(200.0);
+                    for mut drawer_node in &mut drawer_q {
+                        drawer_node.max_height = Val::Px(max_h);
+                    }
+                } else {
                     let target_top =
                         CITY_TOP_EDGE_LANDSCAPE_PX + safe_area.top + bar_h + CITY_DRAWER_TOP_GAP_PX;
                     for mut drawer_node in &mut drawer_q {

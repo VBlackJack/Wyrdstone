@@ -17,10 +17,10 @@
 //! Match-3 HUD overlay: moves, live countdown timer, objectives, active tools bar, and Guide modal.
 
 use super::{
-    FuryReadyPulse, LowMovesPulse, Match3BossHpFill, Match3BossHpText, Match3Cleanup,
-    Match3ComboText, Match3FuryFill, Match3FuryText, Match3HudBar, Match3HudRoot, Match3MovesText,
-    Match3ObjectiveText, Match3OverdriveText, Match3ScoreText, Match3TimerText, Match3TooltipText,
-    Match3UiAction, LOW_MOVES_THRESHOLD,
+    FuryReadyPulse, LowMovesPulse, Match3BossHpFill, Match3BossHpText, Match3BottomHudBar,
+    Match3Cleanup, Match3ComboText, Match3FuryFill, Match3FuryText, Match3HudBar, Match3HudRoot,
+    Match3MovesText, Match3ObjectiveText, Match3OverdriveText, Match3ScoreText, Match3TimerText,
+    Match3TooltipText, Match3TopHudBar, Match3UiAction, LOW_MOVES_THRESHOLD,
 };
 use crate::audio::SoundBank;
 use crate::fjord_art::FjordTextures;
@@ -1791,6 +1791,7 @@ pub(super) fn spawn_match3_hud(
                 // Top HUD bar (Compact & Portrait layouts)
                 root.spawn((
                     Match3HudBar,
+                    Match3TopHudBar,
                     Interaction::None,
                     FocusPolicy::Block,
                     sliced_panel_image(vfx),
@@ -1853,6 +1854,7 @@ pub(super) fn spawn_match3_hud(
                 // Bottom active tools bar (Compact & Portrait layouts)
                 root.spawn((
                     Match3HudBar,
+                    Match3BottomHudBar,
                     Interaction::None,
                     FocusPolicy::Block,
                     sliced_panel_image(vfx),
@@ -1955,7 +1957,7 @@ pub(super) fn spawn_match3_hud(
                         ))
                         .with_children(|hdr| {
                             hdr.spawn((
-                                Text::new(i18n.t("city.panel.help.title")),
+                                Text::new(i18n.t("match3.pause.title")),
                                 display_font(fjord_art, FONT_HEADING),
                                 TextColor(COLOR_ACCENT_GOLD),
                             ));
@@ -2030,55 +2032,108 @@ pub(super) fn spawn_match3_hud(
                                         == wyrdstone_core::level::DAILY_TRIAL_BUILDING_ID;
                                     let is_exp = session.level.building_id
                                         == wyrdstone_core::expedition::EXPEDITION_BUILDING_ID;
+                                    let is_gauntlet = session.level.building_id
+                                        == wyrdstone_core::GAUNTLET_BUILDING_ID;
                                     let has_energy =
                                         ctx.city.energy >= ctx.data.balance.energy_cost_per_level;
-                                    if !is_daily && !is_exp && has_energy {
-                                        let r_lbl = if confirm_restart {
-                                            i18n.t("match3.hud.restart_confirm").to_string()
-                                        } else {
-                                            i18n.t_fmt(
-                                                "match3.hud.restart",
-                                                &[(
-                                                    "cost",
-                                                    ctx.data
-                                                        .balance
-                                                        .energy_cost_per_level
-                                                        .to_string(),
-                                                )],
-                                            )
-                                        };
-                                        body.spawn((
-                                            Button,
-                                            Match3UiAction::RestartBoard,
-                                            Node {
-                                                padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
-                                                min_height: Val::Px(MIN_TOUCH_TARGET_PX),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                border: UiRect::all(Val::Px(1.5)),
-                                                ..default()
-                                            },
-                                            BackgroundColor(if confirm_restart {
-                                                COLOR_ACCENT_CRIMSON
-                                            } else {
-                                                COLOR_PANEL_CARD
-                                            }),
-                                            BorderColor(COLOR_ACCENT_GOLD),
-                                            BorderRadius::all(Val::Px(RADIUS_SM)),
-                                        ))
-                                        .with_children(
-                                            |btn| {
-                                                btn.spawn((
-                                                    Text::new(r_lbl),
-                                                    TextFont {
-                                                        font_size: FONT_SMALL,
+                                    let can_restart = !is_daily
+                                        && !is_exp
+                                        && !is_gauntlet
+                                        && (session.is_trial || has_energy);
+                                    body.spawn(Node {
+                                        flex_wrap: FlexWrap::Wrap,
+                                        column_gap: Val::Px(8.0),
+                                        row_gap: Val::Px(6.0),
+                                        ..default()
+                                    })
+                                    .with_children(
+                                        |act_row| {
+                                            act_row
+                                                .spawn((
+                                                    Button,
+                                                    Match3UiAction::ToggleHelp,
+                                                    Node {
+                                                        flex_grow: 1.0,
+                                                        padding: UiRect::axes(
+                                                            Val::Px(14.0),
+                                                            Val::Px(8.0),
+                                                        ),
+                                                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                                                        justify_content: JustifyContent::Center,
+                                                        align_items: AlignItems::Center,
+                                                        border: UiRect::all(Val::Px(1.5)),
                                                         ..default()
                                                     },
-                                                    TextColor(COLOR_TEXT_PRIMARY),
-                                                ));
-                                            },
-                                        );
-                                    }
+                                                    BackgroundColor(COLOR_ACCENT_GREEN),
+                                                    BorderColor(COLOR_ACCENT_GOLD),
+                                                    BorderRadius::all(Val::Px(RADIUS_SM)),
+                                                ))
+                                                .with_children(|btn| {
+                                                    btn.spawn((
+                                                        Text::new(i18n.t("match3.pause.resume")),
+                                                        TextFont {
+                                                            font_size: FONT_SMALL,
+                                                            ..default()
+                                                        },
+                                                        TextColor(COLOR_TEXT_ON_ACCENT),
+                                                    ));
+                                                });
+                                            if can_restart {
+                                                let r_lbl = if confirm_restart {
+                                                    i18n.t("match3.hud.restart_confirm").to_string()
+                                                } else if session.is_trial {
+                                                    i18n.t("match3.hud.restart").to_string()
+                                                } else {
+                                                    i18n.t_fmt(
+                                                        "match3.hud.restart_cost",
+                                                        &[(
+                                                            "cost",
+                                                            ctx.data
+                                                                .balance
+                                                                .energy_cost_per_level
+                                                                .to_string(),
+                                                        )],
+                                                    )
+                                                };
+                                                act_row
+                                                    .spawn((
+                                                        Button,
+                                                        Match3UiAction::RestartBoard,
+                                                        Node {
+                                                            flex_grow: 1.0,
+                                                            padding: UiRect::axes(
+                                                                Val::Px(12.0),
+                                                                Val::Px(8.0),
+                                                            ),
+                                                            min_height: Val::Px(
+                                                                MIN_TOUCH_TARGET_PX,
+                                                            ),
+                                                            justify_content: JustifyContent::Center,
+                                                            align_items: AlignItems::Center,
+                                                            border: UiRect::all(Val::Px(1.5)),
+                                                            ..default()
+                                                        },
+                                                        BackgroundColor(if confirm_restart {
+                                                            COLOR_ACCENT_CRIMSON
+                                                        } else {
+                                                            COLOR_PANEL_CARD
+                                                        }),
+                                                        BorderColor(COLOR_ACCENT_GOLD),
+                                                        BorderRadius::all(Val::Px(RADIUS_SM)),
+                                                    ))
+                                                    .with_children(|btn| {
+                                                        btn.spawn((
+                                                            Text::new(r_lbl),
+                                                            TextFont {
+                                                                font_size: FONT_SMALL,
+                                                                ..default()
+                                                            },
+                                                            TextColor(COLOR_TEXT_PRIMARY),
+                                                        ));
+                                                    });
+                                            }
+                                        },
+                                    );
 
                                     // Quick Pause Settings (Audio + Colorblind) right inside Match-3
                                     body.spawn((

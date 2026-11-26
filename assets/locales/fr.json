@@ -361,6 +361,9 @@
   "match3.hud.pause": "Pause [Échap]",
   "match3.hud.paused_banner": "RAID EN PAUSE",
   "match3.hud.restart": "Recommencer",
+  "match3.hud.restart_cost": "Recommencer (-{cost} End.)",
+  "match3.pause.title": "Raid en pause",
+  "match3.pause.resume": "Reprendre",
   "match3.hud.restart_confirm": "Confirmer Redémarrage ?",
   "match3.defeat.out_of_moves": "PLUS DE COUPS !",
   "match3.defeat.out_of_time": "TEMPS ÉCOULÉ !",
@@ -760,5 +763,8 @@
   "tip.defeat.relics": "Astuce : Utilise des Éclairs verticaux ou l'Éclair de Thor pour faire chuter les Reliques.",
   "tip.defeat.ice": "Astuce : Vise tôt la glace des coins avec des Bombes ou Braises de Surtr.",
   "tip.defeat.runes": "Astuce : Échange un Éclat du Bifrost avec une rune cible pour toute la couleur.",
-  "tip.defeat.score": "Astuce : Enchaîne les cascades pour activer Ragnarok (Score x2)."
+  "tip.defeat.score": "Astuce : Enchaîne les cascades pour activer Ragnarok (Score x2).",
+  "city.inspector.tab_raid": "Raid",
+  "city.inspector.tab_upgrade": "Améliorer",
+  "city.inspector.tab_upgrade_ready": "Améliorer (!)"
 }
