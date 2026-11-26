@@ -102,6 +102,10 @@ pub struct Match3ComboText;
 #[derive(Component)]
 pub struct Match3FuryText;
 
+/// Marker on the Patron Fury progress fill bar so charge width updates in-place.
+#[derive(Component)]
+pub struct Match3FuryFill;
+
 /// Marker on the Boss HP / riposte / weakness text so unchanged-phase combat steps update in-place.
 #[derive(Component)]
 pub struct Match3BossHpText;

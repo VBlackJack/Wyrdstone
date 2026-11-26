@@ -18,6 +18,7 @@
 
 use crate::audio::{toggle_mute, BgmTrack, SoundBank};
 use crate::fjord_art::FjordTextures;
+use crate::platform::SafeAreaInsets;
 use crate::scroll::{PressArm, UiScrollMemory};
 use crate::state::{AppState, GameContext};
 use crate::theme::*;
@@ -29,6 +30,8 @@ use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 
 const TITLE_SNOWFLAKE_COUNT: usize = 26;
+const TITLE_CONTENT_GAP_PX: f32 = 10.0;
+const TITLE_UTIL_BTN_MIN_WIDTH_PX: f32 = 132.0;
 
 #[derive(Component)]
 pub struct TitleRoot;
@@ -67,8 +70,16 @@ pub fn setup_title_ui(
     fjord_art: Res<FjordTextures>,
     vfx: Res<VfxTextures>,
     sound_bank: Res<SoundBank>,
+    safe_area: Res<SafeAreaInsets>,
 ) {
-    spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+    spawn_title_tree(
+        &mut commands,
+        &ctx,
+        &fjord_art,
+        &vfx,
+        sound_bank.muted,
+        *safe_area,
+    );
 }
 
 /// Cleans up Title screen entities on state exit.
@@ -93,6 +104,7 @@ fn spawn_title_tree(
     fjord_art: &FjordTextures,
     vfx: &VfxTextures,
     muted: bool,
+    safe: SafeAreaInsets,
 ) {
     let i18n = &ctx.data.i18n;
     let play_label = if ctx.has_existing_save {
@@ -202,9 +214,14 @@ fn spawn_title_tree(
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(14.0),
-                    padding: UiRect::all(Val::Px(16.0)),
-                    overflow: Overflow::scroll_y(),
+                    row_gap: Val::Px(TITLE_CONTENT_GAP_PX),
+                    padding: UiRect {
+                        left: Val::Px(14.0 + safe.left),
+                        right: Val::Px(14.0 + safe.right),
+                        top: Val::Px(12.0 + safe.top),
+                        bottom: Val::Px(12.0 + safe.bottom),
+                    },
+                    overflow: Overflow::clip(),
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.03, 0.06, 0.11, 0.46)),
@@ -216,7 +233,7 @@ fn spawn_title_tree(
                         TitleLogoFloat,
                         Node {
                             max_width: Val::Percent(92.0),
-                            max_height: Val::Vh(28.0),
+                            max_height: Val::Vh(24.0),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             flex_shrink: 1.0,
@@ -230,7 +247,7 @@ fn spawn_title_tree(
                             Node {
                                 width: Val::Px(520.0),
                                 max_width: Val::Percent(100.0),
-                                max_height: Val::Vh(28.0),
+                                max_height: Val::Vh(24.0),
                                 flex_shrink: 1.0,
                                 aspect_ratio: Some(16.0 / 9.0),
                                 ..default()
@@ -246,8 +263,8 @@ fn spawn_title_tree(
                             max_width: Val::Percent(90.0),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
-                            row_gap: Val::Px(6.0),
-                            padding: UiRect::axes(Val::Px(32.0), Val::Px(16.0)),
+                            row_gap: Val::Px(4.0),
+                            padding: UiRect::axes(Val::Px(24.0), Val::Px(12.0)),
                             ..default()
                         },
                         panel_shadow(),
@@ -277,7 +294,7 @@ fn spawn_title_tree(
                         Node {
                             width: Val::Px(320.0),
                             max_width: Val::Percent(92.0),
-                            height: Val::Px(64.0),
+                            height: Val::Px(58.0),
                             border: UiRect::all(Val::Px(2.5)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
@@ -337,7 +354,7 @@ fn spawn_title_tree(
                                 Button,
                                 act,
                                 Node {
-                                    min_width: Val::Px(178.0),
+                                    min_width: Val::Px(TITLE_UTIL_BTN_MIN_WIDTH_PX),
                                     min_height: Val::Px(MIN_TOUCH_TARGET_PX),
                                     padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
                                     justify_content: JustifyContent::Center,
@@ -472,9 +489,10 @@ pub fn handle_title_buttons(
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<TitleRoot>>,
-    (touches, scroll_mem, mut press_arm, mut focus_idx): (
+    (touches, scroll_mem, safe_area, mut press_arm, mut focus_idx): (
         Res<Touches>,
         Res<UiScrollMemory>,
+        Res<SafeAreaInsets>,
         Local<PressArm>,
         Local<Option<usize>>,
     ),
@@ -498,7 +516,14 @@ pub fn handle_title_buttons(
         for entity in &roots {
             commands.entity(entity).try_despawn_recursive();
         }
-        spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+        spawn_title_tree(
+            &mut commands,
+            &ctx,
+            &fjord_art,
+            &vfx,
+            sound_bank.muted,
+            *safe_area,
+        );
         return;
     }
 
@@ -556,7 +581,14 @@ pub fn handle_title_buttons(
         for entity in &roots {
             commands.entity(entity).try_despawn_recursive();
         }
-        spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+        spawn_title_tree(
+            &mut commands,
+            &ctx,
+            &fjord_art,
+            &vfx,
+            sound_bank.muted,
+            *safe_area,
+        );
         return;
     }
 
@@ -591,7 +623,14 @@ pub fn handle_title_buttons(
                         for entity in &roots {
                             commands.entity(entity).try_despawn_recursive();
                         }
-                        spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+                        spawn_title_tree(
+                            &mut commands,
+                            &ctx,
+                            &fjord_art,
+                            &vfx,
+                            sound_bank.muted,
+                            *safe_area,
+                        );
                     }
                 } else {
                     ctx.confirm_reset = true;
@@ -599,7 +638,14 @@ pub fn handle_title_buttons(
                     for entity in &roots {
                         commands.entity(entity).try_despawn_recursive();
                     }
-                    spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+                    spawn_title_tree(
+                        &mut commands,
+                        &ctx,
+                        &fjord_art,
+                        &vfx,
+                        sound_bank.muted,
+                        *safe_area,
+                    );
                 }
                 return;
             }
@@ -610,7 +656,14 @@ pub fn handle_title_buttons(
                 for entity in &roots {
                     commands.entity(entity).try_despawn_recursive();
                 }
-                spawn_title_tree(&mut commands, &ctx, &fjord_art, &vfx, sound_bank.muted);
+                spawn_title_tree(
+                    &mut commands,
+                    &ctx,
+                    &fjord_art,
+                    &vfx,
+                    sound_bank.muted,
+                    *safe_area,
+                );
                 return;
             }
             TitleAction::ToggleAudio => {

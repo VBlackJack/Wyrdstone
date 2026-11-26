@@ -50,6 +50,9 @@ const CELEBRATION_DURATION_SECS: f32 = 3.2;
 const BACKUP_NOTICE_DURATION_SECS: f32 = 6.0;
 const SNOWFLAKE_COUNT: usize = 22;
 const HARVEST_POLL_SECS: f32 = 5.0;
+const CITY_TOP_EDGE_LANDSCAPE_PX: f32 = 10.0;
+const CITY_DRAWER_TOP_GAP_PX: f32 = 8.0;
+const MIN_CITY_TOP_BAR_HEIGHT_PX: f32 = 24.0;
 /// Native aspect ratio of `assets/sprites/fjord_map.png` (1280x720 = 16:9).
 /// Keeping the interactive Fjord map locked to this exact ratio guarantees identical
 /// normalized building positions across every landscape resolution.
@@ -233,8 +236,15 @@ pub struct CityLayoutMode {
     pub pending_chapter_delay_secs: f32,
     pub last_map_size: Vec2,
     pub last_canvas_window_size: Vec2,
+    pub last_top_bar_height: f32,
     pub window_size: Vec2,
 }
+
+#[derive(Component)]
+pub(crate) struct CityTopBarPanel;
+
+#[derive(Component)]
+pub(crate) struct CityRightDrawerPanel;
 
 #[derive(Component)]
 pub enum CityAction {
@@ -353,6 +363,7 @@ pub fn setup_city_ui(
         pending_chapter_delay_secs: 0.0,
         last_map_size: Vec2::ZERO,
         last_canvas_window_size: Vec2::new(win_w, win_h),
+        last_top_bar_height: 0.0,
         window_size: Vec2::new(win_w, win_h),
     });
     spawn_city_tree(
@@ -774,6 +785,7 @@ fn spawn_city_tree(
                 .with_children(|top_col| {
                     top_col
                         .spawn((
+                            CityTopBarPanel,
                             FocusPolicy::Block,
                             Interaction::default(),
                             sliced_panel_image(vfx),
@@ -1360,6 +1372,7 @@ fn spawn_city_tree(
                 };
                 viewport
                     .spawn((
+                        CityRightDrawerPanel,
                         FocusPolicy::Block,
                         Interaction::default(),
                         sliced_panel_image(vfx),
@@ -3742,6 +3755,7 @@ pub fn handle_city_buttons(
 
     if rebuild {
         layout_mode.last_map_size = Vec2::ZERO;
+        layout_mode.last_top_bar_height = 0.0;
         layout_mode.last_canvas_window_size = layout_mode.window_size;
         for entity in &roots {
             commands.entity(entity).try_despawn_recursive();
@@ -4390,6 +4404,7 @@ type CityBackdropNodeQuery<'w, 's> = Query<
         Without<FjordMapContainer>,
         Without<MapBuildingPin>,
         Without<MapBuildingStage>,
+        Without<CityRightDrawerPanel>,
     ),
 >;
 
@@ -4403,22 +4418,41 @@ type CityMapContainerQuery<'w, 's> = Query<
         Without<FjordMapBackdrop>,
         Without<MapBuildingPin>,
         Without<MapBuildingStage>,
+        Without<CityRightDrawerPanel>,
     ),
 >;
 
-/// Keeps the 16:9 Fjord map canvas and every building's base center anchored to its exact terrain spot across all window resolutions.
 #[allow(clippy::type_complexity)]
+type CityRightDrawerQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static mut Node,
+    (
+        With<CityRightDrawerPanel>,
+        Without<FjordMapBackdrop>,
+        Without<FjordMapContainer>,
+        Without<MapBuildingPin>,
+        Without<MapBuildingStage>,
+    ),
+>;
+
+/// Keeps the 16:9 Fjord map canvas, every building pin, and landscape drawer clearance aligned across window resolutions.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn sync_map_building_layout(
     mut layout_mode: ResMut<CityLayoutMode>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    safe_area: Res<SafeAreaInsets>,
     mut backdrop_q: CityBackdropNodeQuery,
     mut map_q: CityMapContainerQuery,
+    top_bar_q: Query<&ComputedNode, With<CityTopBarPanel>>,
+    mut drawer_q: CityRightDrawerQuery,
     mut pins: Query<
         (&MapBuildingPin, &mut Node),
         (
             Without<MapBuildingStage>,
             Without<FjordMapContainer>,
             Without<FjordMapBackdrop>,
+            Without<CityRightDrawerPanel>,
         ),
     >,
     mut stages: Query<
@@ -4427,9 +4461,30 @@ pub fn sync_map_building_layout(
             Without<MapBuildingPin>,
             Without<FjordMapContainer>,
             Without<FjordMapBackdrop>,
+            Without<CityRightDrawerPanel>,
         ),
     >,
 ) {
+    if !layout_mode.is_portrait {
+        if let Ok(top_computed) = top_bar_q.get_single() {
+            let top_inv = top_computed.inverse_scale_factor();
+            if top_inv.is_finite() && top_inv > 0.0 {
+                let bar_h = top_computed.size().y * top_inv;
+                if bar_h.is_finite()
+                    && bar_h >= MIN_CITY_TOP_BAR_HEIGHT_PX
+                    && (layout_mode.last_top_bar_height == 0.0
+                        || (bar_h - layout_mode.last_top_bar_height).abs() >= 1.0)
+                {
+                    layout_mode.last_top_bar_height = bar_h;
+                    let target_top =
+                        CITY_TOP_EDGE_LANDSCAPE_PX + safe_area.top + bar_h + CITY_DRAWER_TOP_GAP_PX;
+                    for mut drawer_node in &mut drawer_q {
+                        drawer_node.top = Val::Px(target_top);
+                    }
+                }
+            }
+        }
+    }
     if let Ok(win) = windows.get_single() {
         let (win_w, win_h) = (win.width(), win.height());
         if win_w.is_finite()

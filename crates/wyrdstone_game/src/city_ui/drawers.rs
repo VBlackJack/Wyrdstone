@@ -811,6 +811,20 @@ pub(super) fn spawn_menu_drawer(
                 COLOR_TEXT_PRIMARY,
                 true,
             );
+
+            #[cfg(not(target_os = "android"))]
+            body.spawn((
+                Text::new(i18n.t("city.drawer.menu.shortcuts")),
+                TextFont {
+                    font_size: FONT_SMALL - 1.0,
+                    ..default()
+                },
+                TextColor(COLOR_TEXT_MUTED),
+                Node {
+                    margin: UiRect::top(Val::Px(6.0)),
+                    ..default()
+                },
+            ));
         },
     );
 }

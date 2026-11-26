@@ -64,6 +64,7 @@
   "city.panel.shop.craft": "Forge +1",
   "city.settings.display_fullscreen": "Display: Fullscreen (F11)",
   "city.settings.display_windowed": "Display: Windowed (F11)",
+  "city.drawer.menu.shortcuts": "Shortcuts: Esc Close | M Mute | F11 Fullscreen | 1-6 Tools",
   "city.panel.help.title": "Wyrdstone Guide",
   "city.panel.help.boosters_title": "Match Boosters & Super-Combos",
   "city.panel.help.boosters_body": "Match 4: Line Bolt. L or T match: Surtr Bomb (3x3). Match 5: Bifrost Shard. Swap Bifrost Shard with a Line Bolt or Bomb to transform every rune of that color into boosters!",

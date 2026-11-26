@@ -18,7 +18,7 @@
 
 use super::{
     FuryReadyPulse, LowMovesPulse, Match3BossHpFill, Match3BossHpText, Match3Cleanup,
-    Match3ComboText, Match3FuryText, Match3HudBar, Match3HudRoot, Match3MovesText,
+    Match3ComboText, Match3FuryFill, Match3FuryText, Match3HudBar, Match3HudRoot, Match3MovesText,
     Match3ObjectiveText, Match3OverdriveText, Match3ScoreText, Match3TimerText, Match3TooltipText,
     Match3UiAction, LOW_MOVES_THRESHOLD,
 };
@@ -307,15 +307,27 @@ type HudTextFilter = Or<(
     With<Match3OverdriveText>,
 )>;
 
-/// Dynamic HUD texts and boss HP bar that cascade steps rewrite in place instead of rebuilding the whole HUD.
+const FURY_GAUGE_HEIGHT_PX: f32 = 5.0;
+
+fn fury_charge_pct(session: &LevelSession) -> f32 {
+    fury_charge_pct_values(session.fury, session.fury_max)
+}
+
+fn fury_charge_pct_values(fury: u32, fury_max: u32) -> f32 {
+    ((fury as f32 / fury_max.max(1) as f32) * 100.0).clamp(0.0, 100.0)
+}
+
+/// Dynamic HUD texts and boss HP / Patron Fury bars that cascade steps rewrite in place instead of rebuilding the whole HUD.
 #[derive(SystemParam)]
 pub struct HudTextQueries<'w, 's> {
     texts: Query<'w, 's, HudTextItems, HudTextFilter>,
-    boss_hp_fills: Query<'w, 's, &'static mut Node, With<Match3BossHpFill>>,
+    boss_hp_fills:
+        Query<'w, 's, &'static mut Node, (With<Match3BossHpFill>, Without<Match3FuryFill>)>,
+    fury_fills: Query<'w, 's, &'static mut Node, (With<Match3FuryFill>, Without<Match3BossHpFill>)>,
 }
 
 impl HudTextQueries<'_, '_> {
-    /// Rewrites moves, score, objective, combo, fury texts and boss HP bar from the live session.
+    /// Rewrites moves, score, objective, combo, fury texts and boss HP / Patron Fury bars from the live session.
     pub(super) fn refresh(&mut self, ctx: &GameContext, is_compact: bool) {
         let Some(session) = &ctx.active_session else {
             return;
@@ -349,6 +361,12 @@ impl HudTextQueries<'_, '_> {
             };
             if text.0 != label {
                 text.0 = label;
+            }
+        }
+        let fury_target = Val::Percent(fury_charge_pct(session));
+        for mut node in &mut self.fury_fills {
+            if node.width != fury_target {
+                node.width = fury_target;
             }
         }
         if let Some(boss) = &session.boss {
@@ -1070,6 +1088,7 @@ fn spawn_fury_card(
     let is_compact = hud_mode.is_compact();
     let is_wide = hud_mode.is_desktop_wide();
     let fury_ready = session.can_trigger_fury();
+    let fury_pct = fury_charge_pct(session);
     let fury_lbl = fury_label(i18n, session, is_compact);
     let mut fury_btn = parent.spawn((
         Button,
@@ -1080,18 +1099,15 @@ fn spawn_fury_card(
             } else {
                 Val::Auto
             },
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(4.0),
+            align_items: AlignItems::Stretch,
             padding: if is_compact {
                 UiRect::axes(Val::Px(6.0), Val::Px(4.0))
             } else {
                 UiRect::axes(Val::Px(10.0), Val::Px(6.0))
             },
-            column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
-            justify_content: if is_wide {
-                JustifyContent::SpaceBetween
-            } else {
-                JustifyContent::Center
-            },
-            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
             min_height: Val::Px(MIN_TOUCH_TARGET_PX),
             min_width: Val::Px(MIN_TOUCH_TARGET_PX),
             border: UiRect::all(Val::Px(2.0)),
@@ -1114,65 +1130,106 @@ fn spawn_fury_card(
     }
     fury_btn.with_children(|btn| {
         btn.spawn(Node {
+            width: Val::Percent(100.0),
             column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
+            justify_content: if is_wide {
+                JustifyContent::SpaceBetween
+            } else {
+                JustifyContent::Center
+            },
             align_items: AlignItems::Center,
-            flex_shrink: 1.0,
             ..default()
         })
-        .with_children(|left| {
-            if let Some(p_img) = fjord_art.patron_portrait(session.patron) {
-                let icon_px = if is_compact { 26.0 } else { 32.0 };
+        .with_children(|row| {
+            row.spawn(Node {
+                column_gap: Val::Px(if is_compact { 4.0 } else { 8.0 }),
+                align_items: AlignItems::Center,
+                flex_shrink: 1.0,
+                ..default()
+            })
+            .with_children(|left| {
+                if let Some(p_img) = fjord_art.patron_portrait(session.patron) {
+                    let icon_px = if is_compact { 26.0 } else { 32.0 };
+                    left.spawn((
+                        ImageNode::new(p_img),
+                        Node {
+                            width: Val::Px(icon_px),
+                            height: Val::Px(icon_px),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        BorderRadius::all(Val::Px(6.0)),
+                    ));
+                }
+                if let Some(fav_img) = textures.runes.get(&session.patron.favored_rune()).cloned() {
+                    let fav_px = if is_compact { 14.0 } else { 18.0 };
+                    left.spawn((
+                        ImageNode::new(fav_img),
+                        Node {
+                            width: Val::Px(fav_px),
+                            height: Val::Px(fav_px),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                    ));
+                }
                 left.spawn((
-                    ImageNode::new(p_img),
-                    Node {
-                        width: Val::Px(icon_px),
-                        height: Val::Px(icon_px),
-                        flex_shrink: 0.0,
+                    Match3FuryText,
+                    Text::new(fury_lbl),
+                    TextFont {
+                        font_size: FONT_SMALL,
                         ..default()
                     },
-                    BorderRadius::all(Val::Px(6.0)),
+                    TextColor(if fury_ready {
+                        COLOR_TEXT_DARK
+                    } else {
+                        COLOR_ACCENT_GOLD
+                    }),
                 ));
-            }
-            if let Some(fav_img) = textures.runes.get(&session.patron.favored_rune()).cloned() {
-                let fav_px = if is_compact { 14.0 } else { 18.0 };
-                left.spawn((
-                    ImageNode::new(fav_img),
-                    Node {
-                        width: Val::Px(fav_px),
-                        height: Val::Px(fav_px),
-                        flex_shrink: 0.0,
+            });
+            if is_wide {
+                row.spawn((
+                    Text::new(i18n.t("match3.hud.keycap_fury")),
+                    TextFont {
+                        font_size: FONT_SMALL - 2.0,
                         ..default()
                     },
+                    TextColor(if fury_ready {
+                        COLOR_TEXT_DARK
+                    } else {
+                        COLOR_TEXT_MUTED
+                    }),
                 ));
             }
-            left.spawn((
-                Match3FuryText,
-                Text::new(fury_lbl),
-                TextFont {
-                    font_size: FONT_SMALL,
+        });
+
+        // Visual Patron Fury charge gauge updated in-place on every cascade.
+        btn.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(FURY_GAUGE_HEIGHT_PX),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.05, 0.06, 0.10, 0.78)),
+            BorderRadius::all(Val::Px(3.0)),
+        ))
+        .with_children(|track| {
+            track.spawn((
+                Match3FuryFill,
+                Node {
+                    width: Val::Percent(fury_pct),
+                    height: Val::Percent(100.0),
                     ..default()
                 },
-                TextColor(if fury_ready {
-                    COLOR_TEXT_DARK
+                BackgroundColor(if fury_ready {
+                    Color::srgb(0.24, 0.14, 0.03)
                 } else {
                     COLOR_ACCENT_GOLD
                 }),
+                BorderRadius::all(Val::Px(3.0)),
             ));
         });
-        if is_wide {
-            btn.spawn((
-                Text::new(i18n.t("match3.hud.keycap_fury")),
-                TextFont {
-                    font_size: FONT_SMALL - 2.0,
-                    ..default()
-                },
-                TextColor(if fury_ready {
-                    COLOR_TEXT_DARK
-                } else {
-                    COLOR_TEXT_MUTED
-                }),
-            ));
-        }
     });
 }
 
@@ -1261,6 +1318,8 @@ fn spawn_tools_section(
         };
         let text_col = if armed {
             COLOR_TEXT_DARK
+        } else if count == 0 {
+            COLOR_TEXT_MUTED
         } else {
             COLOR_TEXT_PRIMARY
         };
@@ -1279,7 +1338,7 @@ fn spawn_tools_section(
         } else {
             base_lbl
         };
-        row.spawn((
+        let mut tool_btn = row.spawn((
             Button,
             Match3UiAction::SelectTool(tool),
             Node {
@@ -1312,8 +1371,11 @@ fn spawn_tools_section(
                 COLOR_PANEL_BORDER
             }),
             BorderRadius::all(Val::Px(8.0)),
-        ))
-        .with_children(|btn| {
+        ));
+        if count == 0 {
+            tool_btn.insert(NoButtonScale);
+        }
+        tool_btn.with_children(|btn| {
             if let Some(icon) = fjord_art.tool_icon(tool) {
                 let icon_px = if is_compact {
                     26.0
@@ -2295,5 +2357,13 @@ mod tests {
         let mut fewer_stars = shape();
         fewer_stars.projected_stars = 2;
         assert!(!can_update_in_place(Some(&shape()), &fewer_stars));
+    }
+
+    #[test]
+    fn fury_charge_pct_clamps_zero_partial_full_and_zero_max() {
+        assert!((fury_charge_pct_values(0, 100) - 0.0).abs() < f32::EPSILON);
+        assert!((fury_charge_pct_values(45, 100) - 45.0).abs() < f32::EPSILON);
+        assert!((fury_charge_pct_values(150, 100) - 100.0).abs() < f32::EPSILON);
+        assert!((fury_charge_pct_values(10, 0) - 100.0).abs() < f32::EPSILON);
     }
 }

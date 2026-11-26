@@ -64,6 +64,7 @@
   "city.panel.shop.craft": "Forger +1",
   "city.settings.display_fullscreen": "Affichage : Plein écran (F11)",
   "city.settings.display_windowed": "Affichage : Fenêtre (F11)",
+  "city.drawer.menu.shortcuts": "Raccourcis : Echap Fermer | M Muet | F11 Plein écran | 1-6 Outils",
   "city.panel.help.title": "Guide de Wyrdstone",
   "city.panel.help.boosters_title": "Boosters & Super-Combos",
   "city.panel.help.boosters_body": "Alignez 4 : Éclair de ligne. Forme en L ou T : Bombe 3x3. Alignez 5 : Éclat du Bifrost. Échangez un Éclat du Bifrost avec un Éclair ou une Bombe pour transformer toute la couleur en boosters !",
