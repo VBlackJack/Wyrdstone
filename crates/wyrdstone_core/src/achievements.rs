@@ -208,10 +208,14 @@ pub fn achievement_progress(
         ),
         AchievementCondition::AllBuildingsBuilt => {
             let target = buildings.len() as u64;
-            let done = buildings
-                .iter()
-                .filter(|b| city.building_tier(&b.id) >= 1)
-                .count() as u64;
+            let done = if city.realm_era >= 1 {
+                target
+            } else {
+                buildings
+                    .iter()
+                    .filter(|b| city.building_tier(&b.id) >= 1)
+                    .count() as u64
+            };
             (done, target)
         }
         AchievementCondition::DailyStreak(n) => (

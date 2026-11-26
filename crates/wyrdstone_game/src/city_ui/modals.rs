@@ -32,13 +32,16 @@ use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use wyrdstone_core::{
     achievement_progress, format_achievement_desc, format_boon_desc, format_boss_desc,
-    format_patron_desc, patron_devotion_upgrade_cost, skald_pass_tier_reward_for_cycle,
-    wonder_boss_damage_bonus_pct, wonder_extra_max_energy, wonder_glory_reward,
-    wonder_harvest_bonus_pct, wonder_milestone_tool, wonder_spoils_bonus_pct, wonder_starting_fury,
-    AmuletEffect, CityState, ClanRank, I18nCatalog, PatronGod, ResourceBundle,
-    MAX_DAILY_STREAK_CYCLE, MAX_PATRON_DEVOTION_TIER, PATRON_DEVOTION_FURY_PCT_PER_TIER,
-    PATRON_DEVOTION_SCORE_PCT_PER_TIER, SKALD_PASS_CYCLE_BONUS_PCT, SKALD_PASS_CYCLE_MAX_BONUS_PCT,
-    SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER, WONDER_MAX_STAGE,
+    format_patron_desc, patron_devotion_upgrade_cost, realm_ascension_glory_reward,
+    skald_pass_tier_reward_for_cycle, wonder_boss_damage_bonus_pct, wonder_extra_max_energy,
+    wonder_glory_reward, wonder_harvest_bonus_pct, wonder_milestone_tool, wonder_spoils_bonus_pct,
+    wonder_starting_fury, AmuletEffect, CityState, ClanRank, I18nCatalog, PatronGod, RealmTheme,
+    ResourceBundle, MAX_DAILY_STREAK_CYCLE, MAX_PATRON_DEVOTION_TIER,
+    PATRON_DEVOTION_FURY_PCT_PER_TIER, PATRON_DEVOTION_SCORE_PCT_PER_TIER,
+    REALM_ASCENSION_KEEP_RESOURCE_PCT, REALM_BOSS_DMG_PCT_PER_ERA, REALM_BUILDING_COST_PCT_PER_ERA,
+    REALM_MAX_SCALING_ERA, REALM_SCORE_PCT_PER_ERA, REALM_SPOILS_PCT_PER_ERA,
+    SKALD_PASS_CYCLE_BONUS_PCT, SKALD_PASS_CYCLE_MAX_BONUS_PCT, SKALD_PASS_TIERS,
+    SKALD_PASS_XP_PER_TIER, WONDER_MAX_STAGE,
 };
 
 pub(super) fn format_reward_summary(i18n: &I18nCatalog, res: ResourceBundle, glory: u32) -> String {
@@ -3852,6 +3855,252 @@ pub(super) fn spawn_wonder_modal(
                         ));
                     });
             }
+        },
+    );
+}
+
+pub(super) fn spawn_ascension_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    safe: SafeAreaInsets,
+    scroll_offset_y: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    let cur_era = ctx.city.realm_era;
+    let next_era = cur_era.saturating_add(1);
+    let cur_theme = RealmTheme::for_era(cur_era);
+    let next_theme = RealmTheme::for_era(next_era);
+    let can_ascend = ctx.city.can_ascend_realm(&ctx.data.buildings);
+    let glory_reward = realm_ascension_glory_reward(next_era);
+
+    let effective_era = cur_era.min(REALM_MAX_SCALING_ERA);
+    let cur_spoils = effective_era.saturating_mul(REALM_SPOILS_PCT_PER_ERA);
+    let cur_score = effective_era.saturating_mul(REALM_SCORE_PCT_PER_ERA);
+    let cur_boss = effective_era.saturating_mul(REALM_BOSS_DMG_PCT_PER_ERA);
+    let next_effective = next_era.min(REALM_MAX_SCALING_ERA);
+    let next_spoils = next_effective.saturating_mul(REALM_SPOILS_PCT_PER_ERA);
+    let next_score = next_effective.saturating_mul(REALM_SCORE_PCT_PER_ERA);
+    let next_boss = next_effective.saturating_mul(REALM_BOSS_DMG_PCT_PER_ERA);
+
+    spawn_modal_shell(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        580.0,
+        i18n.t("city.ascension.modal_title"),
+        i18n.t("city.panel.amulets.close"),
+        CityAction::CloseModal,
+        safe,
+        scroll_offset_y,
+        |modal| {
+            // Current & Next Realm header card (no BoxShadow inside ScrollablePanel).
+            modal
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        padding: UiRect::all(Val::Px(12.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        ..default()
+                    },
+                    BackgroundColor(COLOR_PANEL_CARD),
+                    BorderColor(COLOR_ACCENT_GOLD),
+                    BorderRadius::all(Val::Px(RADIUS_MD)),
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.ascension.current_realm",
+                            &[
+                                ("realm", i18n.t(cur_theme.name_key()).to_string()),
+                                ("era", (cur_era + 1).to_string()),
+                            ],
+                        )),
+                        display_font(fjord_art, FONT_BODY),
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    card.spawn((
+                        Text::new(i18n.t(cur_theme.desc_key())),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_MUTED),
+                    ));
+                    card.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.ascension.current_bonuses",
+                            &[
+                                ("spoils", cur_spoils.to_string()),
+                                ("score", cur_score.to_string()),
+                                ("dmg", cur_boss.to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_TEAL_TEXT),
+                    ));
+                });
+
+            // Destination preview card.
+            modal
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(5.0),
+                        padding: UiRect::all(Val::Px(12.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        ..default()
+                    },
+                    BackgroundColor(COLOR_PANEL_CARD),
+                    BorderColor(if can_ascend {
+                        COLOR_ACCENT_GREEN
+                    } else {
+                        COLOR_PANEL_BORDER
+                    }),
+                    BorderRadius::all(Val::Px(RADIUS_MD)),
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.ascension.next_realm",
+                            &[
+                                ("realm", i18n.t(next_theme.name_key()).to_string()),
+                                ("era", (next_era + 1).to_string()),
+                                ("glory", glory_reward.to_string()),
+                            ],
+                        )),
+                        display_font(fjord_art, FONT_BODY),
+                        TextColor(COLOR_ACCENT_GREEN_TEXT),
+                    ));
+                    card.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.ascension.next_bonuses",
+                            &[
+                                ("spoils", next_spoils.to_string()),
+                                ("score", next_score.to_string()),
+                                ("dmg", next_boss.to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_PRIMARY),
+                    ));
+                });
+
+            // Kept Forever vs Rebuilt comparison cards.
+            modal
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(4.0),
+                        padding: UiRect::all(Val::Px(10.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(COLOR_PANEL_CARD),
+                    BorderColor(COLOR_ACCENT_GREEN),
+                    BorderRadius::all(Val::Px(RADIUS_SM)),
+                ))
+                .with_children(|kept| {
+                    kept.spawn((
+                        Text::new(i18n.t("city.ascension.kept_title")),
+                        display_font(fjord_art, FONT_SMALL),
+                        TextColor(COLOR_ACCENT_GREEN_TEXT),
+                    ));
+                    kept.spawn((
+                        Text::new(i18n.t("city.ascension.kept_desc")),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_PRIMARY),
+                    ));
+                });
+
+            modal
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(4.0),
+                        padding: UiRect::all(Val::Px(10.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(COLOR_PANEL_CARD),
+                    BorderColor(COLOR_PANEL_BORDER),
+                    BorderRadius::all(Val::Px(RADIUS_SM)),
+                ))
+                .with_children(|reset_card| {
+                    reset_card.spawn((
+                        Text::new(i18n.t("city.ascension.reset_title")),
+                        display_font(fjord_art, FONT_SMALL),
+                        TextColor(COLOR_ACCENT_GOLD),
+                    ));
+                    reset_card.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.ascension.reset_desc",
+                            &[
+                                ("keep", REALM_ASCENSION_KEEP_RESOURCE_PCT.to_string()),
+                                ("cost", REALM_BUILDING_COST_PCT_PER_ERA.to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_MUTED),
+                    ));
+                });
+
+            if !can_ascend {
+                modal.spawn((
+                    Text::new(i18n.t("city.ascension.locked")),
+                    TextFont {
+                        font_size: FONT_SMALL,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_CRIMSON_TEXT),
+                ));
+            }
+            let cta_label = if !can_ascend {
+                i18n.t("mode.locked.button").to_string()
+            } else if ctx.confirm_ascension {
+                i18n.t("city.ascension.confirm_button").to_string()
+            } else {
+                i18n.t("city.ascension.sail_button").to_string()
+            };
+            spawn_small_button_colored(
+                modal,
+                &cta_label,
+                CityAction::AscendRealm,
+                if !can_ascend {
+                    COLOR_BUTTON_DISABLED
+                } else if ctx.confirm_ascension {
+                    COLOR_ACCENT_GREEN
+                } else {
+                    COLOR_ACCENT_GOLD
+                },
+                if !can_ascend {
+                    COLOR_TEXT_MUTED
+                } else if ctx.confirm_ascension {
+                    COLOR_TEXT_ON_ACCENT
+                } else {
+                    COLOR_TEXT_DARK
+                },
+                can_ascend,
+            );
         },
     );
 }

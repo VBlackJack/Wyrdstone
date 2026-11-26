@@ -294,7 +294,7 @@ fn spawn_result_ui(
                                     && ctx
                                         .city
                                         .next_upgrade_cost(b)
-                                        .map(|c| ctx.city.resources.can_afford(c))
+                                        .map(|c| ctx.city.resources.can_afford(&c))
                                         .unwrap_or(false)
                             })
                             .map(|b| b.id.clone());

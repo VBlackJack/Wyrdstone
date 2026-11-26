@@ -47,7 +47,7 @@ pub(super) fn spawn_building_inspector(
     let unlocked = ctx.city.is_building_unlocked(b);
     let next_cost = ctx.city.next_upgrade_cost(b);
     let can_afford = next_cost
-        .map(|c| ctx.city.resources.can_afford(c))
+        .map(|c| ctx.city.resources.can_afford(&c))
         .unwrap_or(false);
     let can_upgrade_now = unlocked && next_cost.is_some() && can_afford;
     let harvest_rem = ctx
@@ -572,7 +572,7 @@ pub(super) fn spawn_building_inspector(
                                     },
                                     TextColor(COLOR_TEXT_MUTED),
                                 ));
-                                spawn_cost_pills(top, i18n, ctx.city.resources, *cost);
+                                spawn_cost_pills(top, i18n, ctx.city.resources, cost);
                             }
                         }
                         return;

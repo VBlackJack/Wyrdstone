@@ -43,7 +43,7 @@ use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode, WindowResized};
 use bevy::window::{PrimaryWindow, WindowResized};
 use wyrdstone_core::{
     format_building_bonus, format_rank_perk, ActiveTool, BuildingDef, EndlessDecreeKind,
-    I18nCatalog, PatronGod, PlayMode, QuestCondition,
+    I18nCatalog, PatronGod, PlayMode, QuestCondition, RealmTheme,
 };
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
@@ -288,6 +288,7 @@ pub enum CityAction {
     ClaimAllAchievements,
     UpgradeBuilding(String),
     UpgradeWonder,
+    AscendRealm,
     DrinkMead,
     ClaimQuest(String),
     ClaimEndlessDecree,
@@ -610,10 +611,16 @@ fn spawn_city_tree(
                     PickingBehavior::IGNORE,
                 ))
                 .with_children(|bg_wrap| {
+                    let backdrop_tint = match ctx.city.realm_theme() {
+                        RealmTheme::Midgard => Color::srgba(0.28, 0.34, 0.44, 1.0),
+                        RealmTheme::Jotunheim => Color::srgba(0.20, 0.34, 0.50, 1.0),
+                        RealmTheme::Nidavellir => Color::srgba(0.38, 0.24, 0.22, 1.0),
+                        RealmTheme::Vanaheim => Color::srgba(0.20, 0.36, 0.28, 1.0),
+                        RealmTheme::Asgard => Color::srgba(0.30, 0.26, 0.46, 1.0),
+                    };
                     bg_wrap.spawn((
                         FjordMapBackdrop,
-                        ImageNode::new(fjord_art.fjord_map.clone())
-                            .with_color(Color::srgba(0.28, 0.34, 0.44, 1.0)),
+                        ImageNode::new(fjord_art.fjord_map.clone()).with_color(backdrop_tint),
                         Node {
                             width: Val::Px(cover_w),
                             height: Val::Px(cover_h),
@@ -624,6 +631,13 @@ fn spawn_city_tree(
                     ));
                 });
 
+            let map_tint = match ctx.city.realm_theme() {
+                RealmTheme::Midgard => Color::WHITE,
+                RealmTheme::Jotunheim => Color::srgba(0.88, 0.95, 1.04, 1.0),
+                RealmTheme::Nidavellir => Color::srgba(1.04, 0.88, 0.80, 1.0),
+                RealmTheme::Vanaheim => Color::srgba(0.90, 1.04, 0.90, 1.0),
+                RealmTheme::Asgard => Color::srgba(1.00, 0.94, 1.06, 1.0),
+            };
             // 1. Centered 16:9 Interactive Fjord Map Canvas (pins stay pixel-locked across resolutions).
             viewport
                 .spawn((
@@ -647,7 +661,7 @@ fn spawn_city_tree(
                             Button,
                             NoButtonScale,
                             CityAction::CloseInspector,
-                            ImageNode::new(fjord_art.fjord_map.clone()),
+                            ImageNode::new(fjord_art.fjord_map.clone()).with_color(map_tint),
                             Node {
                                 width: Val::Px(canvas_w),
                                 height: Val::Px(canvas_h),
@@ -664,31 +678,53 @@ fn spawn_city_tree(
                             // Animated Aurora Borealis ribbons glowing brighter with Clan Glory.
                             let aurora_intensity =
                                 (0.14 + (ctx.city.glory as f32 / 1200.0)).min(0.38);
-                            let aurora_defs = [
-                                (
-                                    8.0,
-                                    2.0,
-                                    48.0,
-                                    14.0,
+                            let (aur0, aur1, aur2, wat0, wat1, wat2) = match ctx.city.realm_theme()
+                            {
+                                RealmTheme::Midgard => (
                                     Color::srgba(0.18, 0.92, 0.68, aurora_intensity),
-                                    0.0,
-                                ),
-                                (
-                                    38.0,
-                                    5.0,
-                                    52.0,
-                                    12.0,
                                     Color::srgba(0.24, 0.72, 0.98, aurora_intensity * 0.85),
-                                    2.1,
-                                ),
-                                (
-                                    18.0,
-                                    8.0,
-                                    44.0,
-                                    10.0,
                                     Color::srgba(0.62, 0.36, 0.94, aurora_intensity * 0.75),
-                                    4.2,
+                                    Color::srgba(0.22, 0.90, 0.78, 0.24),
+                                    Color::srgba(0.32, 0.80, 0.98, 0.20),
+                                    Color::srgba(0.24, 0.92, 0.74, 0.18),
                                 ),
+                                RealmTheme::Jotunheim => (
+                                    Color::srgba(0.28, 0.92, 1.00, aurora_intensity),
+                                    Color::srgba(0.36, 0.68, 1.00, aurora_intensity * 0.85),
+                                    Color::srgba(0.64, 0.88, 1.00, aurora_intensity * 0.75),
+                                    Color::srgba(0.34, 0.90, 1.00, 0.24),
+                                    Color::srgba(0.42, 0.76, 1.00, 0.20),
+                                    Color::srgba(0.30, 0.94, 0.96, 0.18),
+                                ),
+                                RealmTheme::Nidavellir => (
+                                    Color::srgba(1.00, 0.56, 0.20, aurora_intensity),
+                                    Color::srgba(0.96, 0.34, 0.24, aurora_intensity * 0.85),
+                                    Color::srgba(1.00, 0.78, 0.28, aurora_intensity * 0.75),
+                                    Color::srgba(1.00, 0.58, 0.24, 0.24),
+                                    Color::srgba(0.96, 0.42, 0.22, 0.20),
+                                    Color::srgba(1.00, 0.72, 0.28, 0.18),
+                                ),
+                                RealmTheme::Vanaheim => (
+                                    Color::srgba(0.32, 0.94, 0.54, aurora_intensity),
+                                    Color::srgba(0.66, 0.96, 0.38, aurora_intensity * 0.85),
+                                    Color::srgba(0.98, 0.82, 0.34, aurora_intensity * 0.75),
+                                    Color::srgba(0.34, 0.92, 0.58, 0.24),
+                                    Color::srgba(0.60, 0.94, 0.46, 0.20),
+                                    Color::srgba(0.92, 0.82, 0.36, 0.18),
+                                ),
+                                RealmTheme::Asgard => (
+                                    Color::srgba(0.98, 0.82, 0.34, aurora_intensity),
+                                    Color::srgba(0.66, 0.46, 0.98, aurora_intensity * 0.85),
+                                    Color::srgba(0.36, 0.88, 1.00, aurora_intensity * 0.75),
+                                    Color::srgba(0.98, 0.84, 0.40, 0.24),
+                                    Color::srgba(0.68, 0.52, 0.98, 0.20),
+                                    Color::srgba(0.40, 0.90, 1.00, 0.18),
+                                ),
+                            };
+                            let aurora_defs = [
+                                (8.0, 2.0, 48.0, 14.0, aur0, 0.0),
+                                (38.0, 5.0, 52.0, 12.0, aur1, 2.1),
+                                (18.0, 8.0, 44.0, 10.0, aur2, 4.2),
                             ];
                             for (left_p, top_p, w_p, h_p, col, phase) in aurora_defs {
                                 map.spawn((
@@ -712,30 +748,9 @@ fn spawn_city_tree(
 
                             // Rippling aurora reflections across the central Fjord bay water.
                             let water_defs = [
-                                (
-                                    34.0,
-                                    31.0,
-                                    26.0,
-                                    12.0,
-                                    Color::srgba(0.22, 0.90, 0.78, 0.24),
-                                    0.4,
-                                ),
-                                (
-                                    42.0,
-                                    37.0,
-                                    24.0,
-                                    11.0,
-                                    Color::srgba(0.32, 0.80, 0.98, 0.20),
-                                    2.3,
-                                ),
-                                (
-                                    48.0,
-                                    44.0,
-                                    20.0,
-                                    9.0,
-                                    Color::srgba(0.24, 0.92, 0.74, 0.18),
-                                    4.1,
-                                ),
+                                (34.0, 31.0, 26.0, 12.0, wat0, 0.4),
+                                (42.0, 37.0, 24.0, 11.0, wat1, 2.3),
+                                (48.0, 44.0, 20.0, 9.0, wat2, 4.1),
                             ];
                             for (left_p, top_p, w_p, h_p, col, phase) in water_defs {
                                 map.spawn((
@@ -934,6 +949,27 @@ fn spawn_city_tree(
                                     },
                                     TextColor(COLOR_TEXT_MUTED),
                                 ));
+                                if ctx.city.realm_era > 0 {
+                                    let realm_lbl = i18n.t_fmt(
+                                        "city.header.realm_badge",
+                                        &[
+                                            (
+                                                "realm",
+                                                i18n.t(ctx.city.realm_theme().name_key())
+                                                    .to_string(),
+                                            ),
+                                            ("era", (ctx.city.realm_era + 1).to_string()),
+                                        ],
+                                    );
+                                    spawn_small_button_colored(
+                                        col,
+                                        &realm_lbl,
+                                        CityAction::ToggleModal(ActiveModal::Ascension),
+                                        COLOR_PANEL_CARD,
+                                        COLOR_ACCENT_TEAL_TEXT,
+                                        true,
+                                    );
+                                }
                             });
 
                             // Center: Resource & Energy Pills
@@ -1350,6 +1386,14 @@ fn spawn_city_tree(
                                 COLOR_ACCENT_GREEN,
                                 COLOR_TEXT_ON_ACCENT,
                                 CityAction::ToggleModal(ActiveModal::Wonder),
+                            ));
+                        }
+                        if ctx.city.can_ascend_realm(&ctx.data.buildings) {
+                            quick_items.push((
+                                i18n.t("city.quick.ascend").to_string(),
+                                COLOR_ACCENT_GOLD,
+                                COLOR_TEXT_DARK,
+                                CityAction::ToggleModal(ActiveModal::Ascension),
                             ));
                         }
                         if !quick_items.is_empty() {
@@ -2015,6 +2059,9 @@ fn spawn_city_tree(
                 ActiveModal::Wonder => {
                     modals::spawn_wonder_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
+                ActiveModal::Ascension => {
+                    modals::spawn_ascension_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
+                }
             }
 
             // 5. Hub-level notice toast (modals and the inspector render notices themselves).
@@ -2204,7 +2251,7 @@ fn spawn_map_building_pin(
         && ctx
             .city
             .next_upgrade_cost(b)
-            .map(|c| ctx.city.resources.can_afford(c))
+            .map(|c| ctx.city.resources.can_afford(&c))
             .unwrap_or(false);
 
     let border_col = if selected {
@@ -3013,6 +3060,7 @@ pub fn handle_city_buttons(
             ctx.active_modal = ActiveModal::None;
             ctx.confirm_import_backup = false;
             ctx.confirm_end_expedition = false;
+            ctx.confirm_ascension = false;
             ctx.status_notice_key = None;
             scroll_mem.modal_offset_y = 0.0;
             rebuild = true;
@@ -3945,6 +3993,59 @@ pub fn handle_city_buttons(
                 }
                 rebuild = true;
             }
+            CityAction::AscendRealm => {
+                if !ctx.city.can_ascend_realm(&ctx.data.buildings) {
+                    ctx.status_notice_key = Some("city.ascension.locked".to_string());
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    haptics.send(HapticEvent(HapticKind::Error));
+                    rebuild = true;
+                    continue;
+                }
+                if !ctx.confirm_ascension {
+                    ctx.confirm_ascension = true;
+                    ctx.status_notice_key = None;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    rebuild = true;
+                    continue;
+                }
+                ctx.confirm_ascension = false;
+                let res = {
+                    let s = &mut *ctx;
+                    s.city.try_ascend_realm(&s.data.buildings, &s.data.balance)
+                };
+                match res {
+                    Ok((new_era, glory_awarded)) => {
+                        let realm_name = ctx
+                            .data
+                            .i18n
+                            .t(ctx.city.realm_theme().name_key())
+                            .to_string();
+                        ctx.active_modal = ActiveModal::None;
+                        layout_mode.inspector_open = false;
+                        layout_mode.active_drawer = CityDrawer::None;
+                        layout_mode.last_ready_harvests = 0;
+                        ctx.status_notice_key = None;
+                        ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                            "city.ascension.celebration",
+                            &[
+                                ("realm", realm_name),
+                                ("era", (new_era + 1).to_string()),
+                                ("glory", glory_awarded.to_string()),
+                            ],
+                        ));
+                        ctx.celebration_timer_secs = 4.5;
+                        ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                        haptics.send(HapticEvent(HapticKind::Victory));
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        haptics.send(HapticEvent(HapticKind::Error));
+                    }
+                }
+                rebuild = true;
+            }
             CityAction::DrinkMead => {
                 let drink_res = {
                     let s = &mut *ctx;
@@ -4011,6 +4112,7 @@ pub fn handle_city_buttons(
                 ctx.active_modal = ActiveModal::None;
                 ctx.confirm_import_backup = false;
                 ctx.confirm_end_expedition = false;
+                ctx.confirm_ascension = false;
                 ctx.status_notice_key = None;
                 layout_mode.active_drawer = CityDrawer::None;
                 scroll_mem.modal_offset_y = 0.0;
@@ -4049,6 +4151,7 @@ pub fn handle_city_buttons(
                 ctx.active_modal = ActiveModal::None;
                 ctx.confirm_import_backup = false;
                 ctx.confirm_end_expedition = false;
+                ctx.confirm_ascension = false;
                 ctx.status_notice_key = None;
                 ctx.shortage_guidance = None;
                 layout_mode.active_drawer = CityDrawer::None;
@@ -4129,6 +4232,7 @@ pub fn handle_city_buttons(
                     ctx.active_modal = ActiveModal::None;
                     ctx.confirm_import_backup = false;
                     ctx.confirm_end_expedition = false;
+                    ctx.confirm_ascension = false;
                     ctx.status_notice_key = None;
                     scroll_mem.modal_offset_y = 0.0;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);

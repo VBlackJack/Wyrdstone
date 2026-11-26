@@ -820,6 +820,45 @@ pub(super) fn spawn_clan_drawer(
                     COLOR_PANEL_BORDER
                 },
             );
+
+            let can_ascend = ctx.city.can_ascend_realm(&ctx.data.buildings);
+            if can_ascend || ctx.city.realm_era > 0 {
+                let theme_name = i18n.t(ctx.city.realm_theme().name_key()).to_string();
+                let asc_desc = if can_ascend {
+                    i18n.t("city.drawer.clan.ascension_ready").to_string()
+                } else {
+                    i18n.t_fmt(
+                        "city.drawer.clan.ascension_desc",
+                        &[
+                            ("realm", theme_name),
+                            ("era", (ctx.city.realm_era + 1).to_string()),
+                        ],
+                    )
+                };
+                spawn_clan_card(
+                    body,
+                    i18n,
+                    i18n.t("city.ascension.button"),
+                    &asc_desc,
+                    usize::from(can_ascend),
+                    CityAction::ToggleModal(ActiveModal::Ascension),
+                    if can_ascend {
+                        COLOR_ACCENT_GOLD
+                    } else {
+                        COLOR_PANEL_DARK
+                    },
+                    if can_ascend {
+                        COLOR_TEXT_DARK
+                    } else {
+                        COLOR_TEXT_PRIMARY
+                    },
+                    if can_ascend {
+                        COLOR_ACCENT_GOLD
+                    } else {
+                        COLOR_PANEL_BORDER
+                    },
+                );
+            }
         },
     );
 }

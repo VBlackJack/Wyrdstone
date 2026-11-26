@@ -80,6 +80,27 @@ pub const WONDER_HARVEST_PCT_PER_STAGE: u32 = 5;
 /// Bonus max Endurance granted every 2 Wonder stages (`+5` at 2, 4, 6, 8, 10).
 pub const WONDER_ENERGY_PER_TWO_STAGES: u32 = 5;
 
+/// Maximum Realm Era capped for permanent bonus & building cost scaling.
+pub const REALM_MAX_SCALING_ERA: u32 = 20;
+/// Maximum Realm Era capped for combat difficulty & raid reward scaling.
+pub const REALM_ENEMY_SCALING_MAX_ERA: u32 = 10;
+/// Building upgrade cost increase per Realm Era (`+35%` per Era).
+pub const REALM_BUILDING_COST_PCT_PER_ERA: u32 = 35;
+/// Permanent Raid spoils bonus per Realm Era (`+15%` per Era).
+pub const REALM_SPOILS_PCT_PER_ERA: u32 = 15;
+/// Permanent Score bonus per Realm Era (`+10%` per Era).
+pub const REALM_SCORE_PCT_PER_ERA: u32 = 10;
+/// Permanent Boss/Expedition damage bonus per Realm Era (`+10%` per Era).
+pub const REALM_BOSS_DMG_PCT_PER_ERA: u32 = 10;
+/// Enemy Boss HP scaling per Realm Era (`+20%` per Era, capped at Era 10).
+pub const REALM_ENEMY_BOSS_HP_PCT_PER_ERA: u32 = 20;
+/// Score objective target scaling per Realm Era (`+15%` per Era, capped at Era 10).
+pub const REALM_SCORE_TARGET_PCT_PER_ERA: u32 = 15;
+/// Raid resource reward scaling per Realm Era (`+20%` per Era, capped at Era 10).
+pub const REALM_REWARD_PCT_PER_ERA: u32 = 20;
+/// Percentage of stockpiled resources kept when Ascending to the next Realm (`25%`).
+pub const REALM_ASCENSION_KEEP_RESOURCE_PCT: u32 = 25;
+
 /// Maximum Devotion upgrade tier per Norse Patron deity.
 pub const MAX_PATRON_DEVOTION_TIER: u8 = 5;
 /// Fury charge speed bonus per Patron Devotion tier (+6% per tier, +30% at Tier 5).
@@ -934,6 +955,59 @@ pub const fn wonder_starting_fury(stage: u8) -> u32 {
     } else {
         ((clamped / 3) as u32) * 5
     }
+}
+
+/// Visual & thematic Realm cycle experienced across Nine Realms Ascension Eras.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RealmTheme {
+    #[default]
+    Midgard,
+    Jotunheim,
+    Nidavellir,
+    Vanaheim,
+    Asgard,
+}
+
+impl RealmTheme {
+    pub const fn for_era(era: u32) -> Self {
+        match era % 5 {
+            0 => Self::Midgard,
+            1 => Self::Jotunheim,
+            2 => Self::Nidavellir,
+            3 => Self::Vanaheim,
+            _ => Self::Asgard,
+        }
+    }
+
+    pub const fn name_key(self) -> &'static str {
+        match self {
+            Self::Midgard => "realm.theme.midgard.name",
+            Self::Jotunheim => "realm.theme.jotunheim.name",
+            Self::Nidavellir => "realm.theme.nidavellir.name",
+            Self::Vanaheim => "realm.theme.vanaheim.name",
+            Self::Asgard => "realm.theme.asgard.name",
+        }
+    }
+
+    pub const fn desc_key(self) -> &'static str {
+        match self {
+            Self::Midgard => "realm.theme.midgard.desc",
+            Self::Jotunheim => "realm.theme.jotunheim.desc",
+            Self::Nidavellir => "realm.theme.nidavellir.desc",
+            Self::Vanaheim => "realm.theme.vanaheim.desc",
+            Self::Asgard => "realm.theme.asgard.desc",
+        }
+    }
+}
+
+/// Clan Glory awarded upon Ascending into Realm `new_era`.
+pub const fn realm_ascension_glory_reward(new_era: u32) -> u32 {
+    let capped = if new_era > REALM_ENEMY_SCALING_MAX_ERA {
+        REALM_ENEMY_SCALING_MAX_ERA
+    } else {
+        new_era
+    };
+    250 + 50 * capped
 }
 
 /// Secondary game modes unlocked progressively as the player advances through early Fjord milestones.

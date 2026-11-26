@@ -3782,3 +3782,90 @@ fn yggdrasil_wonder_unlocks_scales_bonuses_and_persists_compatibly() {
         serde_json::from_str(&serde_json::to_string(&val).expect("str")).expect("compat load");
     assert_eq!(loaded.city.wonder_stage, 0);
 }
+
+#[test]
+fn nine_realms_ascension_preserves_permanent_unlocks_and_scales_era() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    assert!(!city.can_ascend_realm(&data.buildings));
+    assert_eq!(city.realm_theme(), wyrdstone_core::RealmTheme::Midgard);
+
+    for b in &data.buildings {
+        city.building_tiers.insert(b.id.clone(), b.max_tier);
+    }
+    assert!(city.can_ascend_realm(&data.buildings));
+
+    let am0 = &data.amulets[0];
+    let am1 = &data.amulets[1];
+    city.crafted_amulets.insert(am0.id.clone());
+    city.crafted_amulets.insert(am1.id.clone());
+    city.amulet_tiers.insert(am0.id.clone(), 3);
+    city.amulet_tiers.insert(am1.id.clone(), 2);
+    city.equipped_amulet = Some(am0.id.clone());
+    city.equipped_amulet_secondary = Some(am1.id.clone());
+    city.wonder_stage = 3;
+    city.glory = 400;
+    city.resources = ResourceBundle {
+        wood: 2_000,
+        stone: 2_000,
+        gold: 4_000,
+        mead: 400,
+    };
+
+    let base_cost_hall_t1 = data.buildings[0].upgrade_costs[0];
+    let (new_era, glory_awarded) = city
+        .try_ascend_realm(&data.buildings, &data.balance)
+        .expect("maxed Fjord ascends");
+    assert_eq!(new_era, 1);
+    assert_eq!(glory_awarded, 300);
+    assert_eq!(city.glory, 700);
+    assert_eq!(city.realm_theme(), wyrdstone_core::RealmTheme::Jotunheim);
+    assert!(city.building_tiers.is_empty());
+    assert_eq!(city.resources.gold, 1_000);
+    assert_eq!(city.wonder_stage, 3);
+
+    // Permanent unlocks stay intact even after building_tiers resets and sanitize runs.
+    city.sanitize(&data.buildings, &data.balance);
+    assert!(city.is_secondary_amulet_unlocked());
+    assert_eq!(
+        city.equipped_amulet_secondary.as_deref(),
+        Some(am1.id.as_str())
+    );
+    assert!(city.is_wonder_unlocked(&data.buildings));
+    for mode in wyrdstone_core::PlayMode::ALL {
+        assert!(city.is_mode_unlocked(mode), "{mode:?} must stay unlocked");
+    }
+    if let Some(ach) = data.achievements.iter().find(|a| {
+        matches!(
+            a.condition,
+            Some(wyrdstone_core::achievements::AchievementCondition::AllBuildingsBuilt)
+        )
+    }) {
+        assert!(wyrdstone_core::is_achievement_unlocked(
+            ach,
+            &city,
+            &data.buildings,
+            data.bosses.len()
+        ));
+    }
+
+    let scaled_hall_t1 = city
+        .next_upgrade_cost(&data.buildings[0])
+        .expect("hall t1 cost");
+    assert_eq!(scaled_hall_t1.gold, base_cost_hall_t1.gold * 135 / 100);
+
+    let bonuses = city.compute_bonuses(&data.balance);
+    assert!(bonuses.resource_bonus_pct >= wyrdstone_core::REALM_SPOILS_PCT_PER_ERA);
+    assert!(bonuses.score_bonus_pct >= wyrdstone_core::REALM_SCORE_PCT_PER_ERA);
+    assert!(bonuses.boss_damage_bonus_pct >= wyrdstone_core::REALM_BOSS_DMG_PCT_PER_ERA);
+
+    let save = SaveData::new_game(&data.balance, Language::En);
+    let mut val = serde_json::to_value(&save).expect("serialize");
+    val["city"]
+        .as_object_mut()
+        .expect("city obj")
+        .remove("realm_era");
+    let loaded: SaveData =
+        serde_json::from_str(&serde_json::to_string(&val).expect("str")).expect("compat load");
+    assert_eq!(loaded.city.realm_era, 0);
+}

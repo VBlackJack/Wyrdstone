@@ -86,6 +86,7 @@ pub enum ActiveModal {
     WelcomeBack,
     Bounties,
     Wonder,
+    Ascension,
 }
 
 /// Illustrated Saga chapter milestone dialogue shown when rebuilding key Fjord landmarks.
@@ -109,6 +110,7 @@ pub struct GameContext {
     pub confirm_reset: bool,
     pub confirm_import_backup: bool,
     pub confirm_end_expedition: bool,
+    pub confirm_ascension: bool,
     pub audio_muted: bool,
     pub bgm_volume: f32,
     pub sfx_volume: f32,
@@ -326,6 +328,7 @@ impl GameContext {
             confirm_reset: false,
             confirm_import_backup: false,
             confirm_end_expedition: false,
+            confirm_ascension: false,
             audio_muted,
             bgm_volume,
             sfx_volume,
@@ -387,7 +390,42 @@ impl GameContext {
         };
         self.confirm_import_backup = false;
         self.confirm_end_expedition = false;
+        self.confirm_ascension = false;
         self.status_notice_key = None;
+    }
+
+    /// Scales enemy Boss HP, score targets, and rewards for Ascension Realms (`realm_era >= 1`).
+    fn apply_realm_era_scaling(&self, session: &mut LevelSession) {
+        if self.city.realm_era == 0 {
+            return;
+        }
+        let era = self
+            .city
+            .realm_era
+            .min(wyrdstone_core::REALM_ENEMY_SCALING_MAX_ERA);
+        let hp_mult = 100u32
+            .saturating_add(era.saturating_mul(wyrdstone_core::REALM_ENEMY_BOSS_HP_PCT_PER_ERA));
+        if let Some(boss) = session.boss.as_mut() {
+            boss.def.max_hp = boss.def.max_hp.saturating_mul(hp_mult).div_ceil(100);
+            boss.hp = boss.def.max_hp;
+        }
+        let score_mult = 100u32
+            .saturating_add(era.saturating_mul(wyrdstone_core::REALM_SCORE_TARGET_PCT_PER_ERA));
+        for obj in &mut session.objectives {
+            if let wyrdstone_core::Objective::ReachScore { target } = &mut obj.objective {
+                let scaled = target.saturating_mul(score_mult).div_ceil(100);
+                *target = scaled;
+                obj.target = scaled;
+            }
+        }
+        let reward_mult =
+            100u32.saturating_add(era.saturating_mul(wyrdstone_core::REALM_REWARD_PCT_PER_ERA));
+        session.level.base_reward = ResourceBundle {
+            wood: session.level.base_reward.wood.saturating_mul(reward_mult) / 100,
+            stone: session.level.base_reward.stone.saturating_mul(reward_mult) / 100,
+            gold: session.level.base_reward.gold.saturating_mul(reward_mult) / 100,
+            mead: session.level.base_reward.mead.saturating_mul(reward_mult) / 100,
+        };
     }
 
     /// Notice key describing why saving is suspended, `None` when saving is allowed.
@@ -879,6 +917,7 @@ impl GameContext {
             .city
             .building_mastery_spoils_pct(&session.level.building_id);
         session.apply_building_mastery_bonus(mastery_pct);
+        self.apply_realm_era_scaling(&mut session);
         let aid = self.city.valkyrie_aid_for_level(level_id);
         session.apply_valkyrie_aid(aid, &mut self.rng);
         self.active_gauntlet = None;
@@ -917,6 +956,7 @@ impl GameContext {
         session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.apply_realm_era_scaling(&mut session);
         let aid = self.city.valkyrie_aid_for_level(boss_id);
         session.apply_valkyrie_aid(aid, &mut self.rng);
         self.active_gauntlet = None;
@@ -949,6 +989,7 @@ impl GameContext {
             );
             session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
             let consumed_draught = self.apply_loadout_extras(&mut session);
+            self.apply_realm_era_scaling(&mut session);
             self.active_gauntlet = None;
             self.active_level_id = Some(session.level.id.clone());
             self.active_session = Some(session);
@@ -982,6 +1023,7 @@ impl GameContext {
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.apply_realm_era_scaling(&mut session);
         self.active_gauntlet = None;
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
@@ -1016,6 +1058,7 @@ impl GameContext {
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.apply_realm_era_scaling(&mut session);
         self.active_gauntlet = None;
         self.active_level_id = Some(session.level.id.clone());
         self.active_expedition = Some(run);
@@ -1105,6 +1148,7 @@ impl GameContext {
         );
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        self.apply_realm_era_scaling(&mut session);
         self.active_level_id = Some(session.level.id.clone());
         self.active_gauntlet = Some(run);
         self.active_session = Some(session);
@@ -1153,6 +1197,7 @@ impl GameContext {
                 session.apply_synergies(&[syn], &mut self.rng);
             }
         }
+        self.apply_realm_era_scaling(&mut session);
         self.active_level_id = Some(session.level.id.clone());
         self.active_session = Some(session);
         self.armed_tool = None;
@@ -1218,6 +1263,7 @@ fn has_saved_progress(city: &CityState, tutorial_step: u8) -> bool {
         || !city.building_tiers.is_empty()
         || !city.completed_levels.is_empty()
         || city.wonder_stage > 0
+        || city.realm_era > 0
 }
 
 /// Regeneration speed as a percentage (100 = base rate), raised by the Mead Hall tier.
@@ -1421,6 +1467,7 @@ mod read_only_notice_tests {
             confirm_reset: false,
             confirm_import_backup: false,
             confirm_end_expedition: false,
+            confirm_ascension: false,
             audio_muted: false,
             bgm_volume: DEFAULT_BGM_VOLUME,
             sfx_volume: DEFAULT_SFX_VOLUME,

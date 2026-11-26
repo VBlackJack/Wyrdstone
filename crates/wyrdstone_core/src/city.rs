@@ -26,14 +26,17 @@ use crate::boss::{BossDef, GAUNTLET_CLEAR_GLORY, GAUNTLET_STAGE_PARTIAL_GLORY};
 use crate::level::LevelDef;
 use crate::patron::PatronGod;
 use crate::retention::{
-    patron_devotion_upgrade_cost, wonder_boss_damage_bonus_pct, wonder_extra_max_energy,
-    wonder_glory_reward, wonder_harvest_bonus_pct, wonder_milestone_tool, wonder_spoils_bonus_pct,
-    wonder_starting_fury, wonder_upgrade_cost, DailyBountyBoard, EndlessDecreeKind,
-    EndlessDecreeState, OfflineVaultSummary, PlayMode, SkaldPassState, ValhallaFlameTier,
-    ValkyrieAidTier, WeeklyChallengeState, LEGEND_RANK_GLORY_STEP, LEGEND_SPOILS_MAX_BONUS_PCT,
-    LEGEND_SPOILS_PCT_PER_LEVEL, MAX_PATRON_DEVOTION_TIER, MAX_VALKYRIE_FAIL_STREAK,
-    OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
-    OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS, WONDER_MAX_STAGE,
+    patron_devotion_upgrade_cost, realm_ascension_glory_reward, wonder_boss_damage_bonus_pct,
+    wonder_extra_max_energy, wonder_glory_reward, wonder_harvest_bonus_pct, wonder_milestone_tool,
+    wonder_spoils_bonus_pct, wonder_starting_fury, wonder_upgrade_cost, DailyBountyBoard,
+    EndlessDecreeKind, EndlessDecreeState, OfflineVaultSummary, PlayMode, RealmTheme,
+    SkaldPassState, ValhallaFlameTier, ValkyrieAidTier, WeeklyChallengeState,
+    LEGEND_RANK_GLORY_STEP, LEGEND_SPOILS_MAX_BONUS_PCT, LEGEND_SPOILS_PCT_PER_LEVEL,
+    MAX_PATRON_DEVOTION_TIER, MAX_VALKYRIE_FAIL_STREAK, OFFLINE_VAULT_BASE_MAX_HOURS,
+    OFFLINE_VAULT_CYCLE_SECS, OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER,
+    OFFLINE_VAULT_MIN_ABSENCE_SECS, REALM_ASCENSION_KEEP_RESOURCE_PCT, REALM_BOSS_DMG_PCT_PER_ERA,
+    REALM_BUILDING_COST_PCT_PER_ERA, REALM_MAX_SCALING_ERA, REALM_SCORE_PCT_PER_ERA,
+    REALM_SPOILS_PCT_PER_ERA, WONDER_MAX_STAGE,
 };
 use crate::trials::{TrialDef, TRIAL_PAR_BONUS_GLORY};
 use crate::turn::ClearStatsDelta;
@@ -522,6 +525,8 @@ pub struct CityState {
     pub endless_decree: EndlessDecreeState,
     #[serde(default)]
     pub wonder_stage: u8,
+    #[serde(default)]
+    pub realm_era: u32,
 }
 
 impl CityState {
@@ -574,6 +579,7 @@ impl CityState {
             level_fail_streaks: HashMap::new(),
             endless_decree: EndlessDecreeState::default(),
             wonder_stage: 0,
+            realm_era: 0,
         }
     }
 
@@ -770,13 +776,27 @@ impl CityState {
     }
 
     /// Returns the cost of the next upgrade tier, if not yet maxed.
-    pub fn next_upgrade_cost<'a>(&self, def: &'a BuildingDef) -> Option<&'a ResourceBundle> {
+    /// Returns the cost of the next tier upgrade for `def`, scaled by active `realm_era`, or `None` if already maxed.
+    pub fn next_upgrade_cost(&self, def: &BuildingDef) -> Option<ResourceBundle> {
         let current = self.building_tier(&def.id) as usize;
         if current >= def.max_tier as usize {
-            None
-        } else {
-            def.upgrade_costs.get(current)
+            return None;
         }
+        let base = def.upgrade_costs.get(current)?;
+        if self.realm_era == 0 {
+            return Some(*base);
+        }
+        let mult = 100u32.saturating_add(
+            self.realm_era
+                .min(REALM_MAX_SCALING_ERA)
+                .saturating_mul(REALM_BUILDING_COST_PCT_PER_ERA),
+        );
+        Some(ResourceBundle {
+            wood: base.wood.saturating_mul(mult) / 100,
+            stone: base.stone.saturating_mul(mult) / 100,
+            gold: base.gold.saturating_mul(mult) / 100,
+            mead: base.mead.saturating_mul(mult) / 100,
+        })
     }
 
     /// Computes aggregate passive bonuses granted by all rebuilt buildings and Clan Rank.
@@ -840,6 +860,18 @@ impl CityState {
                 .starting_fury
                 .saturating_add(wonder_starting_fury(self.wonder_stage));
         }
+        if self.realm_era > 0 {
+            let era = self.realm_era.min(REALM_MAX_SCALING_ERA);
+            bonuses.resource_bonus_pct = bonuses
+                .resource_bonus_pct
+                .saturating_add(era.saturating_mul(REALM_SPOILS_PCT_PER_ERA));
+            bonuses.score_bonus_pct = bonuses
+                .score_bonus_pct
+                .saturating_add(era.saturating_mul(REALM_SCORE_PCT_PER_ERA));
+            bonuses.boss_damage_bonus_pct = bonuses
+                .boss_damage_bonus_pct
+                .saturating_add(era.saturating_mul(REALM_BOSS_DMG_PCT_PER_ERA));
+        }
         bonuses
     }
 
@@ -885,6 +917,9 @@ impl CityState {
 
     /// Returns true once the player reaches the milestone for the given secondary play mode.
     pub fn is_mode_unlocked(&self, mode: PlayMode) -> bool {
+        if self.realm_era >= 1 {
+            return true;
+        }
         let hall_tier = self.building_tier(HUB_BUILDING_ID);
         match mode {
             PlayMode::DailyTrial => {
@@ -1333,7 +1368,7 @@ impl CityState {
         if !self.is_building_unlocked(def) {
             return Err("city.panel.building.locked");
         }
-        let Some(cost) = self.next_upgrade_cost(def).copied() else {
+        let Some(cost) = self.next_upgrade_cost(def) else {
             return Err("city.button.max_level");
         };
         if !self.resources.can_afford(&cost) {
@@ -1360,10 +1395,49 @@ impl CityState {
         Ok(new_tier)
     }
 
-    /// True once every Fjord building has been restored to at least Tier 1 (or Wonder progress exists).
+    /// True once every Fjord building has been restored to at least Tier 1 (or Wonder/Ascension progress exists).
     pub fn is_wonder_unlocked(&self, buildings: &[BuildingDef]) -> bool {
-        self.wonder_stage > 0
+        self.realm_era > 0
+            || self.wonder_stage > 0
             || (!buildings.is_empty() && buildings.iter().all(|b| self.building_tier(&b.id) >= 1))
+    }
+
+    /// Current thematic Realm determined by `realm_era`.
+    pub const fn realm_theme(&self) -> RealmTheme {
+        RealmTheme::for_era(self.realm_era)
+    }
+
+    /// True once every building in the current Realm has reached its max tier.
+    pub fn can_ascend_realm(&self, buildings: &[BuildingDef]) -> bool {
+        !buildings.is_empty()
+            && buildings
+                .iter()
+                .all(|b| self.building_tier(&b.id) >= b.max_tier)
+    }
+
+    /// Sails to the next Realm Era, preserving permanent progression and resetting Fjord building tiers.
+    pub fn try_ascend_realm(
+        &mut self,
+        buildings: &[BuildingDef],
+        balance: &BalanceConfig,
+    ) -> Result<(u32, u32), &'static str> {
+        if !self.can_ascend_realm(buildings) {
+            return Err("city.ascension.locked");
+        }
+        self.realm_era = self.realm_era.saturating_add(1);
+        let glory_awarded = realm_ascension_glory_reward(self.realm_era);
+        self.glory = self.glory.saturating_add(glory_awarded);
+        let keep = REALM_ASCENSION_KEEP_RESOURCE_PCT;
+        self.resources = ResourceBundle {
+            wood: (self.resources.wood.saturating_mul(keep) / 100).max(balance.starting_wood),
+            stone: (self.resources.stone.saturating_mul(keep) / 100).max(balance.starting_stone),
+            gold: (self.resources.gold.saturating_mul(keep) / 100).max(balance.starting_gold),
+            mead: (self.resources.mead.saturating_mul(keep) / 100).max(balance.starting_mead),
+        };
+        self.building_tiers.clear();
+        self.last_harvest_unix_secs.clear();
+        self.energy = self.max_energy(balance);
+        Ok((self.realm_era, glory_awarded))
     }
 
     /// Returns the resource cost to infuse Yggdrasil Wonder to its next stage, or `None` when maxed.
@@ -1525,9 +1599,9 @@ impl CityState {
         Some(self.scaled_amulet_effect(def))
     }
 
-    /// True once the Great Hall reaches Tier 2, unlocking the second Amulet Band slot.
+    /// True once the Great Hall reaches Tier 2 (or after Ascending once), unlocking the second Amulet Band slot.
     pub fn is_secondary_amulet_unlocked(&self) -> bool {
-        self.building_tier(HUB_BUILDING_ID) >= 2
+        self.building_tier(HUB_BUILDING_ID) >= 2 || self.realm_era >= 1
     }
 
     /// Equips or unequips a crafted amulet in the secondary Runic Band slot.
