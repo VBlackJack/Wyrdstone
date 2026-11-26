@@ -55,12 +55,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y binaryen
       - name: Build Wyrdstone WASM32 release binary
-        run: cargo build --release --locked --target wasm32-unknown-unknown --bin wyrdstone
+        run: cargo build --profile wasm-release --locked --target wasm32-unknown-unknown --bin wyrdstone
       - name: Package Web bundle
         run: |
           mkdir -p dist
-          wasm-bindgen --out-dir dist --out-name wyrdstone --target web --no-typescript target/wasm32-unknown-unknown/release/wyrdstone.wasm
-          wasm-opt -Oz --strip-debug -o dist/wyrdstone_bg.wasm dist/wyrdstone_bg.wasm
+          wasm-bindgen --out-dir dist --out-name wyrdstone --target web --no-typescript target/wasm32-unknown-unknown/wasm-release/wyrdstone.wasm
+          wasm-opt --all-features -Oz --strip-debug -o dist/wyrdstone_bg.wasm dist/wyrdstone_bg.wasm
           cp web/index.html dist/index.html
           cp assets/sprites/app_icon.png dist/app_icon.png
           touch dist/.nojekyll

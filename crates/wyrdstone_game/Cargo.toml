@@ -37,7 +37,6 @@ bevy = { version = "=0.15.2", default-features = false, features = [
     "bevy_audio",
     "wav",
     "png",
-    "tonemapping_luts",
 ] }
 bevy_winit = { version = "=0.15.2", default-features = false }
 
