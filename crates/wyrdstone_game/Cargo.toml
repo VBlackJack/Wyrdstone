@@ -38,7 +38,7 @@ bevy = { version = "=0.15.2", default-features = false, features = [
     "wav",
     "png",
 ] }
-bevy_winit = { version = "=0.15.2", default-features = false }
+bevy_winit = { version = "=0.15.3", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bevy = { version = "=0.15.2", default-features = false, features = ["multi_threaded"] }
