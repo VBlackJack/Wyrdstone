@@ -3345,3 +3345,132 @@ fn progressive_mode_unlocks_shortage_sources_and_quest_progress() {
         assert_eq!(q_city.quest_progress(&q), expected, "variant #{idx}");
     }
 }
+
+#[test]
+fn building_mastery_perks_and_repeatable_collection_charging_work() {
+    use wyrdstone_core::{
+        COLLECTION_RECHARGE_REWARD_PCT, MASTERY_HARVEST_PCT_AT_4_STARS,
+        MASTERY_HARVEST_PCT_AT_5_STARS, MASTERY_SPOILS_PCT_PER_STAR,
+    };
+
+    let data = GameDataBundle::load_bundled(Language::En).expect("bundled data loads");
+    let mut rng = StdRng::seed_from_u64(777);
+    let mut city = CityState::new(&data.balance);
+    let gh = data
+        .building_by_id("great_hall")
+        .expect("great_hall exists");
+    city.building_tiers.insert(gh.id.clone(), 1);
+
+    let base_harvest = city.harvest_reward(gh);
+    assert_eq!(city.building_mastery_spoils_pct(&gh.id), 0);
+    assert_eq!(city.building_mastery_harvest_pct(&gh.id), 0);
+
+    city.building_wins.insert(gh.id.clone(), 4);
+    assert_eq!(
+        city.building_mastery_spoils_pct(&gh.id),
+        4 * MASTERY_SPOILS_PCT_PER_STAR
+    );
+    assert_eq!(
+        city.building_mastery_harvest_pct(&gh.id),
+        MASTERY_HARVEST_PCT_AT_4_STARS
+    );
+    let h4 = city.harvest_reward(gh);
+    assert!(h4.gold > base_harvest.gold);
+
+    city.building_wins.insert(gh.id.clone(), 5);
+    assert_eq!(
+        city.building_mastery_spoils_pct(&gh.id),
+        5 * MASTERY_SPOILS_PCT_PER_STAR
+    );
+    assert_eq!(
+        city.building_mastery_harvest_pct(&gh.id),
+        MASTERY_HARVEST_PCT_AT_5_STARS
+    );
+    let h5 = city.harvest_reward(gh);
+    assert!(h5.gold >= h4.gold);
+
+    let lvl = data.level_by_id("great_hall_1").unwrap().clone();
+    let mut session = LevelSession::start_full(
+        lvl,
+        None,
+        city.compute_bonuses(&data.balance),
+        PatronGod::Odin,
+        None,
+        &mut rng,
+    );
+    let before_pct = session.resource_bonus_pct;
+    session.apply_building_mastery_bonus(city.building_mastery_spoils_pct(&gh.id));
+    assert_eq!(
+        session.resource_bonus_pct,
+        before_pct + 5 * MASTERY_SPOILS_PCT_PER_STAR
+    );
+
+    let mut trial = LevelSession::start_trial(&data.trials[0], &data.balance).expect("trial");
+    trial.apply_building_mastery_bonus(25);
+    assert_eq!(trial.resource_bonus_pct, 0);
+
+    // Repeatable collection charging: first claim pays full, resets found_relics, recharge pays 50%.
+    let midgard = data
+        .collections
+        .iter()
+        .find(|c| c.id == "col_midgard")
+        .expect("col_midgard exists");
+    for _ in 0..midgard.relic_ids.len() {
+        assert!(city
+            .discover_next_relic_for_building("great_hall", &data.collections)
+            .is_some());
+    }
+    assert!(city.is_collection_ready(midgard));
+    let gold_before = city.resources.gold;
+    let glory_before = city.glory;
+    assert!(city.try_claim_collection(midgard, &data.balance));
+    assert_eq!(city.collection_charge_count(&midgard.id), 1);
+    assert!(!city.is_collection_ready(midgard));
+    assert_eq!(city.collection_found_count(midgard), 0);
+    assert_eq!(city.total_relics_collected(&data.collections), 3);
+    assert_eq!(
+        city.resources.gold - gold_before,
+        midgard.reward_resources.gold
+    );
+    assert_eq!(city.glory - glory_before, data.balance.collection_glory);
+
+    // Discover all 3 again and verify scaled recharge reward.
+    for _ in 0..midgard.relic_ids.len() {
+        assert!(city
+            .discover_next_relic_for_building("great_hall", &data.collections)
+            .is_some());
+    }
+    assert!(city.is_collection_ready(midgard));
+    let gold_before_r2 = city.resources.gold;
+    let glory_before_r2 = city.glory;
+    assert!(city.try_claim_collection(midgard, &data.balance));
+    assert_eq!(city.collection_charge_count(&midgard.id), 2);
+    assert_eq!(city.total_relics_collected(&data.collections), 6);
+    assert_eq!(
+        city.resources.gold - gold_before_r2,
+        midgard
+            .reward_resources
+            .gold
+            .saturating_mul(COLLECTION_RECHARGE_REWARD_PCT)
+            .div_ceil(100)
+    );
+    assert_eq!(
+        city.glory - glory_before_r2,
+        data.balance
+            .collection_glory
+            .saturating_mul(COLLECTION_RECHARGE_REWARD_PCT)
+            .div_ceil(100)
+    );
+
+    // Legacy v5 save migration clears already-claimed relics and initializes charges to 1.
+    let mut legacy = CityState::new(&data.balance);
+    for rid in &midgard.relic_ids {
+        legacy.found_relics.insert(rid.clone());
+    }
+    legacy.claimed_collections.insert(midgard.id.clone());
+    legacy.sanitize_collections(&data.collections);
+    assert_eq!(legacy.collection_charge_count(&midgard.id), 1);
+    assert_eq!(legacy.collection_found_count(midgard), 0);
+    assert!(!legacy.is_collection_ready(midgard));
+    assert_eq!(legacy.total_relics_collected(&data.collections), 3);
+}

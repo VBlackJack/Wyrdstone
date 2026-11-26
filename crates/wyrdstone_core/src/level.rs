@@ -1000,6 +1000,13 @@ impl LevelSession {
         }
     }
 
+    /// Applies permanent Building Mastery spoils bonus percentage to a non-trial building session.
+    pub fn apply_building_mastery_bonus(&mut self, extra_resource_pct: u32) {
+        if !self.is_trial && extra_resource_pct > 0 {
+            self.resource_bonus_pct = self.resource_bonus_pct.saturating_add(extra_resource_pct);
+        }
+    }
+
     /// True when the defeated player can invoke Last Stand once to continue this run.
     pub fn can_use_last_stand(&self) -> bool {
         self.outcome == LevelOutcome::Defeat

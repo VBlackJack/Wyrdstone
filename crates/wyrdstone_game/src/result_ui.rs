@@ -739,18 +739,195 @@ fn spawn_result_ui(
                                                 ));
                                             }
                                         }
-                                        if let Some(relic_key) = &ctx.last_discovered_relic_key {
+                                        if let Some((bldg_id, new_stars, tool_opt)) =
+                                            &ctx.last_mastery_rank_up
+                                        {
+                                            let b_name = ctx
+                                                .data
+                                                .building_by_id(bldg_id)
+                                                .map(|b| i18n.t(&b.name_key).to_string())
+                                                .unwrap_or_else(|| bldg_id.clone());
+                                            let rank_name = i18n.t(
+                                                wyrdstone_core::CityState::mastery_rank_name_key(
+                                                    *new_stars,
+                                                ),
+                                            );
                                             card.spawn((
-                                                Text::new(i18n.t_fmt(
-                                                    "result.relic.discovered",
-                                                    &[("relic", i18n.t(relic_key).to_string())],
-                                                )),
-                                                TextFont {
-                                                    font_size: FONT_BODY,
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    flex_direction: FlexDirection::Column,
+                                                    row_gap: Val::Px(3.0),
+                                                    padding: UiRect::axes(
+                                                        Val::Px(12.0),
+                                                        Val::Px(7.0),
+                                                    ),
+                                                    border: UiRect::all(Val::Px(1.5)),
                                                     ..default()
                                                 },
-                                                TextColor(COLOR_ACCENT_TEAL_TEXT),
-                                            ));
+                                                BackgroundColor(Color::srgba(
+                                                    0.18, 0.13, 0.07, 0.92,
+                                                )),
+                                                BorderColor(COLOR_ACCENT_GOLD),
+                                                BorderRadius::all(Val::Px(8.0)),
+                                            ))
+                                            .with_children(|mcard| {
+                                                mcard.spawn((
+                                                    Text::new(i18n.t_fmt(
+                                                        "result.mastery.rank_up",
+                                                        &[
+                                                            ("building", b_name),
+                                                            ("rank", rank_name.to_string()),
+                                                            ("stars", new_stars.to_string()),
+                                                        ],
+                                                    )),
+                                                    TextFont {
+                                                        font_size: FONT_BODY,
+                                                        ..default()
+                                                    },
+                                                    TextColor(COLOR_ACCENT_GOLD),
+                                                ));
+                                                if let Some(tool) = tool_opt {
+                                                    let tool_label = ctx
+                                                        .data
+                                                        .tool_shop
+                                                        .iter()
+                                                        .find(|r| r.tool == *tool)
+                                                        .map(|r| {
+                                                            i18n.t_fmt(
+                                                                &r.name_key,
+                                                                &[("count", "+1".to_string())],
+                                                            )
+                                                        })
+                                                        .unwrap_or_default();
+                                                    let spoils = u32::from(*new_stars)
+                                                        .saturating_mul(
+                                                        wyrdstone_core::MASTERY_SPOILS_PCT_PER_STAR,
+                                                    );
+                                                    mcard.spawn((
+                                                        Text::new(i18n.t_fmt(
+                                                            "result.mastery.rank_up_tool",
+                                                            &[
+                                                                ("spoils", spoils.to_string()),
+                                                                ("tool", tool_label),
+                                                            ],
+                                                        )),
+                                                        TextFont {
+                                                            font_size: FONT_SMALL,
+                                                            ..default()
+                                                        },
+                                                        TextColor(COLOR_TEXT_PRIMARY),
+                                                    ));
+                                                }
+                                            });
+                                        }
+                                        if let Some(relic_key) = &ctx.last_discovered_relic_key {
+                                            let col_opt =
+                                                wyrdstone_core::CityState::collection_for_relic_key(
+                                                    relic_key,
+                                                    &ctx.data.collections,
+                                                );
+                                            let is_ready = col_opt
+                                                .is_some_and(|c| ctx.city.is_collection_ready(c));
+                                            card.spawn((
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    flex_direction: FlexDirection::Column,
+                                                    row_gap: Val::Px(4.0),
+                                                    padding: UiRect::axes(
+                                                        Val::Px(12.0),
+                                                        Val::Px(7.0),
+                                                    ),
+                                                    border: UiRect::all(Val::Px(1.5)),
+                                                    ..default()
+                                                },
+                                                BackgroundColor(COLOR_PANEL_CARD),
+                                                BorderColor(if is_ready {
+                                                    COLOR_ACCENT_GOLD
+                                                } else {
+                                                    COLOR_ACCENT_TEAL
+                                                }),
+                                                BorderRadius::all(Val::Px(8.0)),
+                                            ))
+                                            .with_children(|rcard| {
+                                                rcard.spawn((
+                                                    Text::new(i18n.t_fmt(
+                                                        "result.relic.discovered",
+                                                        &[("relic", i18n.t(relic_key).to_string())],
+                                                    )),
+                                                    TextFont {
+                                                        font_size: FONT_BODY,
+                                                        ..default()
+                                                    },
+                                                    TextColor(if is_ready {
+                                                        COLOR_ACCENT_GOLD
+                                                    } else {
+                                                        COLOR_ACCENT_TEAL_TEXT
+                                                    }),
+                                                ));
+                                                if let Some(col) = col_opt {
+                                                    let found =
+                                                        ctx.city.collection_found_count(col);
+                                                    let total = col.relic_ids.len();
+                                                    let remaining = total.saturating_sub(found);
+                                                    rcard
+                                                        .spawn(Node {
+                                                            flex_direction: FlexDirection::Row,
+                                                            column_gap: Val::Px(4.0),
+                                                            ..default()
+                                                        })
+                                                        .with_children(|pips| {
+                                                            for idx in 0..total {
+                                                                let lit = idx < found;
+                                                                pips.spawn((
+                                                                    Node {
+                                                                        flex_grow: 1.0,
+                                                                        height: Val::Px(5.0),
+                                                                        ..default()
+                                                                    },
+                                                                    BackgroundColor(if lit {
+                                                                        COLOR_ACCENT_GOLD
+                                                                    } else {
+                                                                        COLOR_PANEL_DARK
+                                                                    }),
+                                                                    BorderRadius::all(Val::Px(3.0)),
+                                                                ));
+                                                            }
+                                                        });
+                                                    let col_name =
+                                                        i18n.t(&col.name_key).to_string();
+                                                    let sub = if remaining == 0 {
+                                                        i18n.t_fmt(
+                                                            "result.relic.complete",
+                                                            &[
+                                                                ("collection", col_name),
+                                                                ("found", found.to_string()),
+                                                                ("total", total.to_string()),
+                                                            ],
+                                                        )
+                                                    } else {
+                                                        i18n.t_fmt(
+                                                            "result.relic.progress",
+                                                            &[
+                                                                ("collection", col_name),
+                                                                ("found", found.to_string()),
+                                                                ("total", total.to_string()),
+                                                                (
+                                                                    "remaining",
+                                                                    remaining.to_string(),
+                                                                ),
+                                                            ],
+                                                        )
+                                                    };
+                                                    rcard.spawn((
+                                                        Text::new(sub),
+                                                        TextFont {
+                                                            font_size: FONT_SMALL,
+                                                            ..default()
+                                                        },
+                                                        TextColor(COLOR_TEXT_PRIMARY),
+                                                    ));
+                                                }
+                                            });
                                         }
                                         if ctx.last_skald_xp_gained > 0 {
                                             let pass = &ctx.city.skald_pass;
@@ -912,6 +1089,21 @@ fn spawn_result_ui(
                                                 ),
                                                 COLOR_ACCENT_GOLD,
                                                 ResultAction::OpenFjordModal(ActiveModal::Bounties),
+                                            ));
+                                        }
+                                        let claimable_cols = ctx
+                                            .city
+                                            .claimable_collection_count(&ctx.data.collections);
+                                        if claimable_cols > 0 {
+                                            ready_badges.push((
+                                                i18n.t_fmt(
+                                                    "result.ready.collection",
+                                                    &[("count", claimable_cols.to_string())],
+                                                ),
+                                                COLOR_ACCENT_GREEN,
+                                                ResultAction::OpenFjordModal(
+                                                    ActiveModal::Collections,
+                                                ),
                                             ));
                                         }
                                         if !ready_badges.is_empty() {

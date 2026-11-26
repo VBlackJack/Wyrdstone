@@ -48,7 +48,9 @@ pub use boss::{
 pub use city::{
     validate_city_content, AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats,
     CollectionDef, DivineSynergy, QuestCondition, QuestDef, ResourceBundle, ResourceKind,
-    ToolInventory, ToolRecipeDef, WarDraught, HUB_BUILDING_ID, MAX_DAILY_STREAK_CYCLE,
+    ToolInventory, ToolRecipeDef, WarDraught, COLLECTION_RECHARGE_REWARD_PCT, HUB_BUILDING_ID,
+    MASTERY_HARVEST_PCT_AT_4_STARS, MASTERY_HARVEST_PCT_AT_5_STARS, MASTERY_SPOILS_PCT_PER_STAR,
+    MAX_DAILY_STREAK_CYCLE, MAX_MASTERY_STARS,
 };
 pub use expedition::{
     ExpeditionBoon, ExpeditionOath, ExpeditionRelic, ExpeditionRun, EXPEDITION_BUILDING_ID,

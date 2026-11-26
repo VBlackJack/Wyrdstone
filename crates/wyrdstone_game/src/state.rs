@@ -144,6 +144,7 @@ pub struct GameContext {
     pub last_stand_pre_defeat_streak: u32,
     pub last_skald_xp_gained: u32,
     pub last_unlocked_modes: Vec<wyrdstone_core::PlayMode>,
+    pub last_mastery_rank_up: Option<(String, u8, Option<ActiveTool>)>,
     pub shortage_guidance: Option<(wyrdstone_core::ResourceKind, String, u8, u32)>,
     pub energy_regen_timer: Timer,
     /// Wall-clock instant from which the next endurance point is being earned.
@@ -294,6 +295,7 @@ impl GameContext {
                     saved.last_saved_unix_secs,
                     now,
                 );
+                saved.city.sanitize_collections(&data.collections);
                 saved.city.daily_bounties.ensure_for_day(today);
                 let progressed = has_saved_progress(&saved.city, tutorial_step);
                 (saved.city, progressed || has_unreadable_save, anchor)
@@ -358,6 +360,7 @@ impl GameContext {
             last_stand_pre_defeat_streak: 0,
             last_skald_xp_gained: 0,
             last_unlocked_modes: Vec::new(),
+            last_mastery_rank_up: None,
             shortage_guidance: None,
             energy_regen_timer: Timer::from_seconds(regen_secs, TimerMode::Repeating),
             energy_regen_anchor_unix_secs: regen_anchor,
@@ -622,7 +625,9 @@ impl GameContext {
         self.pending_offline_vault = None;
         self.last_stand_pre_defeat_streak = 0;
         self.last_unlocked_modes.clear();
+        self.last_mastery_rank_up = None;
         self.shortage_guidance = None;
+        self.city.sanitize_collections(&self.data.collections);
         self.city.daily_bounties.ensure_for_day(today_day_index());
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
@@ -691,7 +696,9 @@ impl GameContext {
         self.pending_offline_vault = None;
         self.last_stand_pre_defeat_streak = 0;
         self.last_unlocked_modes.clear();
+        self.last_mastery_rank_up = None;
         self.shortage_guidance = None;
+        self.city.sanitize_collections(&self.data.collections);
         self.city.daily_bounties.ensure_for_day(today_day_index());
         self.energy_regen_anchor_unix_secs = now_unix_secs();
         self.has_existing_save = true;
@@ -702,6 +709,7 @@ impl GameContext {
     fn apply_loadout_extras(&mut self, session: &mut LevelSession) -> bool {
         self.shortage_guidance = None;
         self.last_unlocked_modes.clear();
+        self.last_mastery_rank_up = None;
         let flame = self.city.valhalla_flame_tier();
         session.apply_valhalla_flame(flame, &mut self.rng);
         let devotion_tier = self.city.patron_devotion_tier(session.patron);
@@ -862,6 +870,10 @@ impl GameContext {
         session.apply_session_tuning(&self.data.balance.session);
         session.apply_daily_blessing_with(self.today_blessing(), &self.data.balance.session);
         self.apply_loadout_extras(&mut session);
+        let mastery_pct = self
+            .city
+            .building_mastery_spoils_pct(&session.level.building_id);
+        session.apply_building_mastery_bonus(mastery_pct);
         self.active_gauntlet = None;
         self.active_level_id = Some(level_id.to_string());
         self.active_session = Some(session);
@@ -1024,6 +1036,7 @@ impl GameContext {
         self.status_notice_key = None;
         self.shortage_guidance = None;
         self.last_unlocked_modes.clear();
+        self.last_mastery_rank_up = None;
         Ok(())
     }
 
@@ -1402,6 +1415,7 @@ mod read_only_notice_tests {
             last_stand_pre_defeat_streak: 0,
             last_skald_xp_gained: 0,
             last_unlocked_modes: Vec::new(),
+            last_mastery_rank_up: None,
             shortage_guidance: None,
             energy_regen_timer: Timer::from_seconds(60.0, TimerMode::Repeating),
             energy_regen_anchor_unix_secs: 0,

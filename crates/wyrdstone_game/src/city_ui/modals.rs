@@ -711,17 +711,18 @@ pub(super) fn spawn_collections_modal(
             sorted_cols.sort_by_key(|col| {
                 if ctx.city.is_collection_ready(col) {
                     0u8
-                } else if ctx.city.claimed_collections.contains(&col.id) {
-                    2u8
-                } else {
+                } else if ctx.city.collection_found_count(col) > 0 {
                     1u8
+                } else {
+                    2u8
                 }
             });
             for col in sorted_cols {
                 let found = ctx.city.collection_found_count(col);
                 let total = col.relic_ids.len();
                 let ready = ctx.city.is_collection_ready(col);
-                let claimed = ctx.city.claimed_collections.contains(&col.id);
+                let charges = ctx.city.collection_charge_count(&col.id);
+                let claimed = charges > 0 || ctx.city.claimed_collections.contains(&col.id);
 
                 modal
                     .spawn((
@@ -792,16 +793,44 @@ pub(super) fn spawn_collections_modal(
                             });
 
                             if ready {
-                                spawn_small_button(
-                                    row,
-                                    i18n.t("city.panel.collections.claim"),
-                                    CityAction::ClaimCollection(col.id.clone()),
-                                    COLOR_ACCENT_GREEN,
-                                    true,
-                                );
+                                row.spawn(Node {
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(6.0),
+                                    ..default()
+                                })
+                                .with_children(|rbox| {
+                                    if charges >= 1 {
+                                        rbox.spawn((
+                                            Text::new(i18n.t_fmt(
+                                                "city.panel.collections.charged",
+                                                &[("count", charges.to_string())],
+                                            )),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(COLOR_ACCENT_GOLD),
+                                        ));
+                                    }
+                                    spawn_small_button(
+                                        rbox,
+                                        i18n.t("city.panel.collections.claim"),
+                                        CityAction::ClaimCollection(col.id.clone()),
+                                        COLOR_ACCENT_GREEN,
+                                        true,
+                                    );
+                                });
                             } else if claimed {
+                                let badge_txt = if charges >= 2 {
+                                    i18n.t_fmt(
+                                        "city.panel.collections.charged",
+                                        &[("count", charges.to_string())],
+                                    )
+                                } else {
+                                    i18n.t("city.panel.collections.claimed").to_string()
+                                };
                                 row.spawn((
-                                    Text::new(i18n.t("city.panel.collections.claimed")),
+                                    Text::new(badge_txt),
                                     TextFont {
                                         font_size: FONT_SMALL,
                                         ..default()
@@ -869,36 +898,56 @@ pub(super) fn spawn_collections_modal(
                             }
                         });
 
-                        if !claimed && !col.source_building_ids.is_empty() {
-                            let src_names: Vec<String> = col
-                                .source_building_ids
-                                .iter()
-                                .filter_map(|bid| {
-                                    if bid == wyrdstone_core::DAILY_TRIAL_BUILDING_ID {
+                        if !ready && !col.source_building_ids.is_empty() {
+                            card.spawn(Node {
+                                flex_wrap: FlexWrap::Wrap,
+                                column_gap: Val::Px(6.0),
+                                row_gap: Val::Px(4.0),
+                                ..default()
+                            })
+                            .with_children(|hrow| {
+                                for bid in &col.source_building_ids {
+                                    let src_name = if bid == wyrdstone_core::DAILY_TRIAL_BUILDING_ID
+                                    {
                                         Some(i18n.t("city.panel.daily.button").to_string())
                                     } else {
                                         ctx.data
                                             .building_by_id(bid)
                                             .map(|b| i18n.t(&b.name_key).to_string())
-                                    }
-                                })
-                                .collect();
-                            if !src_names.is_empty() {
-                                card.spawn((
-                                    Text::new(i18n.t_fmt(
-                                        "city.panel.collections.source",
-                                        &[(
-                                            "sources",
-                                            src_names.join(i18n.t("ui.separator.comma")),
-                                        )],
-                                    )),
-                                    TextFont {
-                                        font_size: FONT_SMALL,
-                                        ..default()
-                                    },
-                                    TextColor(COLOR_TEXT_MUTED),
-                                ));
-                            }
+                                    };
+                                    let Some(name) = src_name else {
+                                        continue;
+                                    };
+                                    hrow.spawn((
+                                        Button,
+                                        CityAction::HuntCollectionSource(bid.clone()),
+                                        Node {
+                                            min_height: Val::Px(32.0),
+                                            padding: UiRect::axes(Val::Px(9.0), Val::Px(4.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(Val::Px(1.5)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(COLOR_PANEL_DARK),
+                                        BorderColor(COLOR_ACCENT_TEAL),
+                                        BorderRadius::all(Val::Px(6.0)),
+                                    ))
+                                    .with_children(|btn| {
+                                        btn.spawn((
+                                            Text::new(i18n.t_fmt(
+                                                "city.panel.collections.hunt",
+                                                &[("source", name)],
+                                            )),
+                                            TextFont {
+                                                font_size: FONT_SMALL,
+                                                ..default()
+                                            },
+                                            TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                        ));
+                                    });
+                                }
+                            });
                         }
 
                         card.spawn((
@@ -1217,7 +1266,12 @@ pub(super) fn spawn_stats_modal(
                 ),
                 i18n.t_fmt(
                     "city.panel.stats.relics",
-                    &[("val", ctx.city.found_relics.len().to_string())],
+                    &[(
+                        "val",
+                        ctx.city
+                            .total_relics_collected(&ctx.data.collections)
+                            .to_string(),
+                    )],
                 ),
                 i18n.t_fmt(
                     "city.panel.stats.streak",

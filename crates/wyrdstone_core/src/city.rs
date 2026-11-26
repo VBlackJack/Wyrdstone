@@ -39,6 +39,14 @@ use std::collections::{HashMap, HashSet};
 
 /// Maximum mastery star rank per building location.
 pub const MAX_MASTERY_STARS: u8 = 5;
+/// Permanent spoils bonus percentage granted per building mastery star (`+5%`..=`+25%`).
+pub const MASTERY_SPOILS_PCT_PER_STAR: u32 = 5;
+/// Passive building harvest bonus percentage unlocked at 4 mastery stars.
+pub const MASTERY_HARVEST_PCT_AT_4_STARS: u32 = 10;
+/// Passive building harvest bonus percentage unlocked at 5 mastery stars.
+pub const MASTERY_HARVEST_PCT_AT_5_STARS: u32 = 20;
+/// Reward percentage applied to repeatable collection chest re-charges (`50%` after first claim).
+pub const COLLECTION_RECHARGE_REWARD_PCT: u32 = 50;
 /// Maximum daily trial streak tier for bonus rewards.
 pub const MAX_DAILY_STREAK_CYCLE: u32 = 7;
 /// Maximum upgrade tier for Nordic Amulets.
@@ -470,6 +478,8 @@ pub struct CityState {
     #[serde(default)]
     pub claimed_collections: HashSet<String>,
     #[serde(default)]
+    pub collection_charges: HashMap<String, u32>,
+    #[serde(default)]
     pub stats: ClanStats,
     #[serde(default)]
     pub completed_levels: HashSet<String>,
@@ -533,6 +543,7 @@ impl CityState {
             active_war_draught: None,
             found_relics: HashSet::new(),
             claimed_collections: HashSet::new(),
+            collection_charges: HashMap::new(),
             stats: ClanStats::default(),
             completed_levels: HashSet::new(),
             level_best_stars: HashMap::new(),
@@ -700,6 +711,33 @@ impl CityState {
     pub fn building_mastery_stars(&self, building_id: &str) -> u8 {
         self.building_wins(building_id)
             .min(MAX_MASTERY_STARS as u32) as u8
+    }
+
+    /// Returns permanent spoils bonus percentage (`0..=25%`) for boards of `building_id`.
+    pub fn building_mastery_spoils_pct(&self, building_id: &str) -> u32 {
+        u32::from(self.building_mastery_stars(building_id))
+            .saturating_mul(MASTERY_SPOILS_PCT_PER_STAR)
+    }
+
+    /// Returns permanent passive tribute bonus percentage (`0`, `10`, or `20`) for `building_id`.
+    pub fn building_mastery_harvest_pct(&self, building_id: &str) -> u32 {
+        match self.building_mastery_stars(building_id) {
+            5.. => MASTERY_HARVEST_PCT_AT_5_STARS,
+            4 => MASTERY_HARVEST_PCT_AT_4_STARS,
+            _ => 0,
+        }
+    }
+
+    /// Returns the localization key for building mastery rank `0..=5`.
+    pub const fn mastery_rank_name_key(stars: u8) -> &'static str {
+        match stars {
+            1 => "mastery.rank.1",
+            2 => "mastery.rank.2",
+            3 => "mastery.rank.3",
+            4 => "mastery.rank.4",
+            5.. => "mastery.rank.5",
+            0 => "mastery.rank.0",
+        }
     }
 
     pub fn level_stars(&self, level_id: &str) -> u8 {
@@ -1091,17 +1129,27 @@ impl CityState {
             .saturating_add(self.compute_bonuses(balance).extra_max_energy)
     }
 
-    /// Returns passive harvest output for a rebuilt building based on its RON `harvest_per_tier` and tier.
+    /// Returns passive harvest output for a rebuilt building based on its RON `harvest_per_tier`,
+    /// building tier, and 4/5-star Building Mastery harvest perks.
     pub fn harvest_reward(&self, def: &BuildingDef) -> ResourceBundle {
         let tier = self.building_tier(&def.id);
         if tier == 0 {
             return ResourceBundle::default();
         }
+        let bonus_pct = self.building_mastery_harvest_pct(&def.id);
+        let scale = |base: u32| -> u32 {
+            let v = base.saturating_mul(tier);
+            if v == 0 || bonus_pct == 0 {
+                v
+            } else {
+                v.saturating_add((v.saturating_mul(bonus_pct)).div_ceil(100))
+            }
+        };
         ResourceBundle {
-            wood: def.harvest_per_tier.wood * tier,
-            stone: def.harvest_per_tier.stone * tier,
-            gold: def.harvest_per_tier.gold * tier,
-            mead: def.harvest_per_tier.mead * tier,
+            wood: scale(def.harvest_per_tier.wood),
+            stone: scale(def.harvest_per_tier.stone),
+            gold: scale(def.harvest_per_tier.gold),
+            mead: scale(def.harvest_per_tier.mead),
         }
     }
 
@@ -1668,10 +1716,64 @@ impl CityState {
             .count()
     }
 
-    /// Returns true if every relic in a collection is found and the chest is not yet claimed.
+    /// Returns how many times `col_id` has been charged and claimed.
+    pub fn collection_charge_count(&self, col_id: &str) -> u32 {
+        self.collection_charges.get(col_id).copied().unwrap_or(0)
+    }
+
+    /// Returns `(resources, tools, glory)` awarded on claiming `col` (full payout first time,
+    /// scaled `COLLECTION_RECHARGE_REWARD_PCT` + 1 tool on repeat re-charges).
+    pub fn collection_claim_reward(
+        &self,
+        col: &CollectionDef,
+        balance: &BalanceConfig,
+    ) -> (ResourceBundle, ToolInventory, u32) {
+        if self.collection_charge_count(&col.id) == 0 {
+            return (
+                col.reward_resources,
+                col.reward_tools,
+                balance.collection_glory,
+            );
+        }
+        let scale_res = |v: u32| -> u32 {
+            if v == 0 {
+                0
+            } else {
+                v.saturating_mul(COLLECTION_RECHARGE_REWARD_PCT)
+                    .div_ceil(100)
+            }
+        };
+        let res = ResourceBundle {
+            wood: scale_res(col.reward_resources.wood),
+            stone: scale_res(col.reward_resources.stone),
+            gold: scale_res(col.reward_resources.gold),
+            mead: scale_res(col.reward_resources.mead),
+        };
+        let mut tools = ToolInventory::default();
+        let first_tool = [
+            (col.reward_tools.mjolnir, ActiveTool::Mjolnir),
+            (col.reward_tools.surtr_ember, ActiveTool::SurtrEmber),
+            (col.reward_tools.loki_shuffle, ActiveTool::LokiShuffle),
+            (col.reward_tools.thor_bolt, ActiveTool::ThorBolt),
+            (col.reward_tools.bifrost_prism, ActiveTool::BifrostPrism),
+            (col.reward_tools.drakkar_charge, ActiveTool::DrakkarCharge),
+        ]
+        .into_iter()
+        .find(|(qty, _)| *qty > 0)
+        .map(|(_, t)| t);
+        if let Some(t) = first_tool {
+            tools.grant_one(t);
+        }
+        let glory = balance
+            .collection_glory
+            .saturating_mul(COLLECTION_RECHARGE_REWARD_PCT)
+            .div_ceil(100);
+        (res, tools, glory)
+    }
+
+    /// Returns true if every relic in a collection is currently discovered and ready to claim.
     pub fn is_collection_ready(&self, col: &CollectionDef) -> bool {
-        !self.claimed_collections.contains(&col.id)
-            && self.collection_found_count(col) == col.relic_ids.len()
+        !col.relic_ids.is_empty() && self.collection_found_count(col) == col.relic_ids.len()
     }
 
     /// Returns the number of collection chests ready to claim.
@@ -1682,16 +1784,66 @@ impl CityState {
             .count()
     }
 
-    /// Claims a completed Nine Realms collection chest (resources + active tools + glory).
+    /// Claims a completed Nine Realms collection chest and resets its relics for repeat charging.
     pub fn try_claim_collection(&mut self, col: &CollectionDef, balance: &BalanceConfig) -> bool {
         if !self.is_collection_ready(col) {
             return false;
         }
+        let (res, tools, glory) = self.collection_claim_reward(col, balance);
         self.claimed_collections.insert(col.id.clone());
-        self.resources.add(&col.reward_resources);
-        self.tools.add(&col.reward_tools);
-        self.glory = self.glory.saturating_add(balance.collection_glory);
+        let charges = self.collection_charges.entry(col.id.clone()).or_insert(0);
+        *charges = charges.saturating_add(1);
+        for rid in &col.relic_ids {
+            self.found_relics.remove(rid);
+        }
+        self.resources.add(&res);
+        self.tools.add(&tools);
+        self.glory = self.glory.saturating_add(glory);
         true
+    }
+
+    /// Migrates legacy v5 saves where claimed collections lacked `collection_charges` entries.
+    pub fn sanitize_collections(&mut self, collections: &[CollectionDef]) {
+        for col in collections {
+            if self.claimed_collections.contains(&col.id)
+                && self.collection_charge_count(&col.id) == 0
+            {
+                self.collection_charges.insert(col.id.clone(), 1);
+                for rid in &col.relic_ids {
+                    self.found_relics.remove(rid);
+                }
+            }
+        }
+    }
+
+    /// Returns lifetime relics collected across active charges and completed collection chests.
+    pub fn total_relics_collected(&self, collections: &[CollectionDef]) -> usize {
+        let charged: usize = collections
+            .iter()
+            .map(|c| self.collection_charge_count(&c.id) as usize * c.relic_ids.len())
+            .sum();
+        self.found_relics.len().saturating_add(charged)
+    }
+
+    /// Returns the first collection linked to `building_id`, if any.
+    pub fn collection_for_building<'a>(
+        &self,
+        building_id: &str,
+        collections: &'a [CollectionDef],
+    ) -> Option<&'a CollectionDef> {
+        collections
+            .iter()
+            .find(|c| c.source_building_ids.iter().any(|b| b == building_id))
+    }
+
+    /// Returns the collection containing `relic_key`, if any.
+    pub fn collection_for_relic_key<'a>(
+        relic_key: &str,
+        collections: &'a [CollectionDef],
+    ) -> Option<&'a CollectionDef> {
+        collections
+            .iter()
+            .find(|c| c.relic_name_keys.iter().any(|k| k == relic_key))
     }
 
     /// Collects all ready passive building tributes at once.

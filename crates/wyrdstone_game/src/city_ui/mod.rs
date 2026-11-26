@@ -277,6 +277,7 @@ pub enum CityAction {
     FocusActiveQuest,
     FocusFjordMap,
     FocusResourceSource(wyrdstone_core::ResourceKind),
+    HuntCollectionSource(String),
     ClaimOfflineVault,
     ClaimBounty(usize),
     ClaimAllBounties,
@@ -1235,6 +1236,80 @@ fn spawn_city_tree(
                                 });
                         }
                     }
+
+                    // 2b. Compact Left-Aligned Quick-Claim Strip (only when hub is clean)
+                    if ctx.active_modal == ActiveModal::None
+                        && !right_panel_open
+                        && ctx.celebration_message.is_none()
+                        && !(ctx.tutorial_step < 3 && !q1_active)
+                    {
+                        let mut quick_items: Vec<(String, Color, Color, CityAction)> = Vec::new();
+                        if tribute_ready && ctx.city.stats.total_victories >= 1 {
+                            quick_items.push((
+                                i18n.t("city.quick.tribute").to_string(),
+                                COLOR_ACCENT_GOLD,
+                                COLOR_TEXT_DARK,
+                                CityAction::ToggleModal(ActiveModal::LoginCalendar),
+                            ));
+                        }
+                        if claimable_cols > 0 {
+                            quick_items.push((
+                                i18n.t_fmt(
+                                    "city.quick.collections",
+                                    &[("count", claimable_cols.to_string())],
+                                ),
+                                COLOR_ACCENT_GREEN,
+                                COLOR_TEXT_ON_ACCENT,
+                                CityAction::ToggleModal(ActiveModal::Collections),
+                            ));
+                        }
+                        if claimable_bounties > 0 {
+                            quick_items.push((
+                                i18n.t_fmt(
+                                    "city.quick.bounties",
+                                    &[("count", claimable_bounties.to_string())],
+                                ),
+                                COLOR_ACCENT_GOLD,
+                                COLOR_TEXT_DARK,
+                                CityAction::ToggleModal(ActiveModal::Bounties),
+                            ));
+                        }
+                        if claimable_feats > 0 {
+                            quick_items.push((
+                                i18n.t_fmt(
+                                    "city.quick.feats",
+                                    &[("count", claimable_feats.to_string())],
+                                ),
+                                COLOR_ACCENT_TEAL,
+                                COLOR_TEXT_ON_ACCENT,
+                                CityAction::ToggleModal(ActiveModal::Achievements),
+                            ));
+                        }
+                        if !quick_items.is_empty() {
+                            top_col
+                                .spawn((
+                                    FocusPolicy::Block,
+                                    Interaction::default(),
+                                    Node {
+                                        align_self: AlignSelf::FlexStart,
+                                        flex_wrap: FlexWrap::Wrap,
+                                        column_gap: Val::Px(6.0),
+                                        row_gap: Val::Px(4.0),
+                                        max_width: if is_portrait {
+                                            Val::Percent(64.0)
+                                        } else {
+                                            Val::Percent(100.0)
+                                        },
+                                        ..default()
+                                    },
+                                ))
+                                .with_children(|qrow| {
+                                    for (lbl, bg, fg, act) in quick_items {
+                                        spawn_small_button_colored(qrow, &lbl, act, bg, fg, true);
+                                    }
+                                });
+                        }
+                    }
                 });
 
             // 3. Compact Floating Bottom-Left Saga Quest Card
@@ -2115,6 +2190,16 @@ fn spawn_map_building_pin(
                             COLOR_TEXT_PRIMARY
                         }),
                     ));
+                    if ctx.city.building_mastery_stars(&b.id) >= wyrdstone_core::MAX_MASTERY_STARS {
+                        title_row.spawn((
+                            Text::new(i18n.t("city.pin.mastered_tag")),
+                            TextFont {
+                                font_size: FONT_SMALL - 2.0,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                    }
                 });
             if tier > 0 {
                 plate
@@ -3554,6 +3639,40 @@ pub fn handle_city_buttons(
                 }
                 rebuild = true;
             }
+            CityAction::HuntCollectionSource(source_id) => {
+                ctx.active_modal = ActiveModal::None;
+                ctx.confirm_import_backup = false;
+                ctx.confirm_end_expedition = false;
+                ctx.status_notice_key = None;
+                ctx.shortage_guidance = None;
+                layout_mode.active_drawer = CityDrawer::None;
+                scroll_mem.modal_offset_y = 0.0;
+                scroll_mem.inspector_offset_y = 0.0;
+                if source_id == wyrdstone_core::DAILY_TRIAL_BUILDING_ID {
+                    layout_mode.inspector_open = false;
+                    if !ctx.city.is_mode_unlocked(PlayMode::DailyTrial) {
+                        ctx.status_notice_key =
+                            Some(PlayMode::DailyTrial.unlock_hint_key().to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                    } else if ctx.city.is_daily_available(today_day_index())
+                        && ctx.start_daily_trial().is_ok()
+                    {
+                        next_state.set(AppState::Match3);
+                        return;
+                    } else {
+                        layout_mode.active_drawer = CityDrawer::Modes;
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    }
+                    rebuild = true;
+                } else if let Some(b) = ctx.data.building_by_id(source_id).cloned() {
+                    ctx.selected_building_id = b.id;
+                    ctx.selected_difficulty = 0;
+                    layout_mode.inspector_open = true;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    haptics.send(HapticEvent(HapticKind::LightTap));
+                    rebuild = true;
+                }
+            }
             CityAction::ToggleDrawer(drawer) => {
                 if *drawer == CityDrawer::Modes && ctx.city.unlocked_mode_count() == 0 {
                     ctx.status_notice_key =
@@ -3645,13 +3764,15 @@ pub fn handle_city_buttons(
                     .find(|c| c.id == *col_id)
                     .cloned()
                 {
+                    let (reward_res, _, reward_glory) =
+                        ctx.city.collection_claim_reward(&col, &ctx.data.balance);
                     let claimed = {
                         let s = &mut *ctx;
                         s.city.try_claim_collection(&col, &s.data.balance)
                     };
                     if claimed {
                         let summary =
-                            modals::format_reward_summary(&ctx.data.i18n, col.reward_resources, 0);
+                            modals::format_reward_summary(&ctx.data.i18n, reward_res, reward_glory);
                         ctx.celebration_message = Some(celebration_claim_line(
                             &ctx.data.i18n,
                             ctx.data.i18n.t(&col.name_key).to_string(),
@@ -3666,21 +3787,27 @@ pub fn handle_city_buttons(
                 }
             }
             CityAction::ClaimAllCollections => {
-                let (claimed_any, total_res) = {
+                let (claimed_any, total_res, total_glory) = {
                     let s = &mut *ctx;
                     let mut claimed_any = false;
                     let mut total_res = wyrdstone_core::ResourceBundle::default();
+                    let mut total_glory = 0u32;
                     for col in &s.data.collections {
+                        let (res, _, glory) = s.city.collection_claim_reward(col, &s.data.balance);
                         if s.city.try_claim_collection(col, &s.data.balance) {
                             claimed_any = true;
-                            total_res.add(&col.reward_resources);
+                            total_res.add(&res);
+                            total_glory = total_glory.saturating_add(glory);
                         }
                     }
-                    (claimed_any, total_res)
+                    (claimed_any, total_res, total_glory)
                 };
                 if claimed_any {
-                    ctx.celebration_message =
-                        Some(modals::format_reward_summary(&ctx.data.i18n, total_res, 0));
+                    ctx.celebration_message = Some(modals::format_reward_summary(
+                        &ctx.data.i18n,
+                        total_res,
+                        total_glory,
+                    ));
                     ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                     ctx.status_notice_key = None;
                     ctx.persist();

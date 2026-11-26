@@ -2190,6 +2190,7 @@ fn finalize_level_transition(
         ctx.last_defeat_out_of_time = outcome == LevelOutcome::Defeat && timed_out;
         ctx.city.stats.best_score = ctx.city.stats.best_score.max(score);
         ctx.last_unlocked_modes.clear();
+        ctx.last_mastery_rank_up = None;
         if outcome == LevelOutcome::Victory {
             let before_modes_mask = ctx.city.unlocked_modes_mask();
             if ctx.tutorial_step == 1 {
@@ -2319,6 +2320,7 @@ fn finalize_level_transition(
                 );
                 ctx.last_daily_streak = Some(streak);
             } else {
+                let prev_stars = ctx.city.building_mastery_stars(&building_id);
                 ctx.city.record_level_victory(
                     &building_id,
                     &level_id,
@@ -2326,6 +2328,13 @@ fn finalize_level_transition(
                     &rewards,
                     &ctx.data.balance,
                 );
+                let new_stars = ctx.city.building_mastery_stars(&building_id);
+                if new_stars > prev_stars {
+                    let ladder = &ctx.data.balance.mastery_star_tools;
+                    let rung = usize::from(new_stars).saturating_sub(1);
+                    let tool = ladder.get(rung).or_else(|| ladder.last()).copied();
+                    ctx.last_mastery_rank_up = Some((building_id.clone(), new_stars, tool));
+                }
             }
             ctx.last_discovered_relic_key = ctx
                 .city

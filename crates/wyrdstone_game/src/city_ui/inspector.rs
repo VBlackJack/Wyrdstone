@@ -280,6 +280,137 @@ pub(super) fn spawn_building_inspector(
                         }
                     });
 
+                    // 5-Star Building Mastery Progress Card
+                    if unlocked {
+                        let spoils_pct = ctx.city.building_mastery_spoils_pct(&b.id);
+                        let harvest_pct = ctx.city.building_mastery_harvest_pct(&b.id);
+                        let rank_name = i18n
+                            .t(wyrdstone_core::CityState::mastery_rank_name_key(stars))
+                            .to_string();
+                        top.spawn((
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                padding: UiRect::all(Val::Px(8.0)),
+                                row_gap: Val::Px(4.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(COLOR_PANEL_CARD),
+                            BorderColor(if stars >= 5 {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_BORDER
+                            }),
+                            BorderRadius::all(Val::Px(8.0)),
+                        ))
+                        .with_children(|mbox| {
+                            mbox.spawn((
+                                Text::new(i18n.t_fmt(
+                                    "city.inspector.mastery_title",
+                                    &[("rank", rank_name), ("stars", stars.to_string())],
+                                )),
+                                TextFont {
+                                    font_size: FONT_SMALL,
+                                    ..default()
+                                },
+                                TextColor(COLOR_ACCENT_GOLD),
+                            ));
+                            // 5-pip mastery bar (NO BoxShadow inside ScrollablePanel)
+                            mbox.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                column_gap: Val::Px(4.0),
+                                ..default()
+                            })
+                            .with_children(|pips| {
+                                for idx in 1u8..=wyrdstone_core::MAX_MASTERY_STARS {
+                                    let lit = idx <= stars;
+                                    pips.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            height: Val::Px(6.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(if lit {
+                                            COLOR_ACCENT_GOLD
+                                        } else {
+                                            COLOR_PANEL_DARK
+                                        }),
+                                        BorderRadius::all(Val::Px(3.0)),
+                                    ));
+                                }
+                            });
+                            if stars > 0 {
+                                let active_line = if harvest_pct > 0 {
+                                    i18n.t_fmt(
+                                        "city.inspector.mastery_bonus_harvest",
+                                        &[
+                                            ("spoils", spoils_pct.to_string()),
+                                            ("harvest", harvest_pct.to_string()),
+                                        ],
+                                    )
+                                } else {
+                                    i18n.t_fmt(
+                                        "city.inspector.mastery_bonus",
+                                        &[("spoils", spoils_pct.to_string())],
+                                    )
+                                };
+                                mbox.spawn((
+                                    Text::new(active_line),
+                                    TextFont {
+                                        font_size: FONT_SMALL - 1.0,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                ));
+                            }
+                            let next_line = match stars {
+                                0 => i18n.t("city.inspector.mastery_next_mastery").to_string(),
+                                1 => i18n.t_fmt(
+                                    "city.inspector.mastery_next_spoils",
+                                    &[("stars", "2".to_string()), ("spoils", "10".to_string())],
+                                ),
+                                2 => i18n.t("city.inspector.mastery_next_legendary").to_string(),
+                                3 => i18n.t_fmt(
+                                    "city.inspector.mastery_next_harvest",
+                                    &[
+                                        ("stars", "4".to_string()),
+                                        ("spoils", "20".to_string()),
+                                        (
+                                            "harvest",
+                                            wyrdstone_core::MASTERY_HARVEST_PCT_AT_4_STARS
+                                                .to_string(),
+                                        ),
+                                    ],
+                                ),
+                                4 => i18n.t_fmt(
+                                    "city.inspector.mastery_next_harvest",
+                                    &[
+                                        ("stars", "5".to_string()),
+                                        ("spoils", "25".to_string()),
+                                        (
+                                            "harvest",
+                                            wyrdstone_core::MASTERY_HARVEST_PCT_AT_5_STARS
+                                                .to_string(),
+                                        ),
+                                    ],
+                                ),
+                                _ => i18n.t("city.inspector.mastery_maxed").to_string(),
+                            };
+                            mbox.spawn((
+                                Text::new(next_line),
+                                TextFont {
+                                    font_size: FONT_SMALL - 1.0,
+                                    ..default()
+                                },
+                                TextColor(if stars >= 5 {
+                                    COLOR_ACCENT_GOLD
+                                } else {
+                                    COLOR_TEXT_MUTED
+                                }),
+                            ));
+                        });
+                    }
+
                     // Shortage Guidance callout when jumped from a missing resource pill
                     if let Some((kind, g_bldg_id, g_diff, g_amt)) = &ctx.shortage_guidance {
                         if g_bldg_id == &b.id && *g_diff == active_diff {
@@ -589,6 +720,48 @@ pub(super) fn spawn_building_inspector(
                                 TextColor(COLOR_ACCENT_GREEN_TEXT),
                             ));
                         });
+                    }
+
+                    // Linked Relic Drop progress pill for this building (when a collection drops here)
+                    if unlocked {
+                        if let Some(col) = ctx
+                            .city
+                            .collection_for_building(&b.id, &ctx.data.collections)
+                        {
+                            let found = ctx.city.collection_found_count(col);
+                            let total = col.relic_ids.len();
+                            let ready = ctx.city.is_collection_ready(col);
+                            let col_name = i18n.t(&col.name_key).to_string();
+                            if ready {
+                                super::spawn_small_button_colored(
+                                    top,
+                                    &i18n.t_fmt(
+                                        "city.inspector.relic_drop_ready",
+                                        &[("collection", col_name)],
+                                    ),
+                                    CityAction::ToggleModal(crate::state::ActiveModal::Collections),
+                                    COLOR_ACCENT_GOLD,
+                                    COLOR_TEXT_DARK,
+                                    true,
+                                );
+                            } else {
+                                top.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.inspector.relic_drop",
+                                        &[
+                                            ("collection", col_name),
+                                            ("found", found.to_string()),
+                                            ("total", total.to_string()),
+                                        ],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                ));
+                            }
+                        }
                     }
 
                     // Valhalla Flame 4-pip staging + Full Combat Loadout breakdown (scrollable on portrait)
