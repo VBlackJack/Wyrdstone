@@ -891,7 +891,8 @@ fn spawn_city_tree(
                             // Left: Clan Identity & Rank
                             bar.spawn(Node {
                                 flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(1.0),
+                                align_items: AlignItems::FlexStart,
+                                row_gap: Val::Px(2.0),
                                 ..default()
                             })
                             .with_children(|col| {
