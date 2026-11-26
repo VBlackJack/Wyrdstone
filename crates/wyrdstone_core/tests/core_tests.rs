@@ -3718,3 +3718,67 @@ fn endless_decree_activates_after_saga_scales_and_persists_compatibly() {
     assert_eq!(loaded.city.endless_decree.index, 0);
     assert_eq!(loaded.city.skald_pass.cycle, 0);
 }
+
+#[test]
+fn yggdrasil_wonder_unlocks_scales_bonuses_and_persists_compatibly() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    assert!(!city.is_wonder_unlocked(&data.buildings));
+    assert_eq!(
+        city.try_upgrade_wonder(&data.buildings),
+        Err("city.wonder.locked")
+    );
+
+    for b in &data.buildings {
+        city.building_tiers.insert(b.id.clone(), 1);
+    }
+    assert!(city.is_wonder_unlocked(&data.buildings));
+    city.resources = ResourceBundle {
+        wood: 50_000,
+        stone: 50_000,
+        gold: 50_000,
+        mead: 50_000,
+    };
+
+    let base_harvest = city.harvest_reward(&data.buildings[0]);
+    let base_max_energy = city.max_energy(&data.balance);
+
+    let (stage1, glory1, tool1) = city
+        .try_upgrade_wonder(&data.buildings)
+        .expect("stage 1 succeeds");
+    assert_eq!(stage1, 1);
+    assert!(glory1 > 0 && tool1.is_none());
+
+    let (stage2, _, tool2) = city
+        .try_upgrade_wonder(&data.buildings)
+        .expect("stage 2 succeeds");
+    assert_eq!(stage2, 2);
+    assert_eq!(tool2, Some(wyrdstone_core::ActiveTool::Mjolnir));
+    assert_eq!(city.max_energy(&data.balance), base_max_energy + 5);
+
+    let bonuses = city.compute_bonuses(&data.balance);
+    assert_eq!(bonuses.boss_damage_bonus_pct, 10);
+    assert_eq!(bonuses.harvest_bonus_pct, 10);
+    assert!(city.harvest_reward(&data.buildings[0]).gold > base_harvest.gold);
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+    let session = LevelSession::start_full(
+        data.levels[0].clone(),
+        None,
+        bonuses,
+        city.selected_patron,
+        None,
+        &mut rng,
+    );
+    assert_eq!(session.boss_damage_bonus_pct, 10);
+
+    let save = SaveData::new_game(&data.balance, Language::En);
+    let mut val = serde_json::to_value(&save).expect("serialize");
+    val["city"]
+        .as_object_mut()
+        .expect("city obj")
+        .remove("wonder_stage");
+    let loaded: SaveData =
+        serde_json::from_str(&serde_json::to_string(&val).expect("str")).expect("compat load");
+    assert_eq!(loaded.city.wonder_stage, 0);
+}

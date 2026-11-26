@@ -69,6 +69,17 @@ pub const ENDLESS_DECREE_BASE_REWARD: ResourceBundle = ResourceBundle {
     mead: 28,
 };
 
+/// Maximum upgrade stage of the Yggdrasil World-Tree Wonder on the Fjord map.
+pub const WONDER_MAX_STAGE: u8 = 10;
+/// Boss and Expedition damage bonus percentage granted per Wonder stage (`+5%` per stage).
+pub const WONDER_BOSS_DMG_PCT_PER_STAGE: u32 = 5;
+/// Raid spoils bonus percentage granted per Wonder stage (`+5%` per stage).
+pub const WONDER_SPOILS_PCT_PER_STAGE: u32 = 5;
+/// Passive building harvest bonus percentage granted per Wonder stage (`+5%` per stage).
+pub const WONDER_HARVEST_PCT_PER_STAGE: u32 = 5;
+/// Bonus max Endurance granted every 2 Wonder stages (`+5` at 2, 4, 6, 8, 10).
+pub const WONDER_ENERGY_PER_TWO_STAGES: u32 = 5;
+
 /// Maximum Devotion upgrade tier per Norse Patron deity.
 pub const MAX_PATRON_DEVOTION_TIER: u8 = 5;
 /// Fury charge speed bonus per Patron Devotion tier (+6% per tier, +30% at Tier 5).
@@ -781,6 +792,147 @@ impl EndlessDecreeState {
     pub fn sanitize(&mut self) {
         let target = self.target();
         self.progress = self.progress.min(target);
+    }
+}
+
+/// Returns the upgrade cost required to advance Yggdrasil Wonder to `next_stage` (`1..=10`).
+pub const fn wonder_upgrade_cost(next_stage: u8) -> ResourceBundle {
+    match next_stage {
+        1 => ResourceBundle {
+            wood: 180,
+            stone: 180,
+            gold: 240,
+            mead: 45,
+        },
+        2 => ResourceBundle {
+            wood: 230,
+            stone: 230,
+            gold: 300,
+            mead: 58,
+        },
+        3 => ResourceBundle {
+            wood: 290,
+            stone: 290,
+            gold: 380,
+            mead: 74,
+        },
+        4 => ResourceBundle {
+            wood: 360,
+            stone: 360,
+            gold: 470,
+            mead: 92,
+        },
+        5 => ResourceBundle {
+            wood: 440,
+            stone: 440,
+            gold: 575,
+            mead: 112,
+        },
+        6 => ResourceBundle {
+            wood: 530,
+            stone: 530,
+            gold: 690,
+            mead: 135,
+        },
+        7 => ResourceBundle {
+            wood: 625,
+            stone: 625,
+            gold: 815,
+            mead: 160,
+        },
+        8 => ResourceBundle {
+            wood: 730,
+            stone: 730,
+            gold: 950,
+            mead: 185,
+        },
+        9 => ResourceBundle {
+            wood: 840,
+            stone: 840,
+            gold: 1100,
+            mead: 210,
+        },
+        _ => ResourceBundle {
+            wood: 950,
+            stone: 950,
+            gold: 1250,
+            mead: 240,
+        },
+    }
+}
+
+/// Optional milestone Runic Tool granted when infusing Yggdrasil Wonder to `stage`.
+pub const fn wonder_milestone_tool(stage: u8) -> Option<ActiveTool> {
+    match stage {
+        2 => Some(ActiveTool::Mjolnir),
+        4 => Some(ActiveTool::ThorBolt),
+        6 => Some(ActiveTool::DrakkarCharge),
+        8 => Some(ActiveTool::SurtrEmber),
+        10 => Some(ActiveTool::BifrostPrism),
+        _ => None,
+    }
+}
+
+/// Clan Glory granted upon infusing Yggdrasil Wonder to `stage` (`1..=10`).
+pub const fn wonder_glory_reward(stage: u8) -> u32 {
+    if stage == 0 || stage > WONDER_MAX_STAGE {
+        0
+    } else {
+        40 + (stage as u32) * 15
+    }
+}
+
+/// Cumulative Boss/Expedition damage bonus percentage from `wonder_stage`.
+pub const fn wonder_boss_damage_bonus_pct(stage: u8) -> u32 {
+    let clamped = if stage > WONDER_MAX_STAGE {
+        WONDER_MAX_STAGE
+    } else {
+        stage
+    };
+    (clamped as u32) * WONDER_BOSS_DMG_PCT_PER_STAGE
+}
+
+/// Cumulative Raid spoils bonus percentage from `wonder_stage`.
+pub const fn wonder_spoils_bonus_pct(stage: u8) -> u32 {
+    let clamped = if stage > WONDER_MAX_STAGE {
+        WONDER_MAX_STAGE
+    } else {
+        stage
+    };
+    (clamped as u32) * WONDER_SPOILS_PCT_PER_STAGE
+}
+
+/// Cumulative passive harvest bonus percentage from `wonder_stage`.
+pub const fn wonder_harvest_bonus_pct(stage: u8) -> u32 {
+    let clamped = if stage > WONDER_MAX_STAGE {
+        WONDER_MAX_STAGE
+    } else {
+        stage
+    };
+    (clamped as u32) * WONDER_HARVEST_PCT_PER_STAGE
+}
+
+/// Cumulative bonus max Endurance granted by `wonder_stage`.
+pub const fn wonder_extra_max_energy(stage: u8) -> u32 {
+    let clamped = if stage > WONDER_MAX_STAGE {
+        WONDER_MAX_STAGE
+    } else {
+        stage
+    };
+    ((clamped / 2) as u32) * WONDER_ENERGY_PER_TWO_STAGES
+}
+
+/// Cumulative starting Divine Fury granted by `wonder_stage` (stages 3, 6, 9, 10).
+pub const fn wonder_starting_fury(stage: u8) -> u32 {
+    let clamped = if stage > WONDER_MAX_STAGE {
+        WONDER_MAX_STAGE
+    } else {
+        stage
+    };
+    if clamped >= 10 {
+        20
+    } else {
+        ((clamped / 3) as u32) * 5
     }
 }
 

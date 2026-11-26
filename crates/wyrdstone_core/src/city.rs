@@ -26,12 +26,14 @@ use crate::boss::{BossDef, GAUNTLET_CLEAR_GLORY, GAUNTLET_STAGE_PARTIAL_GLORY};
 use crate::level::LevelDef;
 use crate::patron::PatronGod;
 use crate::retention::{
-    patron_devotion_upgrade_cost, DailyBountyBoard, EndlessDecreeKind, EndlessDecreeState,
-    OfflineVaultSummary, PlayMode, SkaldPassState, ValhallaFlameTier, ValkyrieAidTier,
-    WeeklyChallengeState, LEGEND_RANK_GLORY_STEP, LEGEND_SPOILS_MAX_BONUS_PCT,
+    patron_devotion_upgrade_cost, wonder_boss_damage_bonus_pct, wonder_extra_max_energy,
+    wonder_glory_reward, wonder_harvest_bonus_pct, wonder_milestone_tool, wonder_spoils_bonus_pct,
+    wonder_starting_fury, wonder_upgrade_cost, DailyBountyBoard, EndlessDecreeKind,
+    EndlessDecreeState, OfflineVaultSummary, PlayMode, SkaldPassState, ValhallaFlameTier,
+    ValkyrieAidTier, WeeklyChallengeState, LEGEND_RANK_GLORY_STEP, LEGEND_SPOILS_MAX_BONUS_PCT,
     LEGEND_SPOILS_PCT_PER_LEVEL, MAX_PATRON_DEVOTION_TIER, MAX_VALKYRIE_FAIL_STREAK,
     OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
-    OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS,
+    OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS, WONDER_MAX_STAGE,
 };
 use crate::trials::{TrialDef, TRIAL_PAR_BONUS_GLORY};
 use crate::turn::ClearStatsDelta;
@@ -158,7 +160,7 @@ pub struct AmuletDef {
     pub tier_step: Option<u32>,
 }
 
-/// Aggregate passive bonuses granted by all rebuilt village buildings and Clan Rank.
+/// Aggregate passive bonuses granted by all rebuilt village buildings, Clan Rank, and Yggdrasil Wonder.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CityBonuses {
     pub extra_max_energy: u32,
@@ -169,6 +171,8 @@ pub struct CityBonuses {
     pub fury_charge_bonus_pct: u32,
     pub starting_fury: u32,
     pub starting_boosters: u32,
+    pub boss_damage_bonus_pct: u32,
+    pub harvest_bonus_pct: u32,
 }
 
 /// Patron + Amulet or Dual-Amulet resonance bonus unlocked by equipping matching gear.
@@ -516,6 +520,8 @@ pub struct CityState {
     pub level_fail_streaks: HashMap<String, u8>,
     #[serde(default)]
     pub endless_decree: EndlessDecreeState,
+    #[serde(default)]
+    pub wonder_stage: u8,
 }
 
 impl CityState {
@@ -567,6 +573,7 @@ impl CityState {
             weekly_challenge: WeeklyChallengeState::default(),
             level_fail_streaks: HashMap::new(),
             endless_decree: EndlessDecreeState::default(),
+            wonder_stage: 0,
         }
     }
 
@@ -617,6 +624,7 @@ impl CityState {
         }
         self.weekly_challenge.sanitize();
         self.endless_decree.sanitize();
+        self.wonder_stage = self.wonder_stage.min(WONDER_MAX_STAGE);
         for fails in self.level_fail_streaks.values_mut() {
             *fails = (*fails).min(MAX_VALKYRIE_FAIL_STREAK);
         }
@@ -815,6 +823,23 @@ impl CityState {
         bonuses.resource_bonus_pct = bonuses
             .resource_bonus_pct
             .saturating_add(rank.resource_bonus_pct_with(balance));
+        if self.wonder_stage > 0 {
+            bonuses.extra_max_energy = bonuses
+                .extra_max_energy
+                .saturating_add(wonder_extra_max_energy(self.wonder_stage));
+            bonuses.resource_bonus_pct = bonuses
+                .resource_bonus_pct
+                .saturating_add(wonder_spoils_bonus_pct(self.wonder_stage));
+            bonuses.boss_damage_bonus_pct = bonuses
+                .boss_damage_bonus_pct
+                .saturating_add(wonder_boss_damage_bonus_pct(self.wonder_stage));
+            bonuses.harvest_bonus_pct = bonuses
+                .harvest_bonus_pct
+                .saturating_add(wonder_harvest_bonus_pct(self.wonder_stage));
+            bonuses.starting_fury = bonuses
+                .starting_fury
+                .saturating_add(wonder_starting_fury(self.wonder_stage));
+        }
         bonuses
     }
 
@@ -1226,13 +1251,15 @@ impl CityState {
     }
 
     /// Returns passive harvest output for a rebuilt building based on its RON `harvest_per_tier`,
-    /// building tier, and 4/5-star Building Mastery harvest perks.
+    /// building tier, 4/5-star Building Mastery harvest perks, and Yggdrasil Wonder bonus.
     pub fn harvest_reward(&self, def: &BuildingDef) -> ResourceBundle {
         let tier = self.building_tier(&def.id);
         if tier == 0 {
             return ResourceBundle::default();
         }
-        let bonus_pct = self.building_mastery_harvest_pct(&def.id);
+        let bonus_pct = self
+            .building_mastery_harvest_pct(&def.id)
+            .saturating_add(wonder_harvest_bonus_pct(self.wonder_stage));
         let scale = |base: u32| -> u32 {
             let v = base.saturating_mul(tier);
             if v == 0 || bonus_pct == 0 {
@@ -1331,6 +1358,50 @@ impl CityState {
             }
         }
         Ok(new_tier)
+    }
+
+    /// True once every Fjord building has been restored to at least Tier 1 (or Wonder progress exists).
+    pub fn is_wonder_unlocked(&self, buildings: &[BuildingDef]) -> bool {
+        self.wonder_stage > 0
+            || (!buildings.is_empty() && buildings.iter().all(|b| self.building_tier(&b.id) >= 1))
+    }
+
+    /// Returns the resource cost to infuse Yggdrasil Wonder to its next stage, or `None` when maxed.
+    pub fn next_wonder_cost(&self) -> Option<ResourceBundle> {
+        if self.wonder_stage >= WONDER_MAX_STAGE {
+            None
+        } else {
+            Some(wonder_upgrade_cost(self.wonder_stage.saturating_add(1)))
+        }
+    }
+
+    /// Infuses the Yggdrasil World-Tree Wonder to the next stage, returning `(new_stage, glory, tool)`.
+    pub fn try_upgrade_wonder(
+        &mut self,
+        buildings: &[BuildingDef],
+    ) -> Result<(u8, u32, Option<ActiveTool>), &'static str> {
+        if !self.is_wonder_unlocked(buildings) {
+            return Err("city.wonder.locked");
+        }
+        let Some(cost) = self.next_wonder_cost() else {
+            return Err("city.button.max_level");
+        };
+        if !self.resources.can_afford(&cost) {
+            return Err("city.error.not_enough_resources");
+        }
+        self.resources.subtract(&cost);
+        let prev_energy_bonus = wonder_extra_max_energy(self.wonder_stage);
+        let new_stage = self.wonder_stage.saturating_add(1);
+        self.wonder_stage = new_stage;
+        let energy_gain = wonder_extra_max_energy(new_stage).saturating_sub(prev_energy_bonus);
+        self.energy = self.energy.saturating_add(energy_gain);
+        let glory = wonder_glory_reward(new_stage);
+        self.glory = self.glory.saturating_add(glory);
+        let tool = wonder_milestone_tool(new_stage);
+        if let Some(t) = tool {
+            self.tools.grant_one(t);
+        }
+        Ok((new_stage, glory, tool))
     }
 
     /// Crafts one charge of an active tool using village resources.

@@ -782,5 +782,21 @@
   "decree.kind.boosters_fury": "Activez {target} Bonus ou Fureurs Divines",
   "decree.kind.defeat_bosses": "Vainquez {target} Boss Mythiques",
   "decree.kind.expedition_waves": "Passez {target} vagues d'Expédition",
-  "decree.kind.earn_score": "Marquez {target} points en Match-3"
+  "decree.kind.earn_score": "Marquez {target} points en Match-3",
+  "city.wonder.name": "Sanctuaire d'Yggdrasil",
+  "city.wonder.stage_badge": "Stade {stage}/{max}",
+  "city.wonder.maxed_badge": "Stade {max}/{max} MAX",
+  "city.wonder.tooltip": "Sanctuaire d'Yggdrasil (Stade {stage}/{max}) - Merveille permanente du Fjord",
+  "city.wonder.locked": "Reconstruisez les 6 bâtiments du Fjord au Niv. 1 pour éveiller Yggdrasil.",
+  "city.wonder.modal_title": "Arbre-Monde Yggdrasil",
+  "city.wonder.subtitle": "Infusez les racines d'Yggdrasil pour renforcer tous vos raids de façon permanente.",
+  "city.wonder.active_bonuses": "Bénédictions actives (+{dmg}% Dégâts Boss, +{spoils}% Butin, +{harvest}% Récoltes, +{energy} Endurance, +{fury} Fureur)",
+  "city.wonder.next_stage": "Infusion Stade {next}/{max}",
+  "city.wonder.next_rewards": "Gains : +{glory} Gloire, +5% Dégâts Boss, +5% Butin, +5% Récoltes",
+  "city.wonder.milestone_tool": "Outil de palier : +1 {tool}",
+  "city.wonder.infuse_button": "Infuser Yggdrasil",
+  "city.wonder.maxed_banner": "Yggdrasil rayonne à son apogée à travers les Neuf Mondes !",
+  "city.wonder.upgraded_toast": "Yggdrasil infusé au Stade {stage}/{max} ! (+{glory} Gloire)",
+  "city.quick.wonder": "Yggdrasil !",
+  "result.ready.wonder": "Yggdrasil prêt !"
 }

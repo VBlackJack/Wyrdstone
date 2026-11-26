@@ -33,10 +33,12 @@ use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use wyrdstone_core::{
     achievement_progress, format_achievement_desc, format_boon_desc, format_boss_desc,
     format_patron_desc, patron_devotion_upgrade_cost, skald_pass_tier_reward_for_cycle,
+    wonder_boss_damage_bonus_pct, wonder_extra_max_energy, wonder_glory_reward,
+    wonder_harvest_bonus_pct, wonder_milestone_tool, wonder_spoils_bonus_pct, wonder_starting_fury,
     AmuletEffect, CityState, ClanRank, I18nCatalog, PatronGod, ResourceBundle,
     MAX_DAILY_STREAK_CYCLE, MAX_PATRON_DEVOTION_TIER, PATRON_DEVOTION_FURY_PCT_PER_TIER,
     PATRON_DEVOTION_SCORE_PCT_PER_TIER, SKALD_PASS_CYCLE_BONUS_PCT, SKALD_PASS_CYCLE_MAX_BONUS_PCT,
-    SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
+    SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER, WONDER_MAX_STAGE,
 };
 
 pub(super) fn format_reward_summary(i18n: &I18nCatalog, res: ResourceBundle, glory: u32) -> String {
@@ -3604,6 +3606,250 @@ pub(super) fn spawn_bounties_modal(
                             fg,
                             enabled,
                         );
+                    });
+            }
+        },
+    );
+}
+
+pub(super) fn spawn_wonder_modal(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    safe: SafeAreaInsets,
+    scroll_offset_y: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    let stage = ctx.city.wonder_stage;
+    let next_cost = ctx.city.next_wonder_cost();
+    spawn_modal_shell(
+        root,
+        ctx,
+        fjord_art,
+        vfx,
+        560.0,
+        i18n.t("city.wonder.modal_title"),
+        i18n.t("city.panel.amulets.close"),
+        CityAction::CloseModal,
+        safe,
+        scroll_offset_y,
+        |modal| {
+            modal
+                .spawn(Node {
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(12.0),
+                    ..default()
+                })
+                .with_children(|hdr| {
+                    hdr.spawn((
+                        ImageNode::new(vfx.yggdrasil_wonder.clone()),
+                        Node {
+                            width: Val::Px(64.0),
+                            height: Val::Px(64.0),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                    ));
+                    hdr.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(4.0),
+                        flex_shrink: 1.0,
+                        ..default()
+                    })
+                    .with_children(|info| {
+                        info.spawn((
+                            Text::new(i18n.t("city.wonder.subtitle")),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_PRIMARY),
+                        ));
+                        info.spawn((
+                            Text::new(i18n.t_fmt(
+                                "city.wonder.stage_badge",
+                                &[
+                                    ("stage", stage.to_string()),
+                                    ("max", WONDER_MAX_STAGE.to_string()),
+                                ],
+                            )),
+                            display_font(fjord_art, FONT_BODY),
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                    });
+                });
+
+            // 10-pip radiant Yggdrasil infusion bar (never attach BoxShadow inside ScrollablePanel).
+            modal
+                .spawn(Node {
+                    width: Val::Percent(100.0),
+                    column_gap: Val::Px(5.0),
+                    ..default()
+                })
+                .with_children(|pips| {
+                    for s in 1..=WONDER_MAX_STAGE {
+                        let filled = stage >= s;
+                        pips.spawn((
+                            Node {
+                                flex_grow: 1.0,
+                                height: Val::Px(10.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(if filled {
+                                COLOR_ACCENT_GREEN
+                            } else {
+                                COLOR_PANEL_DARK
+                            }),
+                            BorderColor(if filled {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_PANEL_BORDER
+                            }),
+                            BorderRadius::all(Val::Px(3.0)),
+                        ));
+                    }
+                });
+
+            // Active blessings summary card.
+            modal
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        padding: UiRect::all(Val::Px(10.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        ..default()
+                    },
+                    BackgroundColor(COLOR_PANEL_CARD),
+                    BorderColor(COLOR_PANEL_BORDER),
+                    BorderRadius::all(Val::Px(RADIUS_SM)),
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Text::new(i18n.t_fmt(
+                            "city.wonder.active_bonuses",
+                            &[
+                                ("dmg", wonder_boss_damage_bonus_pct(stage).to_string()),
+                                ("spoils", wonder_spoils_bonus_pct(stage).to_string()),
+                                ("harvest", wonder_harvest_bonus_pct(stage).to_string()),
+                                ("energy", wonder_extra_max_energy(stage).to_string()),
+                                ("fury", wonder_starting_fury(stage).to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_ACCENT_GREEN_TEXT),
+                    ));
+                });
+
+            if let Some(cost) = next_cost {
+                let next_stage = stage.saturating_add(1);
+                let next_glory = wonder_glory_reward(next_stage);
+                let next_tool = wonder_milestone_tool(next_stage);
+                let affordable = ctx.city.resources.can_afford(&cost);
+
+                modal
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(8.0),
+                            padding: UiRect::all(Val::Px(12.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_CARD),
+                        BorderColor(if affordable {
+                            COLOR_ACCENT_GOLD
+                        } else {
+                            COLOR_PANEL_BORDER
+                        }),
+                        BorderRadius::all(Val::Px(RADIUS_MD)),
+                    ))
+                    .with_children(|card| {
+                        card.spawn((
+                            Text::new(i18n.t_fmt(
+                                "city.wonder.next_stage",
+                                &[
+                                    ("next", next_stage.to_string()),
+                                    ("max", WONDER_MAX_STAGE.to_string()),
+                                ],
+                            )),
+                            display_font(fjord_art, FONT_BODY),
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
+                        card.spawn((
+                            Text::new(i18n.t_fmt(
+                                "city.wonder.next_rewards",
+                                &[("glory", next_glory.to_string())],
+                            )),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_PRIMARY),
+                        ));
+                        if let Some(tool) = next_tool {
+                            if let Some(recipe) = ctx.data.tool_shop.iter().find(|r| r.tool == tool)
+                            {
+                                let tool_lbl =
+                                    i18n.t_fmt(&recipe.name_key, &[("count", "+1".to_string())]);
+                                card.spawn((
+                                    Text::new(i18n.t_fmt(
+                                        "city.wonder.milestone_tool",
+                                        &[("tool", tool_lbl)],
+                                    )),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(COLOR_ACCENT_TEAL_TEXT),
+                                ));
+                            }
+                        }
+                        spawn_cost_pills(card, i18n, ctx.city.resources, cost);
+                        spawn_small_button_colored(
+                            card,
+                            i18n.t("city.wonder.infuse_button"),
+                            CityAction::UpgradeWonder,
+                            if affordable {
+                                COLOR_ACCENT_GOLD
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            },
+                            if affordable {
+                                COLOR_TEXT_DARK
+                            } else {
+                                COLOR_TEXT_MUTED
+                            },
+                            affordable,
+                        );
+                    });
+            } else {
+                modal
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            padding: UiRect::all(Val::Px(12.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_PANEL_CARD),
+                        BorderColor(COLOR_ACCENT_GOLD),
+                        BorderRadius::all(Val::Px(RADIUS_MD)),
+                    ))
+                    .with_children(|card| {
+                        card.spawn((
+                            Text::new(i18n.t("city.wonder.maxed_banner")),
+                            TextFont {
+                                font_size: FONT_BODY,
+                                ..default()
+                            },
+                            TextColor(COLOR_ACCENT_GOLD),
+                        ));
                     });
             }
         },

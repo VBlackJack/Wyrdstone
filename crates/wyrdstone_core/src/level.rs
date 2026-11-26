@@ -910,7 +910,7 @@ impl LevelSession {
             fury_max: FURY_CHARGE_MAX,
             fury_charge_bonus_pct: city_bonuses.fury_charge_bonus_pct,
             fury_resource_bonus_pct: 0,
-            boss_damage_bonus_pct: 0,
+            boss_damage_bonus_pct: city_bonuses.boss_damage_bonus_pct,
             overdrive_charge: 0,
             overdrive_max: SessionTuning::default().overdrive_charge_max.max(1),
             overdrive_turns_left: 0,

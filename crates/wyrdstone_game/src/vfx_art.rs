@@ -48,6 +48,7 @@ pub struct VfxTextures {
     pub icon_energy: Handle<Image>,
     pub icon_star: Handle<Image>,
     pub ruin_cairn: Handle<Image>,
+    pub yggdrasil_wonder: Handle<Image>,
 }
 
 /// PreStartup system generating all smooth SDF VFX, 9-slice UI, and icon textures once at boot.
@@ -71,6 +72,7 @@ pub fn init_vfx_textures(mut commands: Commands, mut images: ResMut<Assets<Image
         icon_energy: images.add(build_energy_icon_image(ICON_TEX_SIZE)),
         icon_star: images.add(build_star_icon_image(ICON_TEX_SIZE)),
         ruin_cairn: images.add(build_ruin_cairn_image(128, 84)),
+        yggdrasil_wonder: images.add(build_yggdrasil_wonder_image(128, 128)),
     };
     commands.insert_resource(textures);
 }
@@ -764,6 +766,115 @@ fn build_ruin_cairn_image(width: usize, height: usize) -> Image {
                             .clamp(0.0, 255.0) as u8;
                         px[idx + 2] = ((b * sa + px[idx + 2] as f32 * da * (1.0 - sa)) / oa)
                             .clamp(0.0, 255.0) as u8;
+                        px[idx + 3] = (oa * 255.0).clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+        }
+    }
+    finish_linear_image(width, height, px)
+}
+
+/// Luminous Yggdrasil World-Tree emblem with runic golden-emerald canopy and gnarled roots.
+fn build_yggdrasil_wonder_image(width: usize, height: usize) -> Image {
+    let mut px = vec![0u8; width * height * 4];
+    let canopies: &[(f32, f32, f32, f32, f32)] = &[
+        (0.50, 0.25, 0.26, 0.16, 1.05),
+        (0.32, 0.34, 0.20, 0.14, 0.94),
+        (0.68, 0.34, 0.20, 0.14, 0.96),
+        (0.42, 0.42, 0.18, 0.12, 0.90),
+        (0.58, 0.42, 0.18, 0.12, 0.92),
+    ];
+
+    for y in 0..height {
+        let ny = y as f32 / height as f32;
+        for x in 0..width {
+            let nx = x as f32 / width as f32;
+            let idx = (y * width + x) * 4;
+
+            // Soft golden-emerald halo behind the tree crown.
+            let hx = (nx - 0.50) / 0.44;
+            let hy = (ny - 0.38) / 0.36;
+            let hd = hx.hypot(hy);
+            if hd < 1.0 {
+                let ha = ((1.0 - hd * hd).powf(2.0) * 110.0).clamp(0.0, 255.0);
+                px[idx..idx + 4].copy_from_slice(&[72, 210, 148, ha as u8]);
+            }
+
+            // Ground altar shadow & roots.
+            let gx = (nx - 0.50) / 0.36;
+            let gy = (ny - 0.84) / 0.12;
+            let gd = gx.hypot(gy);
+            if gd < 1.0 {
+                let ga = (1.0 - gd * gd).powf(1.4) * 165.0;
+                if ga > px[idx + 3] as f32 {
+                    px[idx..idx + 4].copy_from_slice(&[24, 38, 34, ga as u8]);
+                }
+            }
+
+            // Trunk & curving root flare (from ny=0.40 down to ny=0.84).
+            if (0.38..=0.86).contains(&ny) {
+                let t = ((ny - 0.38) / 0.48).clamp(0.0, 1.0);
+                let half_trunk = 0.065 + (t * t) * 0.13;
+                let bark_d = (nx - 0.50).abs() / half_trunk;
+                if bark_d < 1.1 {
+                    let aa = ((1.1 - bark_d) / 0.18).clamp(0.0, 1.0);
+                    let highlight = (1.0 - ((nx - 0.48) / half_trunk).abs()).clamp(0.4, 1.2);
+                    let r = (150.0 * highlight).clamp(0.0, 255.0) as u8;
+                    let g = (110.0 * highlight).clamp(0.0, 255.0) as u8;
+                    let b = (58.0 * highlight).clamp(0.0, 255.0) as u8;
+                    let sa = aa;
+                    let da = px[idx + 3] as f32 / 255.0;
+                    let oa = sa + da * (1.0 - sa);
+                    if oa > 0.001 {
+                        px[idx] = ((r as f32 * sa + px[idx] as f32 * da * (1.0 - sa)) / oa) as u8;
+                        px[idx + 1] =
+                            ((g as f32 * sa + px[idx + 1] as f32 * da * (1.0 - sa)) / oa) as u8;
+                        px[idx + 2] =
+                            ((b as f32 * sa + px[idx + 2] as f32 * da * (1.0 - sa)) / oa) as u8;
+                        px[idx + 3] = (oa * 255.0).clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+
+            // Canopy foliage spheres with sunlit golden highlights.
+            for &(cx, cy, rx, ry, shade) in canopies {
+                let dx = (nx - cx) / rx;
+                let dy = (ny - cy) / ry;
+                let d = dx.hypot(dy);
+                if d < 1.06 {
+                    let aa = ((1.06 - d) / 0.14).clamp(0.0, 1.0);
+                    let lit = (1.0 - dy * 0.45).clamp(0.6, 1.35);
+                    let rim = (1.0 - d).clamp(0.0, 1.0);
+                    let r = (74.0 * shade * lit + rim * 120.0).clamp(0.0, 255.0);
+                    let g = (182.0 * shade * lit + rim * 55.0).clamp(0.0, 255.0);
+                    let b = (118.0 * shade * lit + rim * 20.0).clamp(0.0, 255.0);
+                    let sa = aa;
+                    let da = px[idx + 3] as f32 / 255.0;
+                    let oa = sa + da * (1.0 - sa);
+                    if oa > 0.001 {
+                        px[idx] = ((r * sa + px[idx] as f32 * da * (1.0 - sa)) / oa) as u8;
+                        px[idx + 1] = ((g * sa + px[idx + 1] as f32 * da * (1.0 - sa)) / oa) as u8;
+                        px[idx + 2] = ((b * sa + px[idx + 2] as f32 * da * (1.0 - sa)) / oa) as u8;
+                        px[idx + 3] = (oa * 255.0).clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+
+            // Glowing golden World-Tree fruit / runic blossom nodes.
+            let blossoms = [(0.50, 0.22), (0.35, 0.34), (0.65, 0.34), (0.50, 0.38)];
+            for (bx, by) in blossoms {
+                let bd = (nx - bx).hypot(ny - by) / 0.045;
+                if bd < 1.0 {
+                    let ba = (1.0 - bd * bd).clamp(0.0, 1.0);
+                    let da = px[idx + 3] as f32 / 255.0;
+                    let oa = ba + da * (1.0 - ba);
+                    if oa > 0.001 {
+                        px[idx] = ((255.0 * ba + px[idx] as f32 * da * (1.0 - ba)) / oa) as u8;
+                        px[idx + 1] =
+                            ((226.0 * ba + px[idx + 1] as f32 * da * (1.0 - ba)) / oa) as u8;
+                        px[idx + 2] =
+                            ((96.0 * ba + px[idx + 2] as f32 * da * (1.0 - ba)) / oa) as u8;
                         px[idx + 3] = (oa * 255.0).clamp(0.0, 255.0) as u8;
                     }
                 }

@@ -363,6 +363,19 @@ fn spawn_result_ui(
                                 ResultAction::OpenFjordModal(ActiveModal::Collections),
                             ));
                         }
+                        if ctx.city.is_wonder_unlocked(&ctx.data.buildings)
+                            && ctx
+                                .city
+                                .next_wonder_cost()
+                                .is_some_and(|c| ctx.city.resources.can_afford(&c))
+                        {
+                            ready_badges.push((
+                                i18n.t("result.ready.wonder").to_string(),
+                                COLOR_ACCENT_GREEN,
+                                COLOR_ACCENT_GREEN_TEXT,
+                                ResultAction::OpenFjordModal(ActiveModal::Wonder),
+                            ));
+                        }
                         let split_at = ready_badges.len().min(2);
                         overflow_ready_badges = ready_badges.split_off(split_at);
                         pinned_ready_badges = ready_badges;

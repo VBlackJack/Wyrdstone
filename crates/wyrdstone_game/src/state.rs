@@ -85,6 +85,7 @@ pub enum ActiveModal {
     ChapterDialogue,
     WelcomeBack,
     Bounties,
+    Wonder,
 }
 
 /// Illustrated Saga chapter milestone dialogue shown when rebuilding key Fjord landmarks.
@@ -1216,6 +1217,7 @@ fn has_saved_progress(city: &CityState, tutorial_step: u8) -> bool {
         || city.stats.total_victories > 0
         || !city.building_tiers.is_empty()
         || !city.completed_levels.is_empty()
+        || city.wonder_stage > 0
 }
 
 /// Regeneration speed as a percentage (100 = base rate), raised by the Mead Hall tier.

@@ -58,6 +58,10 @@ const MIN_CITY_TOP_BAR_HEIGHT_PX: f32 = 24.0;
 /// Keeping the interactive Fjord map locked to this exact ratio guarantees identical
 /// normalized building positions across every landscape resolution.
 const FJORD_MAP_ASPECT: f32 = 1280.0 / 720.0;
+const WONDER_MAP_X_PCT: f32 = 35.0;
+const WONDER_MAP_Y_PCT: f32 = 36.0;
+const WONDER_PORTRAIT_LEFT_PCT: f32 = 34.0;
+const WONDER_PORTRAIT_TOP_PCT: f32 = 62.0;
 
 #[derive(Component)]
 pub struct CityRoot;
@@ -283,6 +287,7 @@ pub enum CityAction {
     ClaimAchievement(String),
     ClaimAllAchievements,
     UpgradeBuilding(String),
+    UpgradeWonder,
     DrinkMead,
     ClaimQuest(String),
     ClaimEndlessDecree,
@@ -814,6 +819,16 @@ fn spawn_city_tree(
                                     now,
                                 );
                             }
+                            if ctx.city.is_wonder_unlocked(&ctx.data.buildings) {
+                                spawn_wonder_map_pin(
+                                    map,
+                                    ctx,
+                                    vfx,
+                                    is_portrait,
+                                    canvas_w,
+                                    canvas_h,
+                                );
+                            }
                         });
                 });
 
@@ -1322,6 +1337,19 @@ fn spawn_city_tree(
                                 COLOR_ACCENT_TEAL,
                                 COLOR_TEXT_ON_ACCENT,
                                 CityAction::ToggleModal(ActiveModal::Achievements),
+                            ));
+                        }
+                        if ctx.city.is_wonder_unlocked(&ctx.data.buildings)
+                            && ctx
+                                .city
+                                .next_wonder_cost()
+                                .is_some_and(|c| ctx.city.resources.can_afford(&c))
+                        {
+                            quick_items.push((
+                                i18n.t("city.quick.wonder").to_string(),
+                                COLOR_ACCENT_GREEN,
+                                COLOR_TEXT_ON_ACCENT,
+                                CityAction::ToggleModal(ActiveModal::Wonder),
                             ));
                         }
                         if !quick_items.is_empty() {
@@ -1984,6 +2012,9 @@ fn spawn_city_tree(
                 ActiveModal::Bounties => {
                     modals::spawn_bounties_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
                 }
+                ActiveModal::Wonder => {
+                    modals::spawn_wonder_modal(viewport, ctx, fjord_art, vfx, safe, m_scroll)
+                }
             }
 
             // 5. Hub-level notice toast (modals and the inspector render notices themselves).
@@ -1998,6 +2029,154 @@ fn spawn_city_tree(
                 }
             }
         });
+}
+
+fn spawn_wonder_map_pin(
+    map: &mut ChildBuilder,
+    ctx: &GameContext,
+    vfx: &VfxTextures,
+    is_portrait: bool,
+    canvas_w: f32,
+    canvas_h: f32,
+) {
+    let i18n = &ctx.data.i18n;
+    let stage = ctx.city.wonder_stage;
+    let affordable = ctx
+        .city
+        .next_wonder_cost()
+        .is_some_and(|c| ctx.city.resources.can_afford(&c));
+    let tier_scale = 1.0 + (f32::from(stage) / f32::from(wyrdstone_core::WONDER_MAX_STAGE)) * 0.20;
+    let pin_data = MapBuildingPin {
+        map_x_pct: WONDER_MAP_X_PCT,
+        map_y_pct: WONDER_MAP_Y_PCT,
+        portrait_left_pct: Some(WONDER_PORTRAIT_LEFT_PCT),
+        portrait_top_pct: Some(WONDER_PORTRAIT_TOP_PCT),
+        tier_scale,
+    };
+    let (init_left, init_top, pin_w, sprite_w, sprite_h) =
+        compute_pin_layout(&pin_data, canvas_w, canvas_h, is_portrait);
+
+    let border_col = if affordable {
+        COLOR_ACCENT_GREEN
+    } else if stage >= wyrdstone_core::WONDER_MAX_STAGE {
+        COLOR_ACCENT_GOLD
+    } else {
+        COLOR_ACCENT_TEAL
+    };
+    let aura_alpha = (0.18 + f32::from(stage) * 0.032).clamp(0.18, 0.50);
+    let stage_lbl = if stage >= wyrdstone_core::WONDER_MAX_STAGE {
+        i18n.t_fmt(
+            "city.wonder.maxed_badge",
+            &[("max", wyrdstone_core::WONDER_MAX_STAGE.to_string())],
+        )
+    } else {
+        i18n.t_fmt(
+            "city.wonder.stage_badge",
+            &[
+                ("stage", stage.to_string()),
+                ("max", wyrdstone_core::WONDER_MAX_STAGE.to_string()),
+            ],
+        )
+    };
+    let tip = i18n.t_fmt(
+        "city.wonder.tooltip",
+        &[
+            ("stage", stage.to_string()),
+            ("max", wyrdstone_core::WONDER_MAX_STAGE.to_string()),
+        ],
+    );
+
+    map.spawn((
+        pin_data,
+        Button,
+        CityAction::ToggleModal(ActiveModal::Wonder),
+        CityTooltipTarget(tip),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(init_left),
+            top: Val::Px(init_top),
+            width: Val::Px(pin_w),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(2.0),
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+    ))
+    .with_children(|pin| {
+        pin.spawn((
+            MapBuildingStage { tier_scale },
+            Node {
+                width: Val::Px(sprite_w),
+                height: Val::Px(sprite_h),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        ))
+        .with_children(|stage_box| {
+            stage_box.spawn((
+                ImageNode::new(vfx.soft_orb.clone())
+                    .with_color(Color::srgba(0.28, 0.90, 0.62, aura_alpha)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(122.0),
+                    height: Val::Percent(122.0),
+                    ..default()
+                },
+                PickingBehavior::IGNORE,
+            ));
+            stage_box.spawn((
+                ImageNode::new(vfx.yggdrasil_wonder.clone()),
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+            ));
+        });
+
+        let mut plate_cmd = pin.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                row_gap: Val::Px(2.0),
+                border: UiRect::all(Val::Px(if affordable { 2.0 } else { 1.5 })),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.05, 0.11, 0.10, 0.92)),
+            BorderColor(border_col),
+            BorderRadius::all(Val::Px(8.0)),
+            gold_glow_shadow(),
+        ));
+        if affordable {
+            plate_cmd.insert(QuestBeaconPin);
+        }
+        plate_cmd.with_children(|plate| {
+            plate.spawn((
+                Text::new(i18n.t("city.wonder.name")),
+                TextFont {
+                    font_size: FONT_SMALL,
+                    ..default()
+                },
+                TextColor(COLOR_ACCENT_GOLD),
+            ));
+            plate.spawn((
+                Text::new(stage_lbl),
+                TextFont {
+                    font_size: FONT_SMALL - 2.0,
+                    ..default()
+                },
+                TextColor(if affordable {
+                    COLOR_ACCENT_GREEN_TEXT
+                } else {
+                    COLOR_TEXT_PRIMARY
+                }),
+            ));
+        });
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3736,6 +3915,35 @@ pub fn handle_city_buttons(
                     }
                     rebuild = true;
                 }
+            }
+            CityAction::UpgradeWonder => {
+                let res = {
+                    let s = &mut *ctx;
+                    s.city.try_upgrade_wonder(&s.data.buildings)
+                };
+                match res {
+                    Ok((stage, glory, _tool)) => {
+                        ctx.status_notice_key = None;
+                        ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                            "city.wonder.upgraded_toast",
+                            &[
+                                ("stage", stage.to_string()),
+                                ("max", wyrdstone_core::WONDER_MAX_STAGE.to_string()),
+                                ("glory", glory.to_string()),
+                            ],
+                        ));
+                        ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                        ctx.persist();
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                        haptics.send(HapticEvent(HapticKind::Victory));
+                    }
+                    Err(err_key) => {
+                        ctx.status_notice_key = Some(err_key.to_string());
+                        play_sfx(&mut commands, &sound_bank, SfxKind::Invalid);
+                        haptics.send(HapticEvent(HapticKind::Error));
+                    }
+                }
+                rebuild = true;
             }
             CityAction::DrinkMead => {
                 let drink_res = {
@@ -5495,6 +5703,60 @@ mod tests {
                     b.0,
                     a,
                     b
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wonder_pin_never_overlaps_buildings_or_hud() {
+        let data = GameDataBundle::load_bundled(Language::En).expect("bundled data must parse");
+        let wonder_pin = MapBuildingPin {
+            map_x_pct: WONDER_MAP_X_PCT,
+            map_y_pct: WONDER_MAP_Y_PCT,
+            portrait_left_pct: Some(WONDER_PORTRAIT_LEFT_PCT),
+            portrait_top_pct: Some(WONDER_PORTRAIT_TOP_PCT),
+            tier_scale: 1.20,
+        };
+
+        for &(map_w, map_h, is_portrait) in &[
+            (
+                MIN_LANDSCAPE_MAP_WIDTH_PX,
+                MIN_LANDSCAPE_MAP_HEIGHT_PX,
+                false,
+            ),
+            (1280.0, 720.0, false),
+            (1920.0, 1080.0, false),
+            (2560.0, 1440.0, false),
+            (MIN_PORTRAIT_MAP_WIDTH_PX, MIN_PORTRAIT_MAP_HEIGHT_PX, true),
+        ] {
+            let (wl, wt, wpw, _, wsh) = compute_pin_layout(&wonder_pin, map_w, map_h, is_portrait);
+            let wh = wsh + NAMEPLATE_HEIGHT_PX;
+            assert!(wl >= 4.0 && wl + wpw <= map_w);
+            assert!(wt >= 4.0 && wt + wh <= map_h);
+            if !is_portrait {
+                // Keep top of Wonder clear of the top HUD bar strip.
+                assert!(
+                    wt > 64.0,
+                    "wonder landscape top={wt} at {map_w}x{map_h} intrudes into HUD bar"
+                );
+            }
+            for b in &data.buildings {
+                let b_pin = MapBuildingPin {
+                    map_x_pct: b.map_x_pct,
+                    map_y_pct: b.map_y_pct,
+                    portrait_left_pct: b.portrait_left_pct,
+                    portrait_top_pct: b.portrait_top_pct,
+                    tier_scale: 1.20,
+                };
+                let (bl, bt, bpw, _, bsh) = compute_pin_layout(&b_pin, map_w, map_h, is_portrait);
+                let bh = bsh + NAMEPLATE_HEIGHT_PX;
+                let sep_x = wl + wpw <= bl || bl + bpw <= wl;
+                let sep_y = wt + wh <= bt || bt + bh <= wt;
+                assert!(
+                    sep_x || sep_y,
+                    "wonder overlaps {} at {map_w}x{map_h} (portrait={is_portrait}): wonder=({wl},{wt},{wpw},{wh}) vs b=({bl},{bt},{bpw},{bh})",
+                    b.id
                 );
             }
         }

@@ -782,5 +782,21 @@
   "decree.kind.boosters_fury": "Trigger {target} Boosters or Divine Fury",
   "decree.kind.defeat_bosses": "Defeat {target} Mythic Bosses",
   "decree.kind.expedition_waves": "Clear {target} Expedition waves",
-  "decree.kind.earn_score": "Score {target} points in Match-3"
+  "decree.kind.earn_score": "Score {target} points in Match-3",
+  "city.wonder.name": "Yggdrasil Sanctuary",
+  "city.wonder.stage_badge": "Stage {stage}/{max}",
+  "city.wonder.maxed_badge": "Stage {max}/{max} MAX",
+  "city.wonder.tooltip": "Yggdrasil Sanctuary (Stage {stage}/{max}) - Permanent Realm-wide Wonder",
+  "city.wonder.locked": "Restore all 6 Fjord buildings to Tier 1 to awaken Yggdrasil.",
+  "city.wonder.modal_title": "Yggdrasil World-Tree",
+  "city.wonder.subtitle": "Infuse the roots of Yggdrasil to empower every raid across all Realms.",
+  "city.wonder.active_bonuses": "Active World-Tree Blessings (+{dmg}% Boss DMG, +{spoils}% Spoils, +{harvest}% Harvests, +{energy} Endurance, +{fury} Fury)",
+  "city.wonder.next_stage": "Infusion Stage {next}/{max}",
+  "city.wonder.next_rewards": "Rewards: +{glory} Glory, +5% Boss DMG, +5% Spoils, +5% Harvests",
+  "city.wonder.milestone_tool": "Milestone Relic: +1 {tool}",
+  "city.wonder.infuse_button": "Infuse Yggdrasil",
+  "city.wonder.maxed_banner": "Yggdrasil stands at full cosmic radiance across the Nine Realms!",
+  "city.wonder.upgraded_toast": "Yggdrasil infused to Stage {stage}/{max}! (+{glory} Glory)",
+  "city.quick.wonder": "Yggdrasil!",
+  "result.ready.wonder": "Yggdrasil Ready!"
 }
