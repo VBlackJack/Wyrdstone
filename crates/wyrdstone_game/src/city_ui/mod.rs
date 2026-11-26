@@ -889,7 +889,7 @@ fn spawn_city_tree(
                         row_gap: Val::Px(if is_phone_landscape { 4.0 } else { 6.0 }),
                         ..default()
                     },
-                    ZIndex(30),
+                    ZIndex(39),
                     PickingBehavior::IGNORE,
                 ))
                 .with_children(|top_col| {
@@ -908,7 +908,9 @@ fn spawn_city_tree(
                                 },
                                 justify_content: JustifyContent::SpaceBetween,
                                 align_items: AlignItems::Center,
-                                padding: if is_mobile {
+                                padding: if is_phone_landscape {
+                                    UiRect::axes(Val::Px(6.0), Val::Px(2.0))
+                                } else if is_mobile {
                                     UiRect::axes(Val::Px(6.0), Val::Px(3.0))
                                 } else {
                                     UiRect::axes(Val::Px(12.0), Val::Px(6.0))
@@ -1009,6 +1011,12 @@ fn spawn_city_tree(
                                     );
                                 }
                             });
+                            let compact_pill_h = if is_portrait { 36.0 } else { 32.0 };
+                            let compact_btn_h = if is_phone_landscape {
+                                36.0
+                            } else {
+                                MIN_TOUCH_TARGET_PX
+                            };
 
                             // Center: Resource & Energy Pills
                             bar.spawn(Node {
@@ -1036,6 +1044,7 @@ fn spawn_city_tree(
                                         wyrdstone_core::ResourceKind::Wood,
                                     )),
                                     is_mobile,
+                                    compact_pill_h,
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -1047,6 +1056,7 @@ fn spawn_city_tree(
                                         wyrdstone_core::ResourceKind::Stone,
                                     )),
                                     is_mobile,
+                                    compact_pill_h,
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -1058,6 +1068,7 @@ fn spawn_city_tree(
                                         wyrdstone_core::ResourceKind::Gold,
                                     )),
                                     is_mobile,
+                                    compact_pill_h,
                                 );
                                 spawn_resource_pill_with_icon_tip(
                                     pills,
@@ -1069,6 +1080,7 @@ fn spawn_city_tree(
                                         wyrdstone_core::ResourceKind::Mead,
                                     )),
                                     is_mobile,
+                                    compact_pill_h,
                                 );
                                 pills
                                     .spawn((
@@ -1130,7 +1142,7 @@ fn spawn_city_tree(
                                             CityTooltipTarget(i18n.t(flame.desc_key()).to_string()),
                                             Node {
                                                 min_height: Val::Px(if is_mobile {
-                                                    30.0
+                                                    compact_pill_h
                                                 } else {
                                                     MIN_TOUCH_TARGET_PX
                                                 }),
@@ -1186,6 +1198,7 @@ fn spawn_city_tree(
                                             },
                                             COLOR_TEXT_PRIMARY,
                                             can_drink,
+                                            compact_btn_h,
                                         );
                                     } else {
                                         spawn_small_button(
@@ -1217,7 +1230,7 @@ fn spawn_city_tree(
                                         align_items: AlignItems::Center,
                                         padding: UiRect::axes(
                                             Val::Px(if is_phone_landscape { 4.0 } else { 6.0 }),
-                                            Val::Px(if is_phone_landscape { 2.0 } else { 3.0 }),
+                                            Val::Px(if is_phone_landscape { 1.0 } else { 3.0 }),
                                         ),
                                         border: UiRect::all(Val::Px(1.0)),
                                         ..default()
@@ -1240,6 +1253,7 @@ fn spawn_city_tree(
                                                 COLOR_ACCENT_GOLD,
                                                 COLOR_TEXT_DARK,
                                                 true,
+                                                compact_btn_h,
                                             );
                                         } else {
                                             spawn_small_button_colored(
@@ -1281,6 +1295,7 @@ fn spawn_city_tree(
                                                     bg,
                                                     fg,
                                                     true,
+                                                    compact_btn_h,
                                                 );
                                             } else {
                                                 spawn_small_button_with_opts(
@@ -1317,6 +1332,7 @@ fn spawn_city_tree(
                                                 clan_bg,
                                                 COLOR_TEXT_PRIMARY,
                                                 true,
+                                                compact_btn_h,
                                             );
                                         } else {
                                             spawn_small_button_with_opts(
@@ -1355,6 +1371,7 @@ fn spawn_city_tree(
                                                 menu_bg,
                                                 menu_fg,
                                                 true,
+                                                compact_btn_h,
                                             );
                                         } else {
                                             spawn_small_button_with_opts(
@@ -2837,7 +2854,13 @@ fn spawn_map_building_pin(
                         CityAction::CollectHarvest(b.id.clone()),
                         Node {
                             width: Val::Percent(100.0),
-                            min_height: Val::Px(if is_mobile { 30.0 } else { MIN_TOUCH_TARGET_PX }),
+                            min_height: Val::Px(if is_portrait {
+                                36.0
+                            } else if is_mobile {
+                                32.0
+                            } else {
+                                MIN_TOUCH_TARGET_PX
+                            }),
                             padding: UiRect::axes(Val::Px(4.0), Val::Px(2.0)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
@@ -2916,9 +2939,19 @@ pub(super) fn spawn_resource_pill_with_icon(
     text: &str,
     text_color: Color,
 ) {
-    spawn_resource_pill_with_icon_tip(parent, icon, text, text_color, None, None, false);
+    spawn_resource_pill_with_icon_tip(
+        parent,
+        icon,
+        text,
+        text_color,
+        None,
+        None,
+        false,
+        MIN_TOUCH_TARGET_PX,
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_resource_pill_with_icon_tip(
     parent: &mut ChildBuilder,
     icon: Handle<Image>,
@@ -2927,12 +2960,13 @@ fn spawn_resource_pill_with_icon_tip(
     tooltip: Option<String>,
     action: Option<CityAction>,
     compact_pill: bool,
+    compact_min_h: f32,
 ) {
     let mut cmd = parent.spawn((
         Node {
             min_height: if action.is_some() {
                 Val::Px(if compact_pill {
-                    30.0
+                    compact_min_h
                 } else {
                     MIN_TOUCH_TARGET_PX
                 })
@@ -3152,6 +3186,7 @@ fn spawn_compact_top_button(
     bg_color: Color,
     text_color: Color,
     enabled: bool,
+    min_h: f32,
 ) {
     let text_color = if !enabled {
         COLOR_TEXT_MUTED
@@ -3167,7 +3202,7 @@ fn spawn_compact_top_button(
         Button,
         action,
         Node {
-            min_height: Val::Px(32.0),
+            min_height: Val::Px(min_h),
             padding: UiRect::axes(Val::Px(7.0), Val::Px(2.0)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,

@@ -262,7 +262,14 @@ fn spawn_result_ui(
                     height: Val::Percent(100.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    padding: if is_mobile {
+                    padding: if is_phone_landscape {
+                        UiRect {
+                            left: Val::Px(4.0 + safe.left),
+                            right: Val::Px(4.0 + safe.right),
+                            top: Val::Px(4.0 + safe.top),
+                            bottom: Val::Px(4.0 + safe.bottom),
+                        }
+                    } else if is_mobile {
                         UiRect {
                             left: Val::Px(8.0 + safe.left),
                             right: Val::Px(8.0 + safe.right),
@@ -302,7 +309,13 @@ fn spawn_result_ui(
                             Val::Percent(92.0)
                         },
                         flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Px(if is_mobile { 14.0 } else { 24.0 })),
+                        padding: UiRect::all(Val::Px(if is_phone_landscape {
+                            8.0
+                        } else if is_mobile {
+                            14.0
+                        } else {
+                            24.0
+                        })),
                         overflow: Overflow::clip(),
                         ..default()
                     },
@@ -416,7 +429,8 @@ fn spawn_result_ui(
                                 ResultAction::OpenFjordModal(ActiveModal::Wonder),
                             ));
                         }
-                        let split_at = ready_badges.len().min(2);
+                        let max_pinned = if is_phone_landscape { 1 } else { 2 };
+                        let split_at = ready_badges.len().min(max_pinned);
                         overflow_ready_badges = ready_badges.split_off(split_at);
                         pinned_ready_badges = ready_badges;
                     }
@@ -448,7 +462,13 @@ fn spawn_result_ui(
                                         flex_shrink: 1.0,
                                         min_height: Val::Px(0.0),
                                         overflow: Overflow::scroll_y(),
-                                        row_gap: Val::Px(if is_mobile { 8.0 } else { 12.0 }),
+                                        row_gap: Val::Px(if is_phone_landscape {
+                                            4.0
+                                        } else if is_mobile {
+                                            8.0
+                                        } else {
+                                            12.0
+                                        }),
                                         padding: UiRect::right(Val::Px(4.0)),
                                         ..default()
                                     },
@@ -1682,9 +1702,17 @@ fn spawn_result_ui(
                                 width: Val::Percent(100.0),
                                 flex_direction: FlexDirection::Column,
                                 align_items: AlignItems::Center,
-                                row_gap: Val::Px(8.0),
-                                padding: UiRect::top(Val::Px(10.0)),
-                                margin: UiRect::top(Val::Px(6.0)),
+                                row_gap: Val::Px(if is_phone_landscape { 4.0 } else { 8.0 }),
+                                padding: UiRect::top(Val::Px(if is_phone_landscape {
+                                    6.0
+                                } else {
+                                    10.0
+                                })),
+                                margin: UiRect::top(Val::Px(if is_phone_landscape {
+                                    3.0
+                                } else {
+                                    6.0
+                                })),
                                 border: UiRect::top(Val::Px(1.0)),
                                 ..default()
                             },

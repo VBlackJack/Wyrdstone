@@ -1612,6 +1612,7 @@ fn spawn_tooltip_section(
     ctx: &GameContext,
     confirm_loki_shuffle: bool,
     in_valhalla: bool,
+    compact_rail: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let active_hint_key = if in_valhalla {
@@ -1627,11 +1628,25 @@ fn spawn_tooltip_section(
     let show_cancel_tool = !in_valhalla && (ctx.armed_tool.is_some() || confirm_loki_shuffle);
     parent
         .spawn(Node {
+            width: if compact_rail {
+                Val::Percent(100.0)
+            } else {
+                Val::Auto
+            },
+            flex_direction: if compact_rail {
+                FlexDirection::Column
+            } else {
+                FlexDirection::Row
+            },
             column_gap: Val::Px(10.0),
             row_gap: Val::Px(4.0),
             flex_wrap: FlexWrap::Wrap,
             justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
+            align_items: if compact_rail {
+                AlignItems::Stretch
+            } else {
+                AlignItems::Center
+            },
             ..default()
         })
         .with_children(|tip_row| {
@@ -1639,10 +1654,19 @@ fn spawn_tooltip_section(
                 Match3TooltipText,
                 Text::new(initial_tip),
                 TextFont {
-                    font_size: FONT_SMALL,
+                    font_size: if compact_rail {
+                        FONT_SMALL - 1.5
+                    } else {
+                        FONT_SMALL
+                    },
                     ..default()
                 },
                 TextColor(COLOR_ACCENT_GOLD),
+                TextLayout::new_with_justify(if compact_rail {
+                    JustifyText::Center
+                } else {
+                    JustifyText::Left
+                }),
                 Node {
                     display: if active_hint_key.is_some() {
                         Display::Flex
@@ -1658,7 +1682,15 @@ fn spawn_tooltip_section(
                         Button,
                         Match3UiAction::CancelTool,
                         Node {
-                            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                            width: if compact_rail {
+                                Val::Percent(100.0)
+                            } else {
+                                Val::Auto
+                            },
+                            padding: UiRect::axes(
+                                Val::Px(if compact_rail { 6.0 } else { 10.0 }),
+                                Val::Px(4.0),
+                            ),
                             min_height: Val::Px(MIN_TOUCH_TARGET_PX),
                             min_width: Val::Px(MIN_TOUCH_TARGET_PX),
                             justify_content: JustifyContent::Center,
@@ -1672,10 +1704,15 @@ fn spawn_tooltip_section(
                         btn.spawn((
                             Text::new(i18n.t("match3.tool.cancel")),
                             TextFont {
-                                font_size: FONT_SMALL,
+                                font_size: if compact_rail {
+                                    FONT_SMALL - 1.0
+                                } else {
+                                    FONT_SMALL
+                                },
                                 ..default()
                             },
                             TextColor(COLOR_TEXT_PRIMARY),
+                            TextLayout::new_with_justify(JustifyText::Center),
                         ));
                     });
             }
@@ -1695,6 +1732,7 @@ pub(super) fn spawn_match3_hud(
     right_rail_scroll_y: f32,
     hud_mode: HudLayoutMode,
     side_rail_width_px: f32,
+    measured_bottom_hud_px: f32,
     active_drawer: super::Match3Drawer,
     safe: SafeAreaInsets,
     can_undo: bool,
@@ -1992,7 +2030,13 @@ pub(super) fn spawn_match3_hud(
                             ..default()
                         })
                         .with_children(|foot| {
-                            spawn_tooltip_section(foot, ctx, confirm_loki_shuffle, in_valhalla);
+                            spawn_tooltip_section(
+                                foot,
+                                ctx,
+                                confirm_loki_shuffle,
+                                in_valhalla,
+                                false,
+                            );
                             foot.spawn((
                                 Text::new(i18n.t("match3.hud.shortcuts_hint")),
                                 TextFont {
@@ -2016,8 +2060,8 @@ pub(super) fn spawn_match3_hud(
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::Stretch,
-                        padding: UiRect::all(Val::Px(8.0)),
-                        row_gap: Val::Px(6.0),
+                        padding: UiRect::all(Val::Px(5.0)),
+                        row_gap: Val::Px(4.0),
                         overflow: Overflow::clip(),
                         ..default()
                     },
@@ -2124,8 +2168,8 @@ pub(super) fn spawn_match3_hud(
                         flex_direction: FlexDirection::Column,
                         justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::Stretch,
-                        padding: UiRect::all(Val::Px(8.0)),
-                        row_gap: Val::Px(6.0),
+                        padding: UiRect::all(Val::Px(5.0)),
+                        row_gap: Val::Px(4.0),
                         overflow: Overflow::clip(),
                         ..default()
                     },
@@ -2134,15 +2178,37 @@ pub(super) fn spawn_match3_hud(
                 .with_children(|right| {
                     right
                         .spawn(Node {
-                            flex_direction: FlexDirection::Column,
+                            flex_direction: FlexDirection::Row,
                             flex_grow: 1.0,
                             flex_shrink: 1.0,
                             min_height: Val::Px(0.0),
-                            row_gap: Val::Px(6.0),
-                            align_items: AlignItems::Stretch,
+                            column_gap: Val::Px(3.0),
                             ..default()
                         })
-                        .with_children(|col| {
+                        .with_children(|scroll_row| {
+                            scroll_row
+                                .spawn((
+                                    ScrollablePanel {
+                                        kind: ScrollPanelKind::RightRail,
+                                    },
+                                    ScrollPosition {
+                                        offset_x: 0.0,
+                                        offset_y: right_rail_scroll_y,
+                                    },
+                                    RelativeCursorPosition::default(),
+                                    Node {
+                                        flex_direction: FlexDirection::Column,
+                                        flex_grow: 1.0,
+                                        flex_shrink: 1.0,
+                                        min_height: Val::Px(0.0),
+                                        overflow: Overflow::scroll_y(),
+                                        row_gap: Val::Px(5.0),
+                                        align_items: AlignItems::Stretch,
+                                        padding: UiRect::right(Val::Px(2.0)),
+                                        ..default()
+                                    },
+                                ))
+                                .with_children(|col| {
                             if session.is_trial {
                                 col.spawn((
                                     Button,
@@ -2265,6 +2331,8 @@ pub(super) fn spawn_match3_hud(
                                     }),
                                 ));
                             });
+                            });
+                            spawn_scrollbar_track(scroll_row, ScrollPanelKind::RightRail);
                         });
 
                     right
@@ -2276,7 +2344,13 @@ pub(super) fn spawn_match3_hud(
                             ..default()
                         })
                         .with_children(|foot| {
-                            spawn_tooltip_section(foot, ctx, confirm_loki_shuffle, in_valhalla);
+                            spawn_tooltip_section(
+                                foot,
+                                ctx,
+                                confirm_loki_shuffle,
+                                in_valhalla,
+                                true,
+                            );
                         });
                 });
 
@@ -2292,6 +2366,7 @@ pub(super) fn spawn_match3_hud(
                         sound_bank,
                         hud_mode,
                         safe,
+                        measured_bottom_hud_px,
                         modal_scroll_y,
                         active_drawer,
                         can_undo,
@@ -2328,6 +2403,7 @@ pub(super) fn spawn_match3_hud(
                         sound_bank,
                         hud_mode,
                         safe,
+                        measured_bottom_hud_px,
                         modal_scroll_y,
                         active_drawer,
                         can_undo,
@@ -2432,7 +2508,7 @@ pub(super) fn spawn_match3_hud(
                     panel_shadow(),
                 ))
                 .with_children(|bottom| {
-                    spawn_tooltip_section(bottom, ctx, confirm_loki_shuffle, in_valhalla);
+                    spawn_tooltip_section(bottom, ctx, confirm_loki_shuffle, in_valhalla, false);
                     bottom
                         .spawn(Node {
                             column_gap: Val::Px(8.0),
@@ -2509,8 +2585,14 @@ pub(super) fn spawn_match3_hud(
                                 Val::Percent(90.0)
                             },
                             flex_direction: FlexDirection::Column,
-                            padding: UiRect::all(Val::Px(if is_mobile { 12.0 } else { 22.0 })),
-                            row_gap: Val::Px(8.0),
+                            padding: UiRect::all(Val::Px(if is_phone_landscape {
+                                8.0
+                            } else if is_mobile {
+                                12.0
+                            } else {
+                                22.0
+                            })),
+                            row_gap: Val::Px(if is_phone_landscape { 6.0 } else { 8.0 }),
                             overflow: Overflow::clip(),
                             ..default()
                         },
@@ -3059,7 +3141,7 @@ fn spawn_portrait_bottom_dock(
         panel_shadow(),
     ))
     .with_children(|bottom| {
-        spawn_tooltip_section(bottom, ctx, confirm_loki_shuffle, in_valhalla);
+        spawn_tooltip_section(bottom, ctx, confirm_loki_shuffle, in_valhalla, false);
         if active_drawer == super::Match3Drawer::None && !tool_armed && !in_valhalla {
             if let Some(ftue_key) = ftue_coach_key(ctx.city.stats.total_victories, session) {
                 bottom.spawn((
@@ -3229,6 +3311,7 @@ fn spawn_mobile_drawer_overlay(
     sound_bank: &SoundBank,
     hud_mode: HudLayoutMode,
     safe: SafeAreaInsets,
+    measured_bottom_hud_px: f32,
     modal_scroll_y: f32,
     active_drawer: super::Match3Drawer,
     can_undo: bool,
@@ -3335,7 +3418,13 @@ fn spawn_mobile_drawer_overlay(
                     ))
                     .with_children(|body| match active_drawer {
                         super::Match3Drawer::Tools => {
-                            spawn_tooltip_section(body, ctx, confirm_loki_shuffle, in_valhalla);
+                            spawn_tooltip_section(
+                                body,
+                                ctx,
+                                confirm_loki_shuffle,
+                                in_valhalla,
+                                false,
+                            );
                             let tools = [
                                 (ActiveTool::Mjolnir, "match3.tool.mjolnir"),
                                 (ActiveTool::SurtrEmber, "match3.tool.surtr_ember"),
@@ -3667,8 +3756,8 @@ fn spawn_mobile_drawer_overlay(
                         max_height: Val::Percent(92.0),
                         min_height: Val::Px(0.0),
                         flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Px(12.0)),
-                        row_gap: Val::Px(8.0),
+                        padding: UiRect::all(Val::Px(8.0)),
+                        row_gap: Val::Px(6.0),
                         overflow: Overflow::clip(),
                         ..default()
                     },
@@ -3678,6 +3767,11 @@ fn spawn_mobile_drawer_overlay(
         });
     } else {
         // Portrait scrim + bottom-anchored drawer sheet.
+        let dock_bottom = if measured_bottom_hud_px > 0.0 {
+            measured_bottom_hud_px
+        } else {
+            74.0 + safe.bottom
+        };
         root.spawn((
             Button,
             NoButtonScale,
@@ -3703,7 +3797,7 @@ fn spawn_mobile_drawer_overlay(
                 position_type: PositionType::Absolute,
                 left: Val::Px(8.0 + safe.left),
                 right: Val::Px(8.0 + safe.right),
-                bottom: Val::Px(74.0 + safe.bottom),
+                bottom: Val::Px(dock_bottom),
                 max_height: Val::Vh(72.0),
                 min_height: Val::Px(0.0),
                 flex_direction: FlexDirection::Column,

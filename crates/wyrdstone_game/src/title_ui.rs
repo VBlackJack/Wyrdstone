@@ -281,7 +281,7 @@ fn spawn_title_tree(
                         Node {
                             max_width: Val::Percent(92.0),
                             max_height: if is_phone_landscape {
-                                Val::Vh(22.0)
+                                Val::Vh(18.0)
                             } else {
                                 Val::Vh(24.0)
                             },
@@ -299,7 +299,7 @@ fn spawn_title_tree(
                                 width: Val::Px(if is_phone_landscape { 270.0 } else { 520.0 }),
                                 max_width: Val::Percent(100.0),
                                 max_height: if is_phone_landscape {
-                                    Val::Vh(22.0)
+                                    Val::Vh(18.0)
                                 } else {
                                     Val::Vh(24.0)
                                 },
@@ -494,11 +494,7 @@ fn spawn_title_tree(
                                     } else {
                                         TITLE_UTIL_BTN_MIN_WIDTH_PX
                                     }),
-                                    min_height: Val::Px(if is_phone_landscape {
-                                        40.0
-                                    } else {
-                                        MIN_TOUCH_TARGET_PX
-                                    }),
+                                    min_height: Val::Px(MIN_TOUCH_TARGET_PX),
                                     padding: if is_phone_landscape {
                                         UiRect::axes(Val::Px(10.0), Val::Px(6.0))
                                     } else {

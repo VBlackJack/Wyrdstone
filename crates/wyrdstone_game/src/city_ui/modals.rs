@@ -266,8 +266,8 @@ fn spawn_modal_shell_ex<F>(
                         Val::Percent(90.0)
                     },
                     flex_direction: FlexDirection::Column,
-                    padding: UiRect::all(Val::Px(if is_mobile { 12.0 } else { 22.0 })),
-                    row_gap: Val::Px(if is_mobile { 8.0 } else { 10.0 }),
+                    padding: UiRect::all(Val::Px(if is_mobile { 10.0 } else { 22.0 })),
+                    row_gap: Val::Px(if is_mobile { 6.0 } else { 10.0 }),
                     overflow: Overflow::clip(),
                     ..default()
                 },
