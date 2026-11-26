@@ -37,14 +37,23 @@ bevy = { version = "=0.15.2", default-features = false, features = [
     "bevy_audio",
     "wav",
     "png",
-    "multi_threaded",
     "tonemapping_luts",
 ] }
 bevy_winit = { version = "=0.15.2", default-features = false }
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { version = "=0.15.2", default-features = false, features = ["multi_threaded"] }
+
+[target.'cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))'.dependencies]
 directories = "5.0"
 winit = "0.30"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "=0.15.2", default-features = false, features = ["webgl2"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

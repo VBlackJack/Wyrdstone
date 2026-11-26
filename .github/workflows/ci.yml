@@ -71,3 +71,16 @@ jobs:
         run: cargo install cargo-apk --version "${CARGO_APK_VERSION}" --locked
       - name: Build Android debug APK
         run: cargo apk build -p wyrdstone_game --lib --locked
+
+  check-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Run Web WASM32 clippy
+        run: cargo clippy -p wyrdstone_game --bin wyrdstone --target wasm32-unknown-unknown --locked -- -D warnings

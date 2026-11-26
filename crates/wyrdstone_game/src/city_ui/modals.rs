@@ -1348,7 +1348,7 @@ pub(super) fn spawn_settings_modal(
     sound_bank: &SoundBank,
     safe: SafeAreaInsets,
     scroll_offset_y: f32,
-    #[cfg(not(target_os = "android"))] is_fullscreen: bool,
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] is_fullscreen: bool,
 ) {
     let i18n = &ctx.data.i18n;
     spawn_modal_shell(
@@ -1424,7 +1424,7 @@ pub(super) fn spawn_settings_modal(
                     COLOR_PANEL_CARD,
                     true,
                 );
-                #[cfg(not(target_os = "android"))]
+                #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
                 {
                     let fs_label = if is_fullscreen {
                         i18n.t("city.settings.display_windowed")

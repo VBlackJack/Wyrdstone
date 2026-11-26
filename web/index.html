@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<!-- Copyright 2026 Julien Bombled - Apache 2.0 -->
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Wyrdstone</title>
+  <link rel="icon" type="image/png" href="./app_icon.png">
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0d1117;
+      color: #edf2f7;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      overscroll-behavior: none;
+    }
+    #wyrdstone-stage {
+      width: 100vw;
+      height: 100vh;
+      width: 100dvw;
+      height: 100dvh;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      position: relative;
+      background: #0d1117;
+    }
+    #wyrdstone-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      outline: none;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    #loader {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: radial-gradient(circle at center, #182232 0%, #0d1117 75%);
+      z-index: 10;
+      transition: opacity 0.25s ease;
+    }
+    #loader.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .spinner {
+      width: 44px;
+      height: 44px;
+      border: 4px solid rgba(237, 189, 74, 0.22);
+      border-top-color: #edbd4a;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .title {
+      font-size: 1.35rem;
+      letter-spacing: 0.18em;
+      font-weight: 700;
+      color: #edbd4a;
+    }
+    .subtitle {
+      font-size: 0.9rem;
+      color: #9fb0c4;
+      text-align: center;
+      padding: 0 24px;
+    }
+    #error-box {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 24px;
+      text-align: center;
+      background: #0d1117;
+      z-index: 20;
+    }
+    #error-box.visible {
+      display: flex;
+    }
+    #error-msg {
+      max-width: 480px;
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div id="wyrdstone-stage">
+    <canvas id="wyrdstone-canvas" tabindex="0"></canvas>
+    <div id="loader">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="title">WYRDSTONE</div>
+      <div class="subtitle">Loading Nordic Match-3 &amp; Fjord Saga...</div>
+    </div>
+    <div id="error-box" role="alert">
+      <div class="title">WYRDSTONE</div>
+      <div id="error-msg"></div>
+    </div>
+  </div>
+  <script type="module">
+    const loader = document.getElementById("loader");
+    const errorBox = document.getElementById("error-box");
+    const errorMsg = document.getElementById("error-msg");
+    const audioContexts = [];
+
+    function patchAudioContext(name) {
+      const Original = window[name];
+      if (!Original) return;
+      window[name] = function (...args) {
+        const ctx = new Original(...args);
+        audioContexts.push(ctx);
+        return ctx;
+      };
+      window[name].prototype = Original.prototype;
+    }
+    patchAudioContext("AudioContext");
+    patchAudioContext("webkitAudioContext");
+
+    function unlockAudio() {
+      for (const ctx of audioContexts) {
+        if (ctx && ctx.state === "suspended") {
+          ctx.resume().catch(() => {});
+        }
+      }
+    }
+    window.addEventListener("pointerdown", unlockAudio, { passive: true });
+    window.addEventListener("touchstart", unlockAudio, { passive: true });
+    window.addEventListener("keydown", unlockAudio, { passive: true });
+
+    function showError(message) {
+      loader.classList.add("hidden");
+      errorMsg.textContent = message;
+      errorBox.classList.add("visible");
+    }
+
+    function hasWebGL2() {
+      try {
+        const probe = document.createElement("canvas");
+        return Boolean(probe.getContext("webgl2"));
+      } catch (_) {
+        return false;
+      }
+    }
+
+    if (!hasWebGL2()) {
+      showError("WebGL2 is required to play Wyrdstone in a browser. Please enable hardware acceleration or try a modern browser.");
+    } else {
+      import("./wyrdstone.js")
+        .then((mod) => mod.default())
+        .then(() => {
+          requestAnimationFrame(() => loader.classList.add("hidden"));
+        })
+        .catch((err) => {
+          const text = String(err ?? "");
+          if (text.includes("Using exceptions for control flow")) {
+            requestAnimationFrame(() => loader.classList.add("hidden"));
+            return;
+          }
+          console.error("Wyrdstone startup failure:", err);
+          showError("Failed to launch Wyrdstone WebGL build. Please reload the page.");
+        });
+    }
+  </script>
+</body>
+</html>

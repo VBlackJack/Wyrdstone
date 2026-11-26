@@ -37,9 +37,9 @@ use crate::ui_style::{
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
-#[cfg(not(target_os = "android"))]
+#[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode, WindowResized};
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 use bevy::window::{PrimaryWindow, WindowResized};
 use wyrdstone_core::{
     format_building_bonus, format_rank_perk, ActiveTool, BuildingDef, EndlessDecreeKind,
@@ -232,7 +232,7 @@ pub(super) enum InspectorTab {
 #[derive(Resource)]
 pub struct CityLayoutMode {
     pub is_portrait: bool,
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
     pub last_fullscreen: bool,
     pub active_drawer: CityDrawer,
     pub inspector_open: bool,
@@ -323,7 +323,7 @@ pub enum CityAction {
     ImportBackup,
     ToggleLanguage,
     ToggleAudio,
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
     ToggleFullscreen,
     BackToTitle,
 }
@@ -343,9 +343,9 @@ pub fn setup_city_ui(
     let (win_w, win_h, _is_fullscreen) = windows
         .get_single()
         .map(|w| {
-            #[cfg(not(target_os = "android"))]
+            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
             let fs = !matches!(w.mode, WindowMode::Windowed);
-            #[cfg(target_os = "android")]
+            #[cfg(any(target_os = "android", target_arch = "wasm32"))]
             let fs = true;
             (w.width(), w.height(), fs)
         })
@@ -380,7 +380,7 @@ pub fn setup_city_ui(
     let ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
     commands.insert_resource(CityLayoutMode {
         is_portrait,
-        #[cfg(not(target_os = "android"))]
+        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
         last_fullscreen: _is_fullscreen,
         active_drawer: CityDrawer::None,
         inspector_open,
@@ -407,7 +407,7 @@ pub fn setup_city_ui(
         &sound_bank,
         &scroll_mem,
         is_portrait,
-        #[cfg(not(target_os = "android"))]
+        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
         _is_fullscreen,
         win_w,
         win_h,
@@ -551,7 +551,7 @@ fn spawn_city_tree(
     sound_bank: &SoundBank,
     scroll_mem: &UiScrollMemory,
     is_portrait: bool,
-    #[cfg(not(target_os = "android"))] is_fullscreen: bool,
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] is_fullscreen: bool,
     win_w: f32,
     win_h: f32,
     safe: SafeAreaInsets,
@@ -1803,7 +1803,10 @@ fn spawn_city_tree(
                                 fjord_art,
                                 sound_bank,
                                 scroll_mem.inspector_offset_y,
-                                #[cfg(not(target_os = "android"))]
+                                #[cfg(all(
+                                    not(target_os = "android"),
+                                    not(target_arch = "wasm32")
+                                ))]
                                 is_fullscreen,
                             );
                         }
@@ -2024,7 +2027,7 @@ fn spawn_city_tree(
                     sound_bank,
                     safe,
                     m_scroll,
-                    #[cfg(not(target_os = "android"))]
+                    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
                     is_fullscreen,
                 ),
                 ActiveModal::Help => {
@@ -4524,7 +4527,7 @@ pub fn handle_city_buttons(
                 toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
                 rebuild = true;
             }
-            #[cfg(not(target_os = "android"))]
+            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
             CityAction::ToggleFullscreen => {
                 ctx.confirm_import_backup = false;
                 if let Ok(mut win) = windows.get_single_mut() {
@@ -4690,7 +4693,7 @@ pub fn handle_city_buttons(
         rebuild = true;
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
     if let Ok(win) = windows.get_single() {
         let is_fs = !matches!(win.mode, WindowMode::Windowed);
         if is_fs != layout_mode.last_fullscreen {
@@ -4715,7 +4718,7 @@ pub fn handle_city_buttons(
             &sound_bank,
             &scroll_mem,
             layout_mode.is_portrait,
-            #[cfg(not(target_os = "android"))]
+            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
             layout_mode.last_fullscreen,
             layout_mode.window_size.x,
             layout_mode.window_size.y,

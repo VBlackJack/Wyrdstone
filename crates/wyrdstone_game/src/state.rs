@@ -21,10 +21,11 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::PathBuf;
 use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
-use wyrdstone_core::save::{
-    LoadOutcome, ReadOnlyResolution, DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME,
-};
+#[cfg(not(target_arch = "wasm32"))]
+use wyrdstone_core::save::{LoadOutcome, ReadOnlyResolution};
+use wyrdstone_core::save::{DEFAULT_BGM_VOLUME, DEFAULT_SFX_VOLUME};
 use wyrdstone_core::{
     last_stand_cost, ActiveTool, BalanceConfig, CityState, DailyBlessing, ExpeditionRun,
     GameDataBundle, GauntletRun, Language, LevelOutcome, LevelSession, OfflineVaultSummary,
@@ -32,14 +33,23 @@ use wyrdstone_core::{
 };
 
 /// File name of the primary save inside the platform data directory.
+#[cfg(not(target_arch = "wasm32"))]
 const SAVE_FILE_NAME: &str = "wyrdstone_save.json";
+/// Primary save key in browser `localStorage` on WASM32 web builds.
+#[cfg(target_arch = "wasm32")]
+const WEB_STORAGE_SAVE_KEY: &str = "wyrdstone_save_v5";
+/// Backup save key in browser `localStorage` on WASM32 web builds.
+#[cfg(target_arch = "wasm32")]
+const WEB_STORAGE_BACKUP_KEY: &str = "wyrdstone_backup_v5";
 /// Notice shown when the primary save was unreadable and the `.bak` copy was restored.
+#[cfg(not(target_arch = "wasm32"))]
 const NOTICE_RECOVERED_FROM_BACKUP: &str = "save.notice.recovered_from_backup";
 /// Notice shown when the save is unreadable and cannot be copied, so saving is suspended.
 pub const NOTICE_SAVE_READ_ONLY: &str = "save.warning.read_only";
 /// Notice shown when the save was written by a newer game version, so saving is suspended.
 pub const NOTICE_SAVE_NEWER_VERSION: &str = "save.warning.newer_version";
 /// Notice shown when an unreadable save was preserved and a fresh city was started.
+#[cfg(not(target_arch = "wasm32"))]
 const NOTICE_UNREADABLE_BACKED_UP: &str = "save.notice.unreadable_backed_up";
 
 /// Notice shown when the export is refused because no progress was loaded.
@@ -49,6 +59,7 @@ const NOTICE_BACKUP_READ_ONLY: &str = "city.panel.backup.read_only";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadOnlyCause {
     /// The save file exists but could not be read, and could not be preserved either.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Unreadable,
     /// The save file was written by a newer game version.
     NewerVersion,
@@ -167,8 +178,10 @@ pub struct GameContext {
     save_file_verified: bool,
     /// True once the unreadable primary was copied aside this session, so no further
     /// `.corrupt-<unix_secs>` copy is made while resolving the read-only state.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     primary_copied_aside: bool,
     /// True once a newer-version `.bak` was preserved by `prepare_replace` this session.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     newer_backup_preserved: bool,
     pub rng: StdRng,
 }
@@ -178,8 +191,6 @@ impl GameContext {
     pub fn initialize() -> Self {
         let mut data = GameDataBundle::load_bundled(Language::Fr)
             .expect("Bundled Wyrdstone data must be valid");
-        let save_path = resolve_save_path();
-
         let mut audio_muted = false;
         let mut bgm_volume = DEFAULT_BGM_VOLUME;
         let mut sfx_volume = DEFAULT_SFX_VOLUME;
@@ -189,14 +200,26 @@ impl GameContext {
         let mut tutorial_step = 0u8;
         let mut active_expedition = None;
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let save_path = resolve_save_path();
+        #[cfg(target_arch = "wasm32")]
+        let save_path: Option<PathBuf> = None;
+
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut save_read_only = false;
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut save_read_only_cause = None;
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut save_read_only_has_progress = false;
         let mut save_file_verified = false;
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut primary_copied_aside = false;
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut newer_backup_preserved = false;
         let mut status_notice_key = None;
         let mut has_unreadable_save = false;
+
+        #[cfg(not(target_arch = "wasm32"))]
         let loaded_save = match save_path.as_deref().map(SaveData::load_with_recovery) {
             Some(LoadOutcome::Loaded(saved)) => {
                 save_file_verified = true;
@@ -255,6 +278,16 @@ impl GameContext {
             }
             Some(LoadOutcome::NotFound) | None => None,
         };
+
+        #[cfg(target_arch = "wasm32")]
+        let loaded_save = load_web_save(
+            &mut save_file_verified,
+            &mut save_read_only,
+            &mut save_read_only_cause,
+            &mut save_read_only_has_progress,
+            &mut status_notice_key,
+            &mut has_unreadable_save,
+        );
 
         let now = now_unix_secs();
         let today = today_day_index();
@@ -447,77 +480,102 @@ impl GameContext {
     }
 
     fn persist_checked(&mut self) -> Result<(), String> {
-        let Some(path) = self.save_path.clone() else {
-            return Ok(());
-        };
-        if self.save_read_only {
-            if self.save_read_only_cause == Some(ReadOnlyCause::NewerVersion) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.save_read_only {
                 self.status_notice_key = self.save_read_only_notice().map(str::to_string);
-                return Err("newer-version save is read-only".to_string());
+                return Err("web save is read-only".to_string());
             }
-            // A newer-version `.bak` must be copied aside before anything can replace it. Do it
-            // before resolving: resolving copies an unreadable primary aside, and a failure after
-            // that would repeat the copy on every later persist.
-            if !self.newer_backup_preserved {
-                if let Err(err) = SaveData::prepare_replace(&path, false) {
-                    error!("Wyrdstone newer backup could not be preserved: {err}");
-                    self.status_notice_key = self.save_read_only_notice().map(str::to_string);
-                    return Err(err);
-                }
-                self.newer_backup_preserved = true;
-            }
-            // Re-check the primary file first: a transient lock may have ended, in which case
-            // the readable save must not be overwritten by this session's progress. An
-            // unreadable primary already copied aside is not examined (and copied) again.
-            let (resolution, copied_aside) = if self.primary_copied_aside {
-                (ReadOnlyResolution::Lift, true)
-            } else {
-                SaveData::resolve_read_only_detailed(&path)
+            let Some(storage) = web_local_storage() else {
+                return Ok(());
             };
-            match resolution {
-                ReadOnlyResolution::KeepReadOnly => {
-                    warn!(
-                        "Wyrdstone save is readable again; session stays read-only until restart"
-                    );
-                    self.status_notice_key = self.save_read_only_notice().map(str::to_string);
-                    return Err("save is read-only".to_string());
-                }
-                ReadOnlyResolution::StillBlocked => {
-                    warn!("Wyrdstone save write skipped, unreadable save not preserved");
-                    return Err("unreadable save still blocked".to_string());
-                }
-                ReadOnlyResolution::Lift => {
-                    info!("Wyrdstone unreadable save resolved, resuming writes");
-                    if copied_aside {
-                        self.status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
-                    } else if matches!(
-                        self.status_notice_key.as_deref(),
-                        Some(NOTICE_SAVE_READ_ONLY | NOTICE_SAVE_NEWER_VERSION)
-                    ) {
-                        // The file vanished: only the read-only notice is obsolete.
-                        self.status_notice_key = None;
-                    }
-                    self.save_read_only = false;
-                    self.save_read_only_cause = None;
-                    self.save_read_only_has_progress = false;
-                }
+            let json = self
+                .build_save_snapshot()
+                .to_json()
+                .map_err(|e| format!("Failed to serialize web save: {e}"))?;
+            storage
+                .set_item(WEB_STORAGE_SAVE_KEY, &json)
+                .map_err(|_| "Failed to write save to browser localStorage".to_string())?;
+            self.save_file_verified = true;
+            if has_saved_progress(&self.city, self.tutorial_step) {
+                self.has_existing_save = true;
             }
+            Ok(())
         }
-        let snapshot = self.build_save_snapshot();
-        match snapshot.save_with_options(&path, self.save_file_verified) {
-            Ok(report) => {
-                self.save_file_verified = true;
-                if has_saved_progress(&self.city, self.tutorial_step) {
-                    self.has_existing_save = true;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(path) = self.save_path.clone() else {
+                return Ok(());
+            };
+            if self.save_read_only {
+                if self.save_read_only_cause == Some(ReadOnlyCause::NewerVersion) {
+                    self.status_notice_key = self.save_read_only_notice().map(str::to_string);
+                    return Err("newer-version save is read-only".to_string());
                 }
-                if let Some(err) = report.backup_rotation_error {
-                    warn!("Wyrdstone save backup rotation error: {err}");
+                // A newer-version `.bak` must be copied aside before anything can replace it. Do it
+                // before resolving: resolving copies an unreadable primary aside, and a failure after
+                // that would repeat the copy on every later persist.
+                if !self.newer_backup_preserved {
+                    if let Err(err) = SaveData::prepare_replace(&path, false) {
+                        error!("Wyrdstone newer backup could not be preserved: {err}");
+                        self.status_notice_key = self.save_read_only_notice().map(str::to_string);
+                        return Err(err);
+                    }
+                    self.newer_backup_preserved = true;
                 }
-                Ok(())
+                // Re-check the primary file first: a transient lock may have ended, in which case
+                // the readable save must not be overwritten by this session's progress. An
+                // unreadable primary already copied aside is not examined (and copied) again.
+                let (resolution, copied_aside) = if self.primary_copied_aside {
+                    (ReadOnlyResolution::Lift, true)
+                } else {
+                    SaveData::resolve_read_only_detailed(&path)
+                };
+                match resolution {
+                    ReadOnlyResolution::KeepReadOnly => {
+                        warn!(
+                            "Wyrdstone save is readable again; session stays read-only until restart"
+                        );
+                        self.status_notice_key = self.save_read_only_notice().map(str::to_string);
+                        return Err("save is read-only".to_string());
+                    }
+                    ReadOnlyResolution::StillBlocked => {
+                        warn!("Wyrdstone save write skipped, unreadable save not preserved");
+                        return Err("unreadable save still blocked".to_string());
+                    }
+                    ReadOnlyResolution::Lift => {
+                        info!("Wyrdstone unreadable save resolved, resuming writes");
+                        if copied_aside {
+                            self.status_notice_key = Some(NOTICE_UNREADABLE_BACKED_UP.to_string());
+                        } else if matches!(
+                            self.status_notice_key.as_deref(),
+                            Some(NOTICE_SAVE_READ_ONLY | NOTICE_SAVE_NEWER_VERSION)
+                        ) {
+                            // The file vanished: only the read-only notice is obsolete.
+                            self.status_notice_key = None;
+                        }
+                        self.save_read_only = false;
+                        self.save_read_only_cause = None;
+                        self.save_read_only_has_progress = false;
+                    }
+                }
             }
-            Err(err) => {
-                warn!("Wyrdstone save write error: {err}");
-                Err(err)
+            let snapshot = self.build_save_snapshot();
+            match snapshot.save_with_options(&path, self.save_file_verified) {
+                Ok(report) => {
+                    self.save_file_verified = true;
+                    if has_saved_progress(&self.city, self.tutorial_step) {
+                        self.has_existing_save = true;
+                    }
+                    if let Some(err) = report.backup_rotation_error {
+                        warn!("Wyrdstone save backup rotation error: {err}");
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    warn!("Wyrdstone save write error: {err}");
+                    Err(err)
+                }
             }
         }
     }
@@ -534,6 +592,7 @@ impl GameContext {
         if !self.save_read_only {
             return Ok(());
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(path) = &self.save_path {
             let primary_is_newer = self.save_read_only_cause == Some(ReadOnlyCause::NewerVersion);
             match SaveData::prepare_replace(path, primary_is_newer) {
@@ -583,43 +642,55 @@ impl GameContext {
         }
     }
 
-    /// Exports an atomic JSON backup to `wyrdstone_backup.json` (external app storage on
-    /// Android, sibling of the save file on desktop) and returns the destination path string.
+    /// Exports an atomic JSON backup (`wyrdstone_backup.json` on desktop/Android or browser
+    /// `localStorage` on WASM32) and returns the destination identifier string.
     pub fn export_backup(&self) -> Result<String, &'static str> {
         if self.save_read_only && !self.save_read_only_has_progress {
             // Read-only without a readable `.bak`: no saved progress was loaded, so there is
             // nothing trustworthy to export. A session started from a `.bak` may export it.
             return Err(NOTICE_BACKUP_READ_ONLY);
         }
-        let Some(backup_path) = resolve_backup_path(self.save_path.as_deref()) else {
-            warn!("Wyrdstone backup export unavailable: no accessible backup directory");
-            return Err("city.panel.backup.error");
-        };
         let snapshot = self.build_save_snapshot();
-        snapshot.save_to_path(&backup_path).map_err(|e| {
-            warn!("Wyrdstone backup export failed: {e}");
-            "city.panel.backup.error"
-        })?;
-        Ok(backup_path.display().to_string())
+        #[cfg(target_arch = "wasm32")]
+        {
+            let Some(storage) = web_local_storage() else {
+                warn!("Wyrdstone backup export unavailable: localStorage inaccessible");
+                return Err("city.panel.backup.error");
+            };
+            let json = snapshot.to_json().map_err(|e| {
+                warn!("Wyrdstone backup serialize failed: {e}");
+                "city.panel.backup.error"
+            })?;
+            storage
+                .set_item(WEB_STORAGE_BACKUP_KEY, &json)
+                .map_err(|_| {
+                    warn!("Wyrdstone backup export failed writing localStorage");
+                    "city.panel.backup.error"
+                })?;
+            Ok(format!("localStorage:{WEB_STORAGE_BACKUP_KEY}"))
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(backup_path) = resolve_backup_path(self.save_path.as_deref()) else {
+                warn!("Wyrdstone backup export unavailable: no accessible backup directory");
+                return Err("city.panel.backup.error");
+            };
+            snapshot.save_to_path(&backup_path).map_err(|e| {
+                warn!("Wyrdstone backup export failed: {e}");
+                "city.panel.backup.error"
+            })?;
+            Ok(backup_path.display().to_string())
+        }
     }
 
-    /// Imports `wyrdstone_backup.json`, restoring full player state and persisting to primary save.
+    /// Imports `wyrdstone_backup.json` (or `localStorage` backup on Web), restoring full player
+    /// state and persisting to primary save.
     pub fn import_backup(&mut self) -> Result<(), &'static str> {
-        let Some(backup_path) = resolve_backup_path(self.save_path.as_deref()) else {
-            warn!("Wyrdstone backup import unavailable: no accessible backup directory");
-            return Err("city.panel.backup.error");
-        };
-        if !backup_path.exists() {
-            return Err("city.panel.backup.missing");
-        }
-        let saved = match SaveData::load_from_path(&backup_path) {
-            Ok(Some(s)) => s,
-            Ok(None) => return Err("city.panel.backup.missing"),
-            Err(e) => {
-                warn!("Wyrdstone backup import failed: {e}");
-                return Err("city.panel.backup.error");
-            }
-        };
+        let saved = load_backup_snapshot(self.save_path.as_deref())?;
+        self.apply_imported_save(saved)
+    }
+
+    fn apply_imported_save(&mut self, saved: SaveData) -> Result<(), &'static str> {
         self.lift_save_read_only()?;
         self.data.i18n.set_language(saved.language);
         self.audio_muted = saved.muted;
@@ -1206,6 +1277,94 @@ impl GameContext {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn load_backup_snapshot(save_path: Option<&std::path::Path>) -> Result<SaveData, &'static str> {
+    let Some(backup_path) = resolve_backup_path(save_path) else {
+        warn!("Wyrdstone backup import unavailable: no accessible backup directory");
+        return Err("city.panel.backup.error");
+    };
+    if !backup_path.exists() {
+        return Err("city.panel.backup.missing");
+    }
+    match SaveData::load_from_path(&backup_path) {
+        Ok(Some(s)) => Ok(s),
+        Ok(None) => Err("city.panel.backup.missing"),
+        Err(e) => {
+            warn!("Wyrdstone backup import failed: {e}");
+            Err("city.panel.backup.error")
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_backup_snapshot(_save_path: Option<&std::path::Path>) -> Result<SaveData, &'static str> {
+    let Some(storage) = web_local_storage() else {
+        warn!("Wyrdstone backup import unavailable: localStorage inaccessible");
+        return Err("city.panel.backup.error");
+    };
+    let raw = match storage.get_item(WEB_STORAGE_BACKUP_KEY) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return Err("city.panel.backup.missing"),
+        Err(_) => {
+            warn!("Wyrdstone backup import failed reading localStorage");
+            return Err("city.panel.backup.error");
+        }
+    };
+    SaveData::from_json_validated(&raw).map_err(|e| {
+        warn!("Wyrdstone backup import failed: {e}");
+        "city.panel.backup.error"
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn web_local_storage() -> Option<web_sys::Storage> {
+    web_sys::window().and_then(|w| w.local_storage().ok().flatten())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_web_save(
+    save_file_verified: &mut bool,
+    save_read_only: &mut bool,
+    save_read_only_cause: &mut Option<ReadOnlyCause>,
+    save_read_only_has_progress: &mut bool,
+    status_notice_key: &mut Option<String>,
+    has_unreadable_save: &mut bool,
+) -> Option<SaveData> {
+    let storage = web_local_storage()?;
+    if let Ok(Some(raw)) = storage.get_item(WEB_STORAGE_SAVE_KEY) {
+        match SaveData::from_json_validated(&raw) {
+            Ok(saved) => {
+                *save_file_verified = true;
+                return Some(saved);
+            }
+            Err(err) => {
+                *has_unreadable_save = true;
+                if err.contains("newer version") {
+                    warn!("Wyrdstone web save was written by a newer version: {err}");
+                    *save_read_only = true;
+                    *save_read_only_cause = Some(ReadOnlyCause::NewerVersion);
+                    *status_notice_key = Some(NOTICE_SAVE_NEWER_VERSION.to_string());
+                    if let Ok(Some(bak_raw)) = storage.get_item(WEB_STORAGE_BACKUP_KEY) {
+                        if let Ok(bak) = SaveData::from_json_validated(&bak_raw) {
+                            *save_read_only_has_progress = true;
+                            return Some(bak);
+                        }
+                    }
+                    return None;
+                }
+                warn!("Wyrdstone web save could not be parsed: {err}");
+            }
+        }
+    }
+    if let Ok(Some(bak_raw)) = storage.get_item(WEB_STORAGE_BACKUP_KEY) {
+        if let Ok(bak) = SaveData::from_json_validated(&bak_raw) {
+            return Some(bak);
+        }
+    }
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_backup_path(save_path: Option<&std::path::Path>) -> Option<PathBuf> {
     #[cfg(not(target_os = "android"))]
     {
@@ -1221,6 +1380,7 @@ fn resolve_backup_path(save_path: Option<&std::path::Path>) -> Option<PathBuf> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_save_path() -> Option<PathBuf> {
     #[cfg(not(target_os = "android"))]
     {
@@ -1237,10 +1397,17 @@ fn resolve_save_path() -> Option<PathBuf> {
 }
 
 pub fn now_unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        (js_sys::Date::now() / 1000.0).max(0.0) as u64
+    }
 }
 
 /// Returns the current UTC day number for Daily Trial tracking.

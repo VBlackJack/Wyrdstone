@@ -44,6 +44,7 @@ const PORTRAIT_JARL_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrai
 const PORTRAIT_BROKK_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_brokk.png");
 const PORTRAIT_VOLVA_PNG: &[u8] = include_bytes!("../../../assets/sprites/portrait_volva.png");
 const WYRDSTONE_LOGO_PNG: &[u8] = include_bytes!("../../../assets/sprites/wyrdstone_logo.png");
+#[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/sprites/app_icon.png");
 const TOOL_MJOLNIR_PNG: &[u8] = include_bytes!("../../../assets/sprites/tool_mjolnir.png");
 const TOOL_SURTR_PNG: &[u8] = include_bytes!("../../../assets/sprites/tool_surtr.png");
@@ -90,6 +91,7 @@ pub struct FjordTextures {
 }
 
 /// Decodes the bundled app icon PNG into raw RGBA8 bytes and dimensions for native window icons.
+#[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
 pub fn app_icon_rgba() -> (Vec<u8>, u32, u32) {
     let img = decode_png(APP_ICON_PNG);
     let w = img.width();

@@ -1,0 +1,81 @@
+# Copyright 2026 Julien Bombled - Apache 2.0
+name: Deploy Web (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: "1.97.1"
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install wasm-bindgen-cli matching Cargo.lock
+        run: |
+          WBG_VER=$(python3 -c '
+          import tomllib
+          with open("Cargo.lock", "rb") as f:
+              lock = tomllib.load(f)
+          for pkg in lock.get("package", []):
+              if pkg.get("name") == "wasm-bindgen":
+                  print(pkg["version"])
+                  break
+          ')
+          echo "Detected wasm-bindgen version: ${WBG_VER}"
+          URL="https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${WBG_VER}/wasm-bindgen-${WBG_VER}-x86_64-unknown-linux-musl.tar.gz"
+          mkdir -p "$HOME/.local/bin"
+          if curl -fsSL "$URL" -o /tmp/wbg.tar.gz; then
+            tar -xzf /tmp/wbg.tar.gz -C /tmp
+            cp "/tmp/wasm-bindgen-${WBG_VER}-x86_64-unknown-linux-musl/wasm-bindgen" "$HOME/.local/bin/wasm-bindgen"
+            chmod +x "$HOME/.local/bin/wasm-bindgen"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          else
+            cargo install wasm-bindgen-cli --version "${WBG_VER}" --locked
+          fi
+      - name: Install binaryen for wasm-opt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binaryen
+      - name: Build Wyrdstone WASM32 release binary
+        run: cargo build --release --locked --target wasm32-unknown-unknown --bin wyrdstone
+      - name: Package Web bundle
+        run: |
+          mkdir -p dist
+          wasm-bindgen --out-dir dist --out-name wyrdstone --target web --no-typescript target/wasm32-unknown-unknown/release/wyrdstone.wasm
+          wasm-opt -Oz --strip-debug -o dist/wyrdstone_bg.wasm dist/wyrdstone_bg.wasm
+          cp web/index.html dist/index.html
+          cp assets/sprites/app_icon.png dist/app_icon.png
+          touch dist/.nojekyll
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: dist
+
+  deploy:
+    needs: [build-web]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

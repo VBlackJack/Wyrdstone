@@ -34,11 +34,16 @@ mod vfx_art;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::{ButtonState, InputSystem};
 use bevy::prelude::*;
-use bevy::window::{
-    MonitorSelection, WindowMode, WindowPosition, WindowResizeConstraints, WindowResolution,
-};
+#[cfg(all(target_os = "android", not(target_arch = "wasm32")))]
+use bevy::window::MonitorSelection;
+#[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+use bevy::window::{MonitorSelection, WindowMode};
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::window::{WindowPosition, WindowResizeConstraints, WindowResolution};
 use state::{tick_energy_regen, AppState, GameContext};
-use theme::{COLOR_BG_DEEP, WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH};
+use theme::COLOR_BG_DEEP;
+#[cfg(not(target_arch = "wasm32"))]
+use theme::{WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH};
 
 /// Android entry point invoked by `android-activity` / `cargo-apk`.
 #[cfg(target_os = "android")]
@@ -58,6 +63,7 @@ pub fn run_app() {
     let window_title = ctx.data.i18n.t("app.title.name").to_string();
     let mut app = App::new();
 
+    #[cfg(not(target_arch = "wasm32"))]
     let window_plugin = WindowPlugin {
         primary_window: Some(Window {
             title: window_title,
@@ -69,6 +75,17 @@ pub fn run_app() {
                 ..default()
             },
             resizable: true,
+            ..default()
+        }),
+        ..default()
+    };
+    #[cfg(target_arch = "wasm32")]
+    let window_plugin = WindowPlugin {
+        primary_window: Some(Window {
+            title: window_title,
+            canvas: Some("#wyrdstone-canvas".into()),
+            fit_canvas_to_parent: true,
+            prevent_default_event_handling: true,
             ..default()
         }),
         ..default()
@@ -98,8 +115,15 @@ pub fn run_app() {
             })
             .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
     };
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(all(not(target_os = "windows"), not(target_arch = "wasm32")))]
     let plugins = DefaultPlugins.set(window_plugin);
+    #[cfg(target_arch = "wasm32")]
+    let plugins = DefaultPlugins
+        .set(bevy::asset::AssetPlugin {
+            meta_check: bevy::asset::AssetMetaCheck::Never,
+            ..default()
+        })
+        .set(window_plugin);
 
     app.add_plugins(plugins)
         .insert_resource(ClearColor(COLOR_BG_DEEP))
@@ -222,10 +246,12 @@ pub fn run_app() {
 
 fn setup_camera(
     mut commands: Commands,
-    #[cfg(not(target_os = "android"))] winit_windows: NonSend<bevy::winit::WinitWindows>,
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] winit_windows: NonSend<
+        bevy::winit::WinitWindows,
+    >,
 ) {
     commands.spawn(Camera2d);
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
     {
         let (rgba, w, h) = fjord_art::app_icon_rgba();
         if let Ok(icon) = winit::window::Icon::from_rgba(rgba, w, h) {
@@ -245,7 +271,7 @@ fn handle_global_shortcuts(
     mut ctx: ResMut<GameContext>,
     mut sound_bank: ResMut<audio::SoundBank>,
     mut bgm_sinks: Query<&mut AudioSink, With<audio::BgmTrack>>,
-    #[cfg(not(target_os = "android"))] mut windows: Query<
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] mut windows: Query<
         &mut Window,
         With<bevy::window::PrimaryWindow>,
     >,
@@ -253,7 +279,7 @@ fn handle_global_shortcuts(
     if keys.just_pressed(KeyCode::KeyM) {
         audio::toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
     if keys.just_pressed(KeyCode::F11) {
         if let Ok(mut window) = windows.get_single_mut() {
             window.mode = match window.mode {

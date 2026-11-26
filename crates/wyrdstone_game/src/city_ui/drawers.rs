@@ -869,7 +869,7 @@ pub(super) fn spawn_menu_drawer(
     fjord_art: &FjordTextures,
     sound_bank: &SoundBank,
     scroll_offset_y: f32,
-    #[cfg(not(target_os = "android"))] is_fullscreen: bool,
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] is_fullscreen: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let tribute_ready = ctx.city.is_login_tribute_available(today_day_index());
@@ -950,7 +950,7 @@ pub(super) fn spawn_menu_drawer(
                 );
             });
 
-            #[cfg(not(target_os = "android"))]
+            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
             {
                 let fs_label = if is_fullscreen {
                     i18n.t("city.settings.display_windowed")
@@ -979,7 +979,7 @@ pub(super) fn spawn_menu_drawer(
                 true,
             );
 
-            #[cfg(not(target_os = "android"))]
+            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
             body.spawn((
                 Text::new(i18n.t("city.drawer.menu.shortcuts")),
                 TextFont {
