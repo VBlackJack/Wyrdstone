@@ -96,7 +96,7 @@ jobs:
           echo "::add-mask::$KEYSTORE_PASSWORD"
           echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
       - name: Build Android ARM64 APK
-        run: cargo apk build --release --locked -p wyrdstone_game --lib
+        run: cargo apk build --release -p wyrdstone_game --lib
       - name: Rename Android APK
         run: |
           shopt -s nullglob
