@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!-- Copyright 2026 Julien Bombled - Apache 2.0 -->
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -124,8 +124,27 @@
   </div>
   <script type="module">
     const loader = document.getElementById("loader");
+    const loaderSubtitle = loader.querySelector(".subtitle");
     const errorBox = document.getElementById("error-box");
     const errorMsg = document.getElementById("error-msg");
+    const isFrench = (navigator.language || "en").toLowerCase().startsWith("fr");
+    const WEB_COPY = isFrench
+      ? {
+          lang: "fr",
+          loading: "Chargement du Match-3 nordique et de la Saga du Fjord...",
+          noWebgl2: "WebGL2 est requis pour jouer a Wyrdstone dans un navigateur. Activez l'acceleration materielle ou essayez un navigateur recent.",
+          launchFailed: "Echec du lancement de la version WebGL de Wyrdstone. Veuillez recharger la page."
+        }
+      : {
+          lang: "en",
+          loading: "Loading Nordic Match-3 & Fjord Saga...",
+          noWebgl2: "WebGL2 is required to play Wyrdstone in a browser. Please enable hardware acceleration or try a modern browser.",
+          launchFailed: "Failed to launch Wyrdstone WebGL build. Please reload the page."
+        };
+    document.documentElement.lang = WEB_COPY.lang;
+    if (loaderSubtitle) {
+      loaderSubtitle.textContent = WEB_COPY.loading;
+    }
     const audioContexts = [];
 
     function patchAudioContext(name) {
@@ -154,6 +173,7 @@
 
     const stageEl = document.getElementById("wyrdstone-stage");
     let pendingFullscreenTap = false;
+    let pendingFullscreenListener = null;
     let pendingOrientation = "auto";
     let resizeRaf = 0;
     let resizeTimers = [];
@@ -195,8 +215,15 @@
       stageObserver.observe(stageEl);
     }
 
-    window.addEventListener("fullscreenchange", scheduleCanvasResize);
-    window.addEventListener("webkitfullscreenchange", scheduleCanvasResize);
+    function handleFullscreenChange() {
+      if (window.wyrdstoneIsFullscreen()) {
+        clearPendingFullscreenTap();
+      }
+      scheduleCanvasResize();
+    }
+
+    window.addEventListener("fullscreenchange", handleFullscreenChange);
+    window.addEventListener("webkitfullscreenchange", handleFullscreenChange);
     window.addEventListener("orientationchange", scheduleCanvasResize);
     if (screen && screen.orientation && typeof screen.orientation.addEventListener === "function") {
       screen.orientation.addEventListener("change", scheduleCanvasResize);
@@ -255,38 +282,49 @@
       }
     }
 
+    function clearPendingFullscreenTap() {
+      pendingFullscreenTap = false;
+      if (pendingFullscreenListener) {
+        window.removeEventListener("pointerdown", pendingFullscreenListener, true);
+        window.removeEventListener("touchend", pendingFullscreenListener, true);
+        pendingFullscreenListener = null;
+      }
+    }
+
     function armPendingFullscreenTap(mode) {
       pendingOrientation = mode || "auto";
       if (pendingFullscreenTap) return;
       pendingFullscreenTap = true;
-      const runOnTap = () => {
-        pendingFullscreenTap = false;
-        window.removeEventListener("pointerdown", runOnTap, true);
-        window.removeEventListener("touchend", runOnTap, true);
+      pendingFullscreenListener = () => {
         const chosen = pendingOrientation;
+        clearPendingFullscreenTap();
         enterFullscreenNow()
           .then(() => applyOrientationLock(chosen))
           .catch(() => {});
       };
-      window.addEventListener("pointerdown", runOnTap, true);
-      window.addEventListener("touchend", runOnTap, true);
+      window.addEventListener("pointerdown", pendingFullscreenListener, true);
+      window.addEventListener("touchend", pendingFullscreenListener, true);
     }
 
     window.wyrdstoneEnterFullscreen = function (orientation) {
       const mode = orientation || "auto";
       if (window.wyrdstoneIsFullscreen()) {
+        clearPendingFullscreenTap();
         applyOrientationLock(mode);
         return;
       }
       enterFullscreenNow()
-        .then(() => applyOrientationLock(mode))
+        .then(() => {
+          clearPendingFullscreenTap();
+          applyOrientationLock(mode);
+        })
         .catch(() => {
           armPendingFullscreenTap(mode);
         });
     };
 
     window.wyrdstoneExitFullscreen = function () {
-      pendingFullscreenTap = false;
+      clearPendingFullscreenTap();
       try {
         if (screen && screen.orientation && typeof screen.orientation.unlock === "function") {
           screen.orientation.unlock();
@@ -326,7 +364,7 @@
     }
 
     if (!hasWebGL2()) {
-      showError("WebGL2 is required to play Wyrdstone in a browser. Please enable hardware acceleration or try a modern browser.");
+      showError(WEB_COPY.noWebgl2);
     } else {
       import("./wyrdstone.js")
         .then((mod) => mod.default())
@@ -340,7 +378,7 @@
             return;
           }
           console.error("Wyrdstone startup failure:", err);
-          showError("Failed to launch Wyrdstone WebGL build. Please reload the page.");
+          showError(WEB_COPY.launchFailed);
         });
     }
   </script>

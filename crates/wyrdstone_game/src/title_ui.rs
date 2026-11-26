@@ -521,7 +521,7 @@ fn spawn_title_tree(
                                         font_size: if is_mobile { FONT_SMALL } else { FONT_BODY },
                                         ..default()
                                     },
-                                    TextColor(COLOR_TEXT_PRIMARY),
+                                    TextColor(title_util_text_color(bg_col)),
                                     TextLayout::new_with_justify(JustifyText::Center),
                                 ));
                             });
@@ -535,6 +535,15 @@ fn spawn_title_tree(
                 spawn_notice_toast(bg, i18n.t(notice_key), life, safe.bottom);
             }
         });
+}
+
+/// Chooses readable foreground contrast for Title utility buttons.
+fn title_util_text_color(bg_col: Color) -> Color {
+    if bg_col == COLOR_ACCENT_TEAL {
+        COLOR_TEXT_ON_ACCENT
+    } else {
+        COLOR_TEXT_PRIMARY
+    }
 }
 
 /// Animates the floating WYRDSTONE emblem, aurora ribbons, and snowfall on the Title screen via GPU transforms.
@@ -1061,15 +1070,16 @@ pub fn handle_title_buttons(
                 }
                 #[cfg(not(target_os = "android"))]
                 TitleAction::ToggleFullscreen => {
-                    *bg = BackgroundColor(if fs_now {
+                    let idle_bg = if fs_now {
                         COLOR_ACCENT_TEAL
                     } else {
                         Color::srgba(0.10, 0.14, 0.22, 0.90)
-                    });
+                    };
+                    *bg = BackgroundColor(idle_bg);
                     if let Some(children) = children_opt {
                         for &child in children {
                             if let Ok(mut tc) = text_colors.get_mut(child) {
-                                tc.0 = COLOR_TEXT_PRIMARY;
+                                tc.0 = title_util_text_color(idle_bg);
                             }
                         }
                     }
@@ -1087,5 +1097,22 @@ pub fn handle_title_buttons(
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn title_utility_button_text_color_ensures_wcag_contrast_on_teal() {
+        assert_eq!(
+            title_util_text_color(COLOR_ACCENT_TEAL),
+            COLOR_TEXT_ON_ACCENT
+        );
+        assert_eq!(
+            title_util_text_color(Color::srgba(0.10, 0.14, 0.22, 0.90)),
+            COLOR_TEXT_PRIMARY
+        );
     }
 }

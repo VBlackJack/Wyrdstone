@@ -257,8 +257,13 @@ fn spawn_flying_orbs(
     let has_boss = boss_weakness.is_some();
     let has_non_boss_obj = !session.objectives.is_empty();
     let step = (cells.len() / MAX_FLYING_ORBS_PER_WAVE).max(1);
-    let (obj_target, boss_target) = if layout.hud_mode.is_desktop_wide() {
-        let rail_x = -win_w * 0.5 + DESKTOP_SIDE_RAIL_WIDTH_PX * 0.5 + 14.0;
+    let (obj_target, boss_target) = if layout.hud_mode.uses_side_rails() {
+        let rail_w = if layout.side_rail_width_px > 0.0 {
+            layout.side_rail_width_px
+        } else {
+            DESKTOP_SIDE_RAIL_WIDTH_PX
+        };
+        let rail_x = -win_w * 0.5 + rail_w * 0.5 + 10.0;
         (
             Vec2::new(rail_x, win_h * 0.10),
             Vec2::new(rail_x, win_h * 0.16),
@@ -1817,7 +1822,11 @@ pub fn tick_board_animation(
                                         ..default()
                                     },
                                     TextColor(COLOR_ACCENT_GOLD),
-                                    Transform::from_xyz(0.0, 10.0, Z_SELECTION_RING + 3.0),
+                                    Transform::from_xyz(
+                                        0.0,
+                                        input_state.board_center_y + 10.0,
+                                        Z_SELECTION_RING + 3.0,
+                                    ),
                                 ));
                                 let victory_secs = ctx.anim_duration(
                                     (VICTORY_BASE_SECS
@@ -2297,6 +2306,14 @@ fn finalize_level_transition(
                         *input_state = Match3InputState {
                             reduced_motion: ctx.reduced_motion,
                             hud_mode: input_state.hud_mode,
+                            side_rail_width_px: input_state.side_rail_width_px,
+                            last_fullscreen: input_state.last_fullscreen,
+                            measured_top_hud_px: input_state.measured_top_hud_px,
+                            measured_bottom_hud_px: input_state.measured_bottom_hud_px,
+                            tile_size: input_state.tile_size,
+                            cell_step: input_state.cell_step,
+                            board_origin: input_state.board_origin,
+                            board_center_y: input_state.board_center_y,
                             dirty_static_board: true,
                             dirty_board: true,
                             dirty_hud: true,

@@ -1193,7 +1193,9 @@ impl GameContext {
 
     /// Launches the 4-boss Ragnarok Gauntlet rush, consuming 1 Endurance.
     pub fn start_gauntlet(&mut self) -> Result<(), &'static str> {
-        if self.city.glory < 50 && self.city.defeated_bosses.is_empty() {
+        if self.city.glory < wyrdstone_core::GAUNTLET_UNLOCK_GLORY
+            && self.city.defeated_bosses.is_empty()
+        {
             return Err("city.panel.raids.gauntlet_locked");
         }
         if !self.city.try_spend_energy(&self.data.balance) {

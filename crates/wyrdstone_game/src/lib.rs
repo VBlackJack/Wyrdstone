@@ -43,7 +43,7 @@ use bevy::window::{WindowPosition, WindowResizeConstraints, WindowResolution};
 use state::{tick_energy_regen, AppState, GameContext};
 use theme::COLOR_BG_DEEP;
 #[cfg(not(target_arch = "wasm32"))]
-use theme::{WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH};
+use theme::{WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH};
 
 /// Android entry point invoked by `android-activity` / `cargo-apk`.
 #[cfg(target_os = "android")]
@@ -70,8 +70,8 @@ pub fn run_app() {
             resolution: WindowResolution::new(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT),
             position: WindowPosition::Centered(MonitorSelection::Primary),
             resize_constraints: WindowResizeConstraints {
-                min_width: 360.0,
-                min_height: 540.0,
+                min_width: WINDOW_MIN_WIDTH,
+                min_height: WINDOW_MIN_HEIGHT,
                 ..default()
             },
             resizable: true,

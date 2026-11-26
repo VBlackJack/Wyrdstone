@@ -477,7 +477,9 @@ fn apply_mode_unlock_celebration(ctx: &mut GameContext, modes: &[PlayMode], dura
         &[("modes", names.join(sep))],
     );
     ctx.celebration_message = Some(match ctx.celebration_message.take() {
-        Some(existing) if !existing.is_empty() => format!("{existing} | {msg}"),
+        Some(existing) if !existing.is_empty() => {
+            format!("{existing}{}{msg}", ctx.data.i18n.t("ui.separator.pipe"))
+        }
         _ => msg,
     });
     ctx.celebration_timer_secs = ctx.celebration_timer_secs.max(duration_secs);
@@ -5112,11 +5114,18 @@ fn claim_endless_decree_action(
     let mut summary = modals::format_reward_summary(&ctx.data.i18n, res, glory);
     if let Some(tool) = tool_opt {
         if let Some(recipe) = ctx.data.tool_shop.iter().find(|r| r.tool == tool) {
+            let plus_one = ctx
+                .data
+                .i18n
+                .t_fmt("match3.popup.score", &[("n", "1".to_string())]);
             let tool_lbl = ctx
                 .data
                 .i18n
-                .t_fmt(&recipe.name_key, &[("count", "+1".to_string())]);
-            summary.push_str(&format!(" + {tool_lbl}"));
+                .t_fmt(&recipe.name_key, &[("count", plus_one)]);
+            summary = ctx.data.i18n.t_fmt(
+                "ui.reward.append_item",
+                &[("base", summary), ("item", tool_lbl)],
+            );
         }
     }
     let title = ctx

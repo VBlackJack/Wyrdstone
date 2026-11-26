@@ -43,7 +43,7 @@ pub use board::{
 pub use boss::{
     BossDef, BossRiposteKind, BossState, GauntletRun, BOSS_RAID_BUILDING_ID, GAUNTLET_BUILDING_ID,
     GAUNTLET_CLEAR_GLORY, GAUNTLET_HP_SCALE_PCT, GAUNTLET_STAGE_BONUS_MOVES,
-    GAUNTLET_STAGE_PARTIAL_GLORY, GAUNTLET_STARTING_MOVES,
+    GAUNTLET_STAGE_PARTIAL_GLORY, GAUNTLET_STARTING_MOVES, GAUNTLET_UNLOCK_GLORY,
 };
 pub use city::{
     validate_city_content, AmuletDef, AmuletEffect, BuildingDef, CityBonuses, CityState, ClanStats,

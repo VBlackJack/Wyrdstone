@@ -464,6 +464,7 @@
   "city.panel.reward.item": "+{amount} {resource}",
   "ui.separator.comma": ", ",
   "ui.separator.pipe": " | ",
+  "ui.reward.append_item": "{base} + {item}",
   "city.panel.shop.crafted": "Forged {tool}!",
   "city.panel.stats.rank_progress": "Clan Rank: {rank} ({glory}/{next} Glory to {next_rank})",
   "city.panel.stats.rank_max": "Clan Rank: {rank} ({glory} Glory - Max Rank)",

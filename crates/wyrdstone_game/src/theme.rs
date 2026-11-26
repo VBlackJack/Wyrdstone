@@ -19,9 +19,13 @@
 use bevy::prelude::*;
 use wyrdstone_core::RuneType;
 
-/// Window defaults for desktop targets.
+/// Window defaults and minimum resize bounds for desktop targets.
 pub const WINDOW_DEFAULT_WIDTH: f32 = 1360.0;
 pub const WINDOW_DEFAULT_HEIGHT: f32 = 860.0;
+#[cfg(not(target_arch = "wasm32"))]
+pub const WINDOW_MIN_WIDTH: f32 = 360.0;
+#[cfg(not(target_arch = "wasm32"))]
+pub const WINDOW_MIN_HEIGHT: f32 = 540.0;
 
 /// Procedural colorblind badge texture resolution in pixels.
 pub const RUNE_TEX_SIZE: usize = 64;

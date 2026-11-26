@@ -43,6 +43,9 @@ use crate::turn::ClearStatsDelta;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+/// Minimum Glory that unlocks Boss Raids early alongside Hall progression.
+pub const BOSS_RAIDS_UNLOCK_GLORY: u32 = 50;
+
 /// Maximum mastery star rank per building location.
 pub const MAX_MASTERY_STARS: u8 = 5;
 /// Permanent spoils bonus percentage granted per building mastery star (`+5%`..=`+25%`).
@@ -944,7 +947,7 @@ impl CityState {
             }
             PlayMode::BossRaids => {
                 (hall_tier >= 1 && self.stats.total_victories >= 3)
-                    || self.glory >= 50
+                    || self.glory >= BOSS_RAIDS_UNLOCK_GLORY
                     || !self.defeated_bosses.is_empty()
             }
             PlayMode::Expedition => {

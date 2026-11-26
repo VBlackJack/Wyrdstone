@@ -29,6 +29,8 @@ pub const BOSS_RAID_BUILDING_ID: &str = "boss_raid";
 pub const GAUNTLET_BUILDING_ID: &str = "ragnarok_gauntlet";
 /// Starting shared move pool for the 4-boss Ragnarok Gauntlet.
 pub const GAUNTLET_STARTING_MOVES: u32 = 42;
+/// Minimum Glory required to unlock the Ragnarok Gauntlet (unless a boss is already slain).
+pub const GAUNTLET_UNLOCK_GLORY: u32 = 50;
 /// Bonus moves granted after defeating each non-final Gauntlet boss.
 pub const GAUNTLET_STAGE_BONUS_MOVES: u32 = 8;
 /// Boss HP scaling percentage during Ragnarok Gauntlet stages.

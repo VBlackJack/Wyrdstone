@@ -474,12 +474,15 @@ pub(super) fn spawn_amulets_modal(
                     ))
                     .with_children(|sbox| {
                         for syn in synergies {
+                            let line = i18n.t_fmt(
+                                "city.celebration.claim_line",
+                                &[
+                                    ("title", i18n.t(syn.name_key()).to_string()),
+                                    ("summary", i18n.t(syn.desc_key()).to_string()),
+                                ],
+                            );
                             sbox.spawn((
-                                Text::new(format!(
-                                    "{} - {}",
-                                    i18n.t(syn.name_key()),
-                                    i18n.t(syn.desc_key())
-                                )),
+                                Text::new(line),
                                 TextFont {
                                     font_size: FONT_SMALL,
                                     ..default()
@@ -2116,7 +2119,8 @@ pub(super) fn spawn_raids_modal(
                     });
                 });
 
-            let gauntlet_unlocked = ctx.city.glory >= 50 || !ctx.city.defeated_bosses.is_empty();
+            let gauntlet_unlocked = ctx.city.glory >= wyrdstone_core::GAUNTLET_UNLOCK_GLORY
+                || !ctx.city.defeated_bosses.is_empty();
             modal
                 .spawn((
                     Node {
@@ -3386,7 +3390,9 @@ pub(super) fn spawn_welcome_back_modal(
                         (vfx.icon_mead.clone(), summary.rewards.mead, COLOR_RES_MEAD),
                     ] {
                         if amount > 0 {
-                            spawn_resource_pill_with_icon(row, icon, &format!("+{amount}"), col);
+                            let amount_lbl =
+                                i18n.t_fmt("match3.popup.score", &[("n", amount.to_string())]);
+                            spawn_resource_pill_with_icon(row, icon, &amount_lbl, col);
                         }
                     }
                 });
@@ -3651,9 +3657,12 @@ pub(super) fn spawn_bounties_modal(
                 let mut reward_text = format_reward_summary(i18n, res, glory);
                 if let Some(tool) = tool_opt {
                     if let Some(recipe) = ctx.data.tool_shop.iter().find(|r| r.tool == tool) {
-                        let tool_label =
-                            i18n.t_fmt(&recipe.name_key, &[("count", "+1".to_string())]);
-                        reward_text.push_str(&format!(" + {tool_label}"));
+                        let plus_one = i18n.t_fmt("match3.popup.score", &[("n", "1".to_string())]);
+                        let tool_label = i18n.t_fmt(&recipe.name_key, &[("count", plus_one)]);
+                        reward_text = i18n.t_fmt(
+                            "ui.reward.append_item",
+                            &[("base", reward_text), ("item", tool_label)],
+                        );
                     }
                 }
                 modal
@@ -3913,8 +3922,9 @@ pub(super) fn spawn_wonder_modal(
                         if let Some(tool) = next_tool {
                             if let Some(recipe) = ctx.data.tool_shop.iter().find(|r| r.tool == tool)
                             {
-                                let tool_lbl =
-                                    i18n.t_fmt(&recipe.name_key, &[("count", "+1".to_string())]);
+                                let plus_one =
+                                    i18n.t_fmt("match3.popup.score", &[("n", "1".to_string())]);
+                                let tool_lbl = i18n.t_fmt(&recipe.name_key, &[("count", plus_one)]);
                                 card.spawn((
                                     Text::new(i18n.t_fmt(
                                         "city.wonder.milestone_tool",

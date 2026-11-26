@@ -515,7 +515,14 @@ pub(super) fn spawn_building_inspector(
                                     0 => i18n.t("city.inspector.mastery_next_mastery").to_string(),
                                     1 => i18n.t_fmt(
                                         "city.inspector.mastery_next_spoils",
-                                        &[("stars", "2".to_string()), ("spoils", "10".to_string())],
+                                        &[
+                                            ("stars", "2".to_string()),
+                                            (
+                                                "spoils",
+                                                (2 * wyrdstone_core::MASTERY_SPOILS_PCT_PER_STAR)
+                                                    .to_string(),
+                                            ),
+                                        ],
                                     ),
                                     2 => {
                                         i18n.t("city.inspector.mastery_next_legendary").to_string()
@@ -524,7 +531,11 @@ pub(super) fn spawn_building_inspector(
                                         "city.inspector.mastery_next_harvest",
                                         &[
                                             ("stars", "4".to_string()),
-                                            ("spoils", "20".to_string()),
+                                            (
+                                                "spoils",
+                                                (4 * wyrdstone_core::MASTERY_SPOILS_PCT_PER_STAR)
+                                                    .to_string(),
+                                            ),
                                             (
                                                 "harvest",
                                                 wyrdstone_core::MASTERY_HARVEST_PCT_AT_4_STARS
@@ -535,8 +546,16 @@ pub(super) fn spawn_building_inspector(
                                     4 => i18n.t_fmt(
                                         "city.inspector.mastery_next_harvest",
                                         &[
-                                            ("stars", "5".to_string()),
-                                            ("spoils", "25".to_string()),
+                                            (
+                                                "stars",
+                                                wyrdstone_core::MAX_MASTERY_STARS.to_string(),
+                                            ),
+                                            (
+                                                "spoils",
+                                                (u32::from(wyrdstone_core::MAX_MASTERY_STARS)
+                                                    * wyrdstone_core::MASTERY_SPOILS_PCT_PER_STAR)
+                                                    .to_string(),
+                                            ),
                                             (
                                                 "harvest",
                                                 wyrdstone_core::MASTERY_HARVEST_PCT_AT_5_STARS
