@@ -9,6 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Wyrdstone</title>
+  <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" type="image/png" href="./app_icon.png">
   <style>
     * {
@@ -150,6 +151,72 @@
     window.addEventListener("pointerdown", unlockAudio, { passive: true });
     window.addEventListener("touchstart", unlockAudio, { passive: true });
     window.addEventListener("keydown", unlockAudio, { passive: true });
+
+    let pendingFullscreenTap = false;
+    function notifyCanvasResize() {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+    }
+    window.addEventListener("fullscreenchange", notifyCanvasResize);
+    window.addEventListener("webkitfullscreenchange", notifyCanvasResize);
+    window.addEventListener("orientationchange", notifyCanvasResize);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", notifyCanvasResize);
+    }
+
+    window.wyrdstoneFullscreenSupported = function () {
+      const root = document.documentElement;
+      return Boolean(
+        document.fullscreenEnabled ||
+          document.webkitFullscreenEnabled ||
+          (root && (root.requestFullscreen || root.webkitRequestFullscreen))
+      );
+    };
+
+    window.wyrdstoneIsFullscreen = function () {
+      return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+    };
+
+    function enterFullscreenNow() {
+      const root = document.documentElement;
+      if (!root) return Promise.resolve();
+      const fn = root.requestFullscreen || root.webkitRequestFullscreen;
+      if (!fn) return Promise.resolve();
+      try {
+        const res = fn.call(root, { navigationUI: "hide" });
+        return res && typeof res.then === "function" ? res : Promise.resolve();
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
+
+    function armPendingFullscreenTap() {
+      if (pendingFullscreenTap) return;
+      pendingFullscreenTap = true;
+      const runOnTap = () => {
+        pendingFullscreenTap = false;
+        enterFullscreenNow().catch(() => {});
+      };
+      window.addEventListener("pointerdown", runOnTap, { capture: true, once: true });
+      window.addEventListener("touchend", runOnTap, { capture: true, once: true });
+    }
+
+    window.wyrdstoneToggleFullscreen = function () {
+      if (window.wyrdstoneIsFullscreen()) {
+        const exitFn = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exitFn) {
+          try {
+            const res = exitFn.call(document);
+            if (res && typeof res.catch === "function") res.catch(() => {});
+          } catch (_) {}
+        }
+        return;
+      }
+      enterFullscreenNow().catch(() => {
+        armPendingFullscreenTap();
+      });
+    };
 
     function showError(message) {
       loader.classList.add("hidden");

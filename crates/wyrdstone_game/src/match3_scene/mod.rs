@@ -33,6 +33,8 @@ use crate::theme::*;
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+#[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+use bevy::window::{MonitorSelection, WindowMode};
 use std::collections::{HashMap, HashSet};
 use wyrdstone_core::{
     format_patron_desc, ActiveTool, Booster, CellPos, ClearPreview, DailyBountyKind, LevelOutcome,
@@ -249,12 +251,25 @@ pub struct BoosterPulse;
 #[derive(Component)]
 pub struct ToolHoverOverlay;
 
+/// Exclusive floating drawer panel inside Match-3 Portrait mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Match3Drawer {
+    #[default]
+    None,
+    Tools,
+    Actions,
+}
+
 #[derive(Component)]
 pub enum Match3UiAction {
     Retreat,
     Undo,
     RequestHint,
     ToggleHelp,
+    ToggleDrawer(Match3Drawer),
+    CloseDrawer,
+    #[cfg(not(target_os = "android"))]
+    ToggleFullscreen,
     SelectTool(ActiveTool),
     CancelTool,
     TriggerFury,
@@ -335,6 +350,8 @@ pub struct Match3InputState {
     pub board_origin: Vec2,
     pub board_center_y: f32,
     pub hud_mode: HudLayoutMode,
+    pub active_drawer: Match3Drawer,
+    pub last_fullscreen: bool,
     pub measured_top_hud_px: f32,
     pub measured_bottom_hud_px: f32,
     pub dirty_static_board: bool,
@@ -421,6 +438,7 @@ pub fn setup_match3_scene(
     scroll_mem.right_rail_offset_y = 0.0;
     let mut input_state = Match3InputState {
         reduced_motion: ctx.reduced_motion,
+        last_fullscreen: query_is_fullscreen(windows.get_single().ok()),
         ..default()
     };
 
@@ -566,15 +584,34 @@ pub fn setup_match3_scene(
         scroll_mem.left_rail_offset_y,
         scroll_mem.right_rail_offset_y,
         input_state.hud_mode,
+        input_state.active_drawer,
         *safe_area,
         input_state.can_undo(&ctx),
         input_state.undo_used,
         input_state.confirm_retreat,
         input_state.confirm_loki_shuffle,
         input_state.confirm_restart,
+        input_state.last_fullscreen,
         false,
     );
     commands.insert_resource(input_state);
+}
+
+fn query_is_fullscreen(window: Option<&Window>) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = window;
+        crate::platform::is_web_fullscreen()
+    }
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+    {
+        window.is_some_and(|w| !matches!(w.mode, WindowMode::Windowed))
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = window;
+        false
+    }
 }
 
 /// Cleans up all Match-3 entities and resets camera offset on exit.
@@ -624,8 +661,8 @@ pub(super) fn compute_board_layout(
         }
         HudLayoutMode::Portrait => {
             let narrow = win_w < 500.0;
-            let base_top = (if narrow { 178.0 } else { 152.0 }) + safe.top;
-            let base_bot = (if narrow { 174.0 } else { 148.0 }) + safe.bottom;
+            let base_top = (if narrow { 104.0 } else { 96.0 }) + safe.top;
+            let base_bot = (if narrow { 78.0 } else { 74.0 }) + safe.bottom;
             let top_res = base_top.max(layout.measured_top_hud_px);
             let bot_res = base_bot.max(layout.measured_bottom_hud_px);
             let side_margin = 12.0 + safe.left.max(safe.right);
@@ -634,9 +671,12 @@ pub(super) fn compute_board_layout(
             (aw, ah, top_res, bot_res)
         }
     };
-    let step = (avail_w / cols as f32)
-        .min(avail_h / rows as f32)
-        .clamp(MIN_TILE_SIZE_PX, MAX_TILE_SIZE_PX);
+    let max_fit_step = (avail_w / cols as f32).min(avail_h / rows as f32);
+    let step = if max_fit_step < MIN_TILE_SIZE_PX {
+        max_fit_step.max(20.0)
+    } else {
+        max_fit_step.min(MAX_TILE_SIZE_PX)
+    };
     layout.cell_step = step;
     layout.tile_size = step * (1.0 - TILE_GAP_RATIO);
 
@@ -1392,6 +1432,10 @@ pub fn handle_match3_hud_buttons(
     mut scroll_mem: ResMut<UiScrollMemory>,
     mut input_state: ResMut<Match3InputState>,
     mut next_state: ResMut<NextState<AppState>>,
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] mut windows: Query<
+        &mut Window,
+        With<PrimaryWindow>,
+    >,
     selection_markers: Query<Entity, With<SelectionMarker>>,
     kbd_markers: Query<Entity, With<KeyboardCursorMarker>>,
     mut tooltip_q: Query<(&mut Text, &mut Node), With<Match3TooltipText>>,
@@ -1423,6 +1467,13 @@ pub fn handle_match3_hud_buttons(
             ctx.active_modal = ActiveModal::None;
             input_state.confirm_restart = false;
             scroll_mem.modal_offset_y = 0.0;
+            input_state.dirty_hud = true;
+            return;
+        }
+        if input_state.active_drawer != Match3Drawer::None {
+            input_state.active_drawer = Match3Drawer::None;
+            input_state.confirm_retreat = false;
+            input_state.confirm_loki_shuffle = false;
             input_state.dirty_hud = true;
             return;
         }
@@ -1794,6 +1845,7 @@ pub fn handle_match3_hud_buttons(
             Match3UiAction::Undo => {
                 input_state.confirm_retreat = false;
                 input_state.confirm_loki_shuffle = false;
+                input_state.active_drawer = Match3Drawer::None;
                 execute_undo(&mut commands, &mut ctx, &sound_bank, &mut input_state);
             }
             Match3UiAction::RequestHint => {
@@ -1802,6 +1854,7 @@ pub fn handle_match3_hud_buttons(
                 }
                 input_state.confirm_retreat = false;
                 input_state.confirm_loki_shuffle = false;
+                input_state.active_drawer = Match3Drawer::None;
                 let found = request_board_hint(&ctx, &mut input_state);
                 play_sfx(
                     &mut commands,
@@ -1815,11 +1868,13 @@ pub fn handle_match3_hud_buttons(
                 if found {
                     haptics.send(HapticEvent(HapticKind::LightTap));
                 }
+                input_state.dirty_hud = true;
             }
             Match3UiAction::ToggleHelp => {
                 input_state.confirm_retreat = false;
                 input_state.confirm_loki_shuffle = false;
                 input_state.confirm_restart = false;
+                input_state.active_drawer = Match3Drawer::None;
                 ctx.toggle_modal(ActiveModal::Help);
                 if ctx.active_modal == ActiveModal::Help {
                     ctx.armed_tool = None;
@@ -1827,6 +1882,47 @@ pub fn handle_match3_hud_buttons(
                     input_state.overlays_stale = true;
                 }
                 scroll_mem.modal_offset_y = 0.0;
+                input_state.dirty_hud = true;
+            }
+            Match3UiAction::ToggleDrawer(drawer) => {
+                input_state.confirm_retreat = false;
+                input_state.confirm_loki_shuffle = false;
+                input_state.active_drawer = if input_state.active_drawer == drawer {
+                    Match3Drawer::None
+                } else {
+                    drawer
+                };
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                input_state.dirty_hud = true;
+            }
+            Match3UiAction::CloseDrawer => {
+                if input_state.active_drawer != Match3Drawer::None {
+                    input_state.active_drawer = Match3Drawer::None;
+                    input_state.confirm_retreat = false;
+                    input_state.confirm_loki_shuffle = false;
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
+                    input_state.dirty_hud = true;
+                }
+            }
+            #[cfg(not(target_os = "android"))]
+            Match3UiAction::ToggleFullscreen => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    crate::platform::toggle_web_fullscreen();
+                    input_state.last_fullscreen = crate::platform::is_web_fullscreen();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Ok(mut win) = windows.get_single_mut() {
+                    let next_mode = match win.mode {
+                        WindowMode::Windowed => {
+                            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                        }
+                        _ => WindowMode::Windowed,
+                    };
+                    input_state.last_fullscreen = !matches!(next_mode, WindowMode::Windowed);
+                    win.mode = next_mode;
+                }
+                play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 input_state.dirty_hud = true;
             }
             Match3UiAction::ToggleAudio => {
@@ -1881,6 +1977,7 @@ pub fn handle_match3_hud_buttons(
                         *input_state = Match3InputState {
                             reduced_motion: ctx.reduced_motion,
                             hud_mode: input_state.hud_mode,
+                            last_fullscreen: input_state.last_fullscreen,
                             measured_top_hud_px: input_state.measured_top_hud_px,
                             measured_bottom_hud_px: input_state.measured_bottom_hud_px,
                             dirty_static_board: true,
@@ -1906,6 +2003,7 @@ pub fn handle_match3_hud_buttons(
             Match3UiAction::TriggerFury => {
                 input_state.confirm_retreat = false;
                 input_state.confirm_loki_shuffle = false;
+                input_state.active_drawer = Match3Drawer::None;
                 let ready = ctx
                     .active_session
                     .as_ref()
@@ -1945,6 +2043,7 @@ pub fn handle_match3_hud_buttons(
                 if tool == ActiveTool::LokiShuffle {
                     if input_state.confirm_loki_shuffle {
                         input_state.confirm_loki_shuffle = false;
+                        input_state.active_drawer = Match3Drawer::None;
                         execute_loki_shuffle(
                             &mut commands,
                             &mut ctx,
@@ -1963,11 +2062,13 @@ pub fn handle_match3_hud_buttons(
                 } else if ctx.armed_tool == Some(tool) {
                     input_state.confirm_loki_shuffle = false;
                     ctx.armed_tool = None;
+                    input_state.active_drawer = Match3Drawer::None;
                     input_state.overlays_stale = true;
                     input_state.dirty_hud = true;
                 } else {
                     input_state.confirm_loki_shuffle = false;
                     ctx.armed_tool = Some(tool);
+                    input_state.active_drawer = Match3Drawer::None;
                     input_state.selected = None;
                     input_state.overlays_stale = true;
                     input_state.dirty_hud = true;
@@ -2024,7 +2125,10 @@ pub fn handle_board_pointer_input(
         }
         return;
     }
-    if !input_state.is_idle() || ctx.active_modal == ActiveModal::Help {
+    if !input_state.is_idle()
+        || ctx.active_modal == ActiveModal::Help
+        || input_state.active_drawer != Match3Drawer::None
+    {
         for e in &hover_overlays {
             commands.entity(e).try_despawn();
         }
@@ -2037,6 +2141,7 @@ pub fn handle_board_pointer_input(
 
         // Buffer an upcoming swipe during late Falling / SwapRevert frames so rapid chaining never drops input.
         if ctx.active_modal != ActiveModal::Help
+            && input_state.active_drawer == Match3Drawer::None
             && ctx.armed_tool.is_none()
             && matches!(
                 input_state.phase,
@@ -2662,8 +2767,13 @@ pub fn sync_match3_visuals(
         }
         _ => {}
     }
-    // The HUD shows the mute state and volume labels; refresh when the sound bank changes.
+    // The HUD shows the mute state and volume labels; refresh when the sound bank or fullscreen changes.
     if sound_bank.is_changed() {
+        input_state.dirty_hud = true;
+    }
+    let fs_now = query_is_fullscreen(windows.get_single().ok());
+    if fs_now != input_state.last_fullscreen {
+        input_state.last_fullscreen = fs_now;
         input_state.dirty_hud = true;
     }
     if input_state.dirty_static_board {
@@ -2736,12 +2846,14 @@ pub fn sync_match3_visuals(
             scroll_mem.left_rail_offset_y,
             scroll_mem.right_rail_offset_y,
             input_state.hud_mode,
+            input_state.active_drawer,
             *safe_area,
             input_state.can_undo(&ctx),
             input_state.undo_used,
             input_state.confirm_retreat,
             input_state.confirm_loki_shuffle,
             input_state.confirm_restart,
+            input_state.last_fullscreen,
             matches!(input_state.phase, BoardAnimPhase::VictoryCelebration { .. }),
         );
         input_state.dirty_hud = false;
@@ -2750,6 +2862,7 @@ pub fn sync_match3_visuals(
     if !input_state.hud_mode.is_desktop_wide()
         && input_state.is_idle()
         && ctx.active_modal != ActiveModal::Help
+        && input_state.active_drawer == Match3Drawer::None
     {
         let (top_bar_q, bottom_bar_q, tooltip_vis_q) = &hud_measure_q;
         let mut needs_board_refit = false;
@@ -2905,5 +3018,35 @@ mod tests {
             bottom_edge_px >= 170.0 - 0.5,
             "board bottom edge ({bottom_edge_px}) overlapped measured bottom bar (170)"
         );
+    }
+
+    #[test]
+    fn portrait_match3_board_never_overlaps_hud_on_small_phone() {
+        let safe = SafeAreaInsets::default();
+        for &(w, h, top_hud, bot_hud) in &[
+            (360.0_f32, 640.0_f32, 96.0_f32, 70.0_f32),
+            (384.0, 690.0, 96.0, 70.0),
+            (390.0, 844.0, 102.0, 74.0),
+            (360.0, 560.0, 220.0, 130.0),
+        ] {
+            let mut state = Match3InputState {
+                measured_top_hud_px: top_hud,
+                measured_bottom_hud_px: bot_hud,
+                ..default()
+            };
+            compute_board_layout(w, h, 8, 8, safe, &mut state);
+            assert_eq!(state.hud_mode, HudLayoutMode::Portrait);
+            let board_h = state.cell_step * 8.0 + 28.0;
+            let top_edge_px = h * 0.5 - (state.board_center_y + board_h * 0.5);
+            let bottom_edge_px = h * 0.5 + (state.board_center_y - board_h * 0.5);
+            assert!(
+                top_edge_px >= top_hud - 0.5,
+                "board top clipped at {w}x{h}: top_edge={top_edge_px} < top_hud={top_hud}"
+            );
+            assert!(
+                bottom_edge_px >= bot_hud - 0.5,
+                "board bottom clipped at {w}x{h}: bottom_edge={bottom_edge_px} < bot_hud={bot_hud}"
+            );
+        }
     }
 }

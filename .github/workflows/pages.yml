@@ -62,6 +62,7 @@ jobs:
           wasm-bindgen --out-dir dist --out-name wyrdstone --target web --no-typescript target/wasm32-unknown-unknown/wasm-release/wyrdstone.wasm
           wasm-opt --all-features -Oz --strip-debug -o dist/wyrdstone_bg.wasm dist/wyrdstone_bg.wasm
           cp web/index.html dist/index.html
+          cp web/manifest.webmanifest dist/manifest.webmanifest
           cp assets/sprites/app_icon.png dist/app_icon.png
           touch dist/.nojekyll
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

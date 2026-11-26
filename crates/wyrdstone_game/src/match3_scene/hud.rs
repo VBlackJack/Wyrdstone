@@ -594,6 +594,7 @@ fn spawn_objectives_or_boss(
 ) {
     let i18n = &ctx.data.i18n;
     let is_compact = hud_mode.is_compact();
+    let is_portrait = hud_mode == HudLayoutMode::Portrait;
     let is_wide = hud_mode.is_desktop_wide();
     if let Some(boss) = &session.boss {
         let hp_pct = (boss.hp as f32 / boss.def.max_hp.max(1) as f32 * 100.0).clamp(0.0, 100.0);
@@ -643,8 +644,20 @@ fn spawn_objectives_or_boss(
                             ..default()
                         },
                         Node {
-                            width: Val::Px(if is_wide { 54.0 } else { 46.0 }),
-                            height: Val::Px(if is_wide { 54.0 } else { 46.0 }),
+                            width: Val::Px(if is_wide {
+                                54.0
+                            } else if is_portrait {
+                                36.0
+                            } else {
+                                46.0
+                            }),
+                            height: Val::Px(if is_wide {
+                                54.0
+                            } else if is_portrait {
+                                36.0
+                            } else {
+                                46.0
+                            }),
                             border: UiRect::all(Val::Px(2.0)),
                             ..default()
                         },
@@ -761,6 +774,8 @@ fn spawn_objectives_or_boss(
                     Node {
                         width: if is_wide {
                             Val::Percent(100.0)
+                        } else if is_portrait {
+                            Val::Px(132.0)
                         } else if is_compact {
                             Val::Px(150.0)
                         } else {
@@ -844,8 +859,12 @@ fn spawn_objectives_or_boss(
                     } else {
                         Val::Auto
                     },
-                    padding: UiRect::axes(Val::Px(9.0), Val::Px(6.0)),
-                    column_gap: Val::Px(8.0),
+                    padding: if is_portrait {
+                        UiRect::axes(Val::Px(7.0), Val::Px(3.0))
+                    } else {
+                        UiRect::axes(Val::Px(9.0), Val::Px(6.0))
+                    },
+                    column_gap: Val::Px(if is_portrait { 5.0 } else { 8.0 }),
                     align_items: AlignItems::Center,
                     border: UiRect::all(Val::Px(1.5)),
                     ..default()
@@ -874,9 +893,10 @@ fn spawn_objectives_or_boss(
                     } else {
                         None
                     };
+                    let icon_px = if is_portrait { 18.0 } else { 22.0 };
                     pill.spawn(Node {
-                        width: Val::Px(22.0),
-                        height: Val::Px(22.0),
+                        width: Val::Px(icon_px),
+                        height: Val::Px(icon_px),
                         flex_shrink: 0.0,
                         ..default()
                     })
@@ -884,8 +904,8 @@ fn spawn_objectives_or_boss(
                         icon_box.spawn((
                             ImageNode::new(icon),
                             Node {
-                                width: Val::Px(22.0),
-                                height: Val::Px(22.0),
+                                width: Val::Px(icon_px),
+                                height: Val::Px(icon_px),
                                 ..default()
                             },
                         ));
@@ -896,8 +916,8 @@ fn spawn_objectives_or_boss(
                                     position_type: PositionType::Absolute,
                                     left: Val::Px(0.0),
                                     top: Val::Px(0.0),
-                                    width: Val::Px(22.0),
-                                    height: Val::Px(22.0),
+                                    width: Val::Px(icon_px),
+                                    height: Val::Px(icon_px),
                                     ..default()
                                 },
                             ));
@@ -1651,12 +1671,14 @@ pub(super) fn spawn_match3_hud(
     left_rail_scroll_y: f32,
     right_rail_scroll_y: f32,
     hud_mode: HudLayoutMode,
+    active_drawer: super::Match3Drawer,
     safe: SafeAreaInsets,
     can_undo: bool,
     undo_used: bool,
     confirm_retreat: bool,
     confirm_loki_shuffle: bool,
     confirm_restart: bool,
+    is_fullscreen: bool,
     in_valhalla: bool,
 ) {
     let i18n = &ctx.data.i18n;
@@ -1664,6 +1686,7 @@ pub(super) fn spawn_match3_hud(
         return;
     };
     let is_compact = hud_mode.is_compact();
+    let is_portrait = hud_mode == HudLayoutMode::Portrait;
     let is_wide = hud_mode.is_desktop_wide();
 
     commands
@@ -1684,11 +1707,20 @@ pub(super) fn spawn_match3_hud(
                 } else {
                     AlignItems::Center
                 },
-                padding: UiRect {
-                    left: Val::Px(12.0 + safe.left),
-                    right: Val::Px(12.0 + safe.right),
-                    top: Val::Px(12.0 + safe.top),
-                    bottom: Val::Px(12.0 + safe.bottom),
+                padding: if is_portrait {
+                    UiRect {
+                        left: Val::Px(6.0 + safe.left),
+                        right: Val::Px(6.0 + safe.right),
+                        top: Val::Px(6.0 + safe.top),
+                        bottom: Val::Px(6.0 + safe.bottom),
+                    }
+                } else {
+                    UiRect {
+                        left: Val::Px(12.0 + safe.left),
+                        right: Val::Px(12.0 + safe.right),
+                        top: Val::Px(12.0 + safe.top),
+                        bottom: Val::Px(12.0 + safe.bottom),
+                    }
                 },
                 ..default()
             },
@@ -1944,8 +1976,42 @@ pub(super) fn spawn_match3_hud(
                             ));
                         });
                 });
+            } else if is_portrait {
+                spawn_portrait_top_bar(root, ctx, session, fjord_art, textures, vfx, hud_mode);
+                spawn_portrait_bottom_dock(
+                    root,
+                    ctx,
+                    session,
+                    fjord_art,
+                    textures,
+                    vfx,
+                    hud_mode,
+                    active_drawer,
+                    confirm_loki_shuffle,
+                    in_valhalla,
+                );
+                if active_drawer != super::Match3Drawer::None
+                    && ctx.active_modal != ActiveModal::Help
+                {
+                    spawn_portrait_drawer_overlay(
+                        root,
+                        ctx,
+                        session,
+                        fjord_art,
+                        vfx,
+                        sound_bank,
+                        safe,
+                        active_drawer,
+                        can_undo,
+                        undo_used,
+                        confirm_retreat,
+                        confirm_loki_shuffle,
+                        is_fullscreen,
+                        in_valhalla,
+                    );
+                }
             } else {
-                // Top HUD bar (Compact & Portrait layouts)
+                // Top HUD bar (Compact layout)
                 root.spawn((
                     Match3HudBar,
                     Match3TopHudBar,
@@ -2341,7 +2407,11 @@ pub(super) fn spawn_match3_hud(
                                         } else {
                                             i18n.t("city.panel.reduced_motion.off")
                                         };
-                                        for (lbl, act, bg_col) in [
+                                        let mut quick_btns: Vec<(
+                                            String,
+                                            Match3UiAction,
+                                            Color,
+                                        )> = vec![
                                             (
                                                 mute_lbl.to_string(),
                                                 Match3UiAction::ToggleAudio,
@@ -2390,7 +2460,25 @@ pub(super) fn spawn_match3_hud(
                                                     COLOR_PANEL_CARD
                                                 },
                                             ),
-                                        ] {
+                                        ];
+                                        #[cfg(not(target_os = "android"))]
+                                        if crate::platform::is_fullscreen_supported() {
+                                            let fs_lbl = if is_fullscreen {
+                                                i18n.t("app.display.windowed")
+                                            } else {
+                                                i18n.t("app.display.fullscreen")
+                                            };
+                                            quick_btns.push((
+                                                fs_lbl.to_string(),
+                                                Match3UiAction::ToggleFullscreen,
+                                                if is_fullscreen {
+                                                    COLOR_ACCENT_TEAL
+                                                } else {
+                                                    COLOR_PANEL_CARD
+                                                },
+                                            ));
+                                        }
+                                        for (lbl, act, bg_col) in quick_btns {
                                             srow.spawn((
                                                 Button,
                                                 act,
@@ -2461,6 +2549,618 @@ pub(super) fn spawn_match3_hud(
                 });
             }
         });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_portrait_top_bar(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    session: &LevelSession,
+    fjord_art: &FjordTextures,
+    textures: &RuneTextures,
+    vfx: &VfxTextures,
+    hud_mode: HudLayoutMode,
+) {
+    let i18n = &ctx.data.i18n;
+    root.spawn((
+        Match3HudBar,
+        Match3TopHudBar,
+        Interaction::None,
+        FocusPolicy::Block,
+        sliced_panel_image(vfx),
+        Node {
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(4.0),
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
+            ..default()
+        },
+        panel_shadow(),
+    ))
+    .with_children(|top| {
+        top.spawn(Node {
+            width: Val::Percent(100.0),
+            flex_wrap: FlexWrap::Wrap,
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            row_gap: Val::Px(2.0),
+            ..default()
+        })
+        .with_children(|stats| {
+            spawn_moves_score_overdrive(stats, ctx, session, fjord_art, vfx, false);
+        });
+
+        top.spawn(Node {
+            width: Val::Percent(100.0),
+            flex_wrap: FlexWrap::Wrap,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            row_gap: Val::Px(3.0),
+            ..default()
+        })
+        .with_children(|objs| {
+            spawn_objectives_or_boss(objs, ctx, session, fjord_art, textures, vfx, hud_mode);
+            spawn_status_banner(objs, i18n, session);
+        });
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_portrait_bottom_dock(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    session: &LevelSession,
+    fjord_art: &FjordTextures,
+    textures: &RuneTextures,
+    vfx: &VfxTextures,
+    hud_mode: HudLayoutMode,
+    active_drawer: super::Match3Drawer,
+    confirm_loki_shuffle: bool,
+    in_valhalla: bool,
+) {
+    let i18n = &ctx.data.i18n;
+    let total_tools: u32 = [
+        ActiveTool::Mjolnir,
+        ActiveTool::SurtrEmber,
+        ActiveTool::ThorBolt,
+        ActiveTool::BifrostPrism,
+        ActiveTool::DrakkarCharge,
+        ActiveTool::LokiShuffle,
+    ]
+    .iter()
+    .map(|tool| ctx.city.tools.count(*tool))
+    .sum();
+    let tool_armed = ctx.armed_tool.is_some() || confirm_loki_shuffle;
+    let tools_open = active_drawer == super::Match3Drawer::Tools;
+    let actions_open = active_drawer == super::Match3Drawer::Actions;
+
+    root.spawn((
+        Match3HudBar,
+        Match3BottomHudBar,
+        Interaction::None,
+        FocusPolicy::Block,
+        sliced_panel_image(vfx),
+        Node {
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Stretch,
+            row_gap: Val::Px(4.0),
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(5.0)),
+            ..default()
+        },
+        panel_shadow(),
+    ))
+    .with_children(|bottom| {
+        spawn_tooltip_section(bottom, ctx, confirm_loki_shuffle, in_valhalla);
+        if active_drawer == super::Match3Drawer::None && !tool_armed && !in_valhalla {
+            if let Some(ftue_key) = ftue_coach_key(ctx.city.stats.total_victories, session) {
+                bottom.spawn((
+                    Text::new(i18n.t(ftue_key)),
+                    TextFont {
+                        font_size: FONT_SMALL - 1.5,
+                        ..default()
+                    },
+                    TextColor(COLOR_ACCENT_GOLD),
+                    TextLayout::new_with_justify(JustifyText::Center),
+                ));
+            }
+        }
+        bottom
+            .spawn(Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(6.0),
+                ..default()
+            })
+            .with_children(|row| {
+                if session.is_trial {
+                    row.spawn((
+                        Button,
+                        Match3UiAction::RestartBoard,
+                        Node {
+                            flex_grow: 1.0,
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(COLOR_ACCENT_TEAL),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(i18n.t("match3.hud.restart")),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(COLOR_TEXT_ON_ACCENT),
+                        ));
+                    });
+                } else {
+                    row.spawn(Node {
+                        flex_grow: 1.0,
+                        flex_shrink: 1.0,
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Stretch,
+                        ..default()
+                    })
+                    .with_children(|fury_slot| {
+                        spawn_fury_card(
+                            fury_slot,
+                            i18n,
+                            session,
+                            fjord_art,
+                            textures,
+                            hud_mode,
+                            ctx.colorblind_mode,
+                        );
+                    });
+
+                    let tools_bg = if tool_armed {
+                        COLOR_ACCENT_GOLD
+                    } else if tools_open {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        COLOR_PANEL_CARD
+                    };
+                    let tools_fg = if tool_armed {
+                        COLOR_TEXT_DARK
+                    } else if tools_open {
+                        COLOR_TEXT_ON_ACCENT
+                    } else {
+                        COLOR_TEXT_PRIMARY
+                    };
+                    row.spawn((
+                        Button,
+                        Match3UiAction::ToggleDrawer(super::Match3Drawer::Tools),
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                            min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(tools_bg),
+                        BorderColor(if tool_armed || tools_open {
+                            COLOR_ACCENT_GOLD
+                        } else {
+                            COLOR_PANEL_BORDER
+                        }),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(i18n.t_fmt(
+                                "match3.hud.tools_drawer",
+                                &[("count", total_tools.to_string())],
+                            )),
+                            TextFont {
+                                font_size: FONT_SMALL,
+                                ..default()
+                            },
+                            TextColor(tools_fg),
+                        ));
+                    });
+                }
+
+                row.spawn((
+                    Button,
+                    Match3UiAction::ToggleDrawer(super::Match3Drawer::Actions),
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                        min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(1.5)),
+                        ..default()
+                    },
+                    BackgroundColor(if actions_open {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        COLOR_PANEL_CARD
+                    }),
+                    BorderColor(if actions_open {
+                        COLOR_ACCENT_GOLD
+                    } else {
+                        COLOR_PANEL_BORDER
+                    }),
+                    BorderRadius::all(Val::Px(8.0)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new(i18n.t("match3.hud.menu_drawer")),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(if actions_open {
+                            COLOR_TEXT_ON_ACCENT
+                        } else {
+                            COLOR_TEXT_PRIMARY
+                        }),
+                    ));
+                });
+            });
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_portrait_drawer_overlay(
+    root: &mut ChildBuilder,
+    ctx: &GameContext,
+    session: &LevelSession,
+    fjord_art: &FjordTextures,
+    vfx: &VfxTextures,
+    sound_bank: &SoundBank,
+    safe: SafeAreaInsets,
+    active_drawer: super::Match3Drawer,
+    can_undo: bool,
+    undo_used: bool,
+    confirm_retreat: bool,
+    confirm_loki_shuffle: bool,
+    is_fullscreen: bool,
+    in_valhalla: bool,
+) {
+    let i18n = &ctx.data.i18n;
+    #[cfg(target_os = "android")]
+    let _ = is_fullscreen;
+
+    // Full-screen translucent scrim tapping outside dismisses the open drawer cleanly.
+    root.spawn((
+        Button,
+        NoButtonScale,
+        Match3UiAction::CloseDrawer,
+        FocusPolicy::Block,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.64)),
+        ZIndex(70),
+    ));
+
+    let title_key = match active_drawer {
+        super::Match3Drawer::Tools => "match3.hud.drawer_tools_title",
+        super::Match3Drawer::Actions | super::Match3Drawer::None => {
+            "match3.hud.drawer_actions_title"
+        }
+    };
+    root.spawn((
+        FocusPolicy::Block,
+        Interaction::default(),
+        sliced_panel_image(vfx),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(8.0 + safe.left),
+            right: Val::Px(8.0 + safe.right),
+            bottom: Val::Px(74.0 + safe.bottom),
+            max_height: Val::Vh(72.0),
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::all(Val::Px(12.0)),
+            row_gap: Val::Px(8.0),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        modal_shadow(),
+        ZIndex(75),
+    ))
+    .with_children(|drawer| {
+        drawer
+            .spawn((
+                Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    padding: UiRect::bottom(Val::Px(6.0)),
+                    border: UiRect::bottom(Val::Px(1.0)),
+                    ..default()
+                },
+                BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.35)),
+            ))
+            .with_children(|hdr| {
+                hdr.spawn((
+                    Text::new(i18n.t(title_key)),
+                    display_font(fjord_art, FONT_BODY),
+                    TextColor(COLOR_ACCENT_GOLD),
+                ));
+                hdr.spawn((
+                    Button,
+                    Match3UiAction::CloseDrawer,
+                    Node {
+                        min_height: Val::Px(MIN_TOUCH_TARGET_PX),
+                        min_width: Val::Px(MIN_TOUCH_TARGET_PX),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                        ..default()
+                    },
+                    BackgroundColor(COLOR_ACCENT_CRIMSON),
+                    BorderRadius::all(Val::Px(6.0)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        Text::new(i18n.t("city.panel.amulets.close")),
+                        TextFont {
+                            font_size: FONT_SMALL,
+                            ..default()
+                        },
+                        TextColor(COLOR_TEXT_PRIMARY),
+                    ));
+                });
+            });
+
+        match active_drawer {
+            super::Match3Drawer::Tools => {
+                spawn_tooltip_section(drawer, ctx, confirm_loki_shuffle, in_valhalla);
+                let tools = [
+                    (ActiveTool::Mjolnir, "match3.tool.mjolnir"),
+                    (ActiveTool::SurtrEmber, "match3.tool.surtr_ember"),
+                    (ActiveTool::ThorBolt, "match3.tool.thor_bolt"),
+                    (ActiveTool::BifrostPrism, "match3.tool.bifrost_prism"),
+                    (ActiveTool::DrakkarCharge, "match3.tool.drakkar_charge"),
+                    (ActiveTool::LokiShuffle, "match3.tool.loki_shuffle"),
+                ];
+                drawer
+                    .spawn(Node {
+                        flex_wrap: FlexWrap::Wrap,
+                        column_gap: Val::Px(8.0),
+                        row_gap: Val::Px(8.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Stretch,
+                        ..default()
+                    })
+                    .with_children(|grid| {
+                        for (tool, key) in tools {
+                            let count = ctx.city.tools.count(tool);
+                            let armed = ctx.armed_tool == Some(tool)
+                                || (tool == ActiveTool::LokiShuffle && confirm_loki_shuffle);
+                            let bg = if armed {
+                                COLOR_ACCENT_GOLD
+                            } else if count > 0 {
+                                COLOR_PANEL_CARD
+                            } else {
+                                COLOR_BUTTON_DISABLED
+                            };
+                            let fg = if armed {
+                                COLOR_TEXT_DARK
+                            } else if count == 0 {
+                                COLOR_TEXT_MUTED
+                            } else {
+                                COLOR_TEXT_PRIMARY
+                            };
+                            let lbl = if tool == ActiveTool::LokiShuffle && confirm_loki_shuffle {
+                                i18n.t("match3.tool.confirm_loki").to_string()
+                            } else {
+                                i18n.t_fmt(key, &[("count", count.to_string())])
+                            };
+                            let mut btn_cmd = grid.spawn((
+                                Button,
+                                Match3UiAction::SelectTool(tool),
+                                Node {
+                                    flex_grow: 1.0,
+                                    min_width: Val::Px(136.0),
+                                    min_height: Val::Px(48.0),
+                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                                    column_gap: Val::Px(8.0),
+                                    justify_content: JustifyContent::FlexStart,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.5)),
+                                    ..default()
+                                },
+                                BackgroundColor(bg),
+                                BorderColor(if armed {
+                                    COLOR_ACCENT_GOLD_HOVER
+                                } else {
+                                    COLOR_PANEL_BORDER
+                                }),
+                                BorderRadius::all(Val::Px(8.0)),
+                            ));
+                            if count == 0 {
+                                btn_cmd.insert(NoButtonScale);
+                            }
+                            btn_cmd.with_children(|btn| {
+                                if let Some(icon) = fjord_art.tool_icon(tool) {
+                                    btn.spawn((
+                                        ImageNode {
+                                            image: icon,
+                                            color: if count > 0 {
+                                                Color::WHITE
+                                            } else {
+                                                Color::srgba(0.55, 0.55, 0.60, 0.7)
+                                            },
+                                            ..default()
+                                        },
+                                        Node {
+                                            width: Val::Px(28.0),
+                                            height: Val::Px(28.0),
+                                            flex_shrink: 0.0,
+                                            ..default()
+                                        },
+                                        BorderRadius::all(Val::Px(6.0)),
+                                    ));
+                                }
+                                btn.spawn((
+                                    Text::new(lbl),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(fg),
+                                ));
+                            });
+                        }
+                    });
+            }
+            super::Match3Drawer::Actions | super::Match3Drawer::None => {
+                let mut action_btns: Vec<(String, Match3UiAction, Color, Color, bool)> = Vec::new();
+                if !in_valhalla {
+                    action_btns.push((
+                        i18n.t("match3.hud.hint").to_string(),
+                        Match3UiAction::RequestHint,
+                        COLOR_PANEL_CARD,
+                        COLOR_ACCENT_TEAL_TEXT,
+                        false,
+                    ));
+                }
+                let undo_lbl = if undo_used {
+                    i18n.t("match3.hud.undo_used")
+                } else {
+                    i18n.t("match3.hud.undo_short")
+                };
+                action_btns.push((
+                    undo_lbl.to_string(),
+                    Match3UiAction::Undo,
+                    if can_undo {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        COLOR_BUTTON_DISABLED
+                    },
+                    if can_undo {
+                        COLOR_TEXT_ON_ACCENT
+                    } else {
+                        COLOR_TEXT_MUTED
+                    },
+                    !can_undo,
+                ));
+                action_btns.push((
+                    i18n.t("match3.hud.pause_short").to_string(),
+                    Match3UiAction::ToggleHelp,
+                    COLOR_PANEL_CARD,
+                    COLOR_ACCENT_GOLD,
+                    false,
+                ));
+                action_btns.push((
+                    if sound_bank.muted {
+                        i18n.t("app.audio.off").to_string()
+                    } else {
+                        i18n.t("app.audio.on").to_string()
+                    },
+                    Match3UiAction::ToggleAudio,
+                    if sound_bank.muted {
+                        COLOR_BUTTON_DISABLED
+                    } else {
+                        COLOR_PANEL_CARD
+                    },
+                    COLOR_TEXT_PRIMARY,
+                    false,
+                ));
+                #[cfg(not(target_os = "android"))]
+                if crate::platform::is_fullscreen_supported() {
+                    action_btns.push((
+                        if is_fullscreen {
+                            i18n.t("app.display.windowed").to_string()
+                        } else {
+                            i18n.t("app.display.fullscreen").to_string()
+                        },
+                        Match3UiAction::ToggleFullscreen,
+                        if is_fullscreen {
+                            COLOR_ACCENT_TEAL
+                        } else {
+                            COLOR_PANEL_CARD
+                        },
+                        if is_fullscreen {
+                            COLOR_TEXT_ON_ACCENT
+                        } else {
+                            COLOR_TEXT_PRIMARY
+                        },
+                        false,
+                    ));
+                }
+                action_btns.push((
+                    if confirm_retreat {
+                        i18n.t("match3.hud.retreat_confirm").to_string()
+                    } else {
+                        i18n.t("match3.hud.back").to_string()
+                    },
+                    Match3UiAction::Retreat,
+                    if confirm_retreat {
+                        Color::srgb(0.92, 0.20, 0.22)
+                    } else {
+                        COLOR_ACCENT_CRIMSON
+                    },
+                    COLOR_TEXT_PRIMARY,
+                    false,
+                ));
+
+                drawer
+                    .spawn(Node {
+                        flex_wrap: FlexWrap::Wrap,
+                        column_gap: Val::Px(8.0),
+                        row_gap: Val::Px(8.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        ..default()
+                    })
+                    .with_children(|grid| {
+                        for (lbl, act, bg, fg, disabled) in action_btns {
+                            let mut btn_cmd = grid.spawn((
+                                Button,
+                                act,
+                                Node {
+                                    flex_grow: 1.0,
+                                    min_width: Val::Px(134.0),
+                                    min_height: Val::Px(46.0),
+                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.5)),
+                                    ..default()
+                                },
+                                BackgroundColor(bg),
+                                BorderColor(COLOR_PANEL_BORDER),
+                                BorderRadius::all(Val::Px(8.0)),
+                            ));
+                            if disabled {
+                                btn_cmd.insert(NoButtonScale);
+                            }
+                            btn_cmd.with_children(|btn| {
+                                btn.spawn((
+                                    Text::new(lbl),
+                                    TextFont {
+                                        font_size: FONT_SMALL,
+                                        ..default()
+                                    },
+                                    TextColor(fg),
+                                ));
+                            });
+                        }
+                    });
+                spawn_active_buffs_card(drawer, i18n, session);
+            }
+        }
+    });
 }
 
 #[cfg(test)]

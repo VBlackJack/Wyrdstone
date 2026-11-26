@@ -28,6 +28,8 @@ use crate::ui_style::{
 };
 use crate::vfx_art::VfxTextures;
 use bevy::prelude::*;
+#[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 
 const TITLE_SNOWFLAKE_COUNT: usize = 26;
 const TITLE_CONTENT_GAP_PX: f32 = 10.0;
@@ -61,6 +63,25 @@ pub enum TitleAction {
     NewSaga,
     ToggleLanguage,
     ToggleAudio,
+    #[cfg(not(target_os = "android"))]
+    ToggleFullscreen,
+}
+
+fn title_is_fullscreen(
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] window: Option<&Window>,
+) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::platform::is_web_fullscreen()
+    }
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+    {
+        window.is_some_and(|w| !matches!(w.mode, WindowMode::Windowed))
+    }
+    #[cfg(target_os = "android")]
+    {
+        false
+    }
 }
 
 /// Spawns the Title screen hierarchy.
@@ -71,7 +92,15 @@ pub fn setup_title_ui(
     vfx: Res<VfxTextures>,
     sound_bank: Res<SoundBank>,
     safe_area: Res<SafeAreaInsets>,
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] windows: Query<
+        &Window,
+        With<PrimaryWindow>,
+    >,
 ) {
+    let is_fullscreen = title_is_fullscreen(
+        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+        windows.get_single().ok(),
+    );
     spawn_title_tree(
         &mut commands,
         &ctx,
@@ -79,6 +108,7 @@ pub fn setup_title_ui(
         &vfx,
         sound_bank.muted,
         *safe_area,
+        is_fullscreen,
     );
 }
 
@@ -105,8 +135,11 @@ fn spawn_title_tree(
     vfx: &VfxTextures,
     muted: bool,
     safe: SafeAreaInsets,
+    is_fullscreen: bool,
 ) {
     let i18n = &ctx.data.i18n;
+    #[cfg(target_os = "android")]
+    let _ = is_fullscreen;
     let play_label = if ctx.has_existing_save {
         i18n.t("app.title.button.continue")
     } else {
@@ -349,6 +382,23 @@ fn spawn_title_tree(
                             };
                             util_btns.push((lbl, TitleAction::NewSaga, col));
                         }
+                        #[cfg(not(target_os = "android"))]
+                        if crate::platform::is_fullscreen_supported() {
+                            let fs_lbl = if is_fullscreen {
+                                i18n.t("app.display.windowed")
+                            } else {
+                                i18n.t("app.display.fullscreen")
+                            };
+                            util_btns.push((
+                                fs_lbl,
+                                TitleAction::ToggleFullscreen,
+                                if is_fullscreen {
+                                    COLOR_ACCENT_TEAL
+                                } else {
+                                    Color::srgba(0.10, 0.14, 0.22, 0.90)
+                                },
+                            ));
+                        }
                         for (label, act, bg_col) in util_btns {
                             row.spawn((
                                 Button,
@@ -489,17 +539,44 @@ pub fn handle_title_buttons(
     mut bgm_sinks: Query<&mut AudioSink, With<BgmTrack>>,
     mut next_state: ResMut<NextState<AppState>>,
     roots: Query<Entity, With<TitleRoot>>,
-    (touches, scroll_mem, safe_area, mut press_arm, mut focus_idx): (
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] mut windows: Query<
+        &mut Window,
+        With<PrimaryWindow>,
+    >,
+    (touches, scroll_mem, safe_area, mut press_arm, mut focus_idx, mut prev_fullscreen): (
         Res<Touches>,
         Res<UiScrollMemory>,
         Res<SafeAreaInsets>,
         Local<PressArm>,
         Local<Option<usize>>,
+        Local<Option<bool>>,
     ),
     mut buttons: TitleButtonQuery,
     mut focus_buttons: TitleFocusQuery,
     mut text_colors: Query<&mut TextColor>,
 ) {
+    let fs_now = {
+        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+        {
+            title_is_fullscreen(windows.get_single().ok())
+        }
+        #[cfg(not(all(not(target_os = "android"), not(target_arch = "wasm32"))))]
+        {
+            title_is_fullscreen()
+        }
+    };
+    let fs_changed = match *prev_fullscreen {
+        None => {
+            *prev_fullscreen = Some(fs_now);
+            false
+        }
+        Some(prev) if prev != fs_now => {
+            *prev_fullscreen = Some(fs_now);
+            true
+        }
+        _ => false,
+    };
+
     for (entity, mut life) in &mut toasts {
         life.0 -= time.delta_secs();
         if life.0 <= 0.0 {
@@ -508,6 +585,22 @@ pub fn handle_title_buttons(
                 ctx.status_notice_key = None;
             }
         }
+    }
+
+    if fs_changed {
+        for entity in &roots {
+            commands.entity(entity).try_despawn_recursive();
+        }
+        spawn_title_tree(
+            &mut commands,
+            &ctx,
+            &fjord_art,
+            &vfx,
+            sound_bank.muted,
+            *safe_area,
+            fs_now,
+        );
+        return;
     }
 
     if keys.just_pressed(KeyCode::Escape) && ctx.confirm_reset {
@@ -523,6 +616,7 @@ pub fn handle_title_buttons(
             &vfx,
             sound_bank.muted,
             *safe_area,
+            fs_now,
         );
         return;
     }
@@ -588,6 +682,7 @@ pub fn handle_title_buttons(
             &vfx,
             sound_bank.muted,
             *safe_area,
+            fs_now,
         );
         return;
     }
@@ -630,6 +725,7 @@ pub fn handle_title_buttons(
                             &vfx,
                             sound_bank.muted,
                             *safe_area,
+                            fs_now,
                         );
                     }
                 } else {
@@ -645,6 +741,7 @@ pub fn handle_title_buttons(
                         &vfx,
                         sound_bank.muted,
                         *safe_area,
+                        fs_now,
                     );
                 }
                 return;
@@ -663,6 +760,7 @@ pub fn handle_title_buttons(
                     &vfx,
                     sound_bank.muted,
                     *safe_area,
+                    fs_now,
                 );
                 return;
             }
@@ -670,6 +768,53 @@ pub fn handle_title_buttons(
                 ctx.confirm_reset = false;
                 // The title rebuilds on the next frame through `sound_bank` change detection.
                 toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
+                return;
+            }
+            #[cfg(not(target_os = "android"))]
+            TitleAction::ToggleFullscreen => {
+                ctx.confirm_reset = false;
+                #[cfg(target_arch = "wasm32")]
+                {
+                    crate::platform::toggle_web_fullscreen();
+                    let next_fs = crate::platform::is_web_fullscreen();
+                    *prev_fullscreen = Some(next_fs);
+                    for entity in &roots {
+                        commands.entity(entity).try_despawn_recursive();
+                    }
+                    spawn_title_tree(
+                        &mut commands,
+                        &ctx,
+                        &fjord_art,
+                        &vfx,
+                        sound_bank.muted,
+                        *safe_area,
+                        next_fs,
+                    );
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Ok(mut win) = windows.get_single_mut() {
+                    let next_mode = match win.mode {
+                        WindowMode::Windowed => {
+                            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                        }
+                        _ => WindowMode::Windowed,
+                    };
+                    let next_fs = !matches!(next_mode, WindowMode::Windowed);
+                    win.mode = next_mode;
+                    *prev_fullscreen = Some(next_fs);
+                    for entity in &roots {
+                        commands.entity(entity).try_despawn_recursive();
+                    }
+                    spawn_title_tree(
+                        &mut commands,
+                        &ctx,
+                        &fjord_art,
+                        &vfx,
+                        sound_bank.muted,
+                        *safe_area,
+                        next_fs,
+                    );
+                }
                 return;
             }
         }
@@ -701,6 +846,17 @@ pub fn handle_title_buttons(
                         }
                     }
                 }
+                #[cfg(not(target_os = "android"))]
+                TitleAction::ToggleFullscreen => {
+                    *bg = BackgroundColor(COLOR_ACCENT_TEAL);
+                    if let Some(children) = children_opt {
+                        for &child in children {
+                            if let Ok(mut tc) = text_colors.get_mut(child) {
+                                tc.0 = COLOR_TEXT_ON_ACCENT;
+                            }
+                        }
+                    }
+                }
             },
             Interaction::None => match action {
                 TitleAction::EnterFjord => {
@@ -718,6 +874,21 @@ pub fn handle_title_buttons(
                 }
                 TitleAction::ToggleLanguage | TitleAction::ToggleAudio => {
                     *bg = BackgroundColor(Color::srgba(0.10, 0.14, 0.22, 0.90));
+                    if let Some(children) = children_opt {
+                        for &child in children {
+                            if let Ok(mut tc) = text_colors.get_mut(child) {
+                                tc.0 = COLOR_TEXT_PRIMARY;
+                            }
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "android"))]
+                TitleAction::ToggleFullscreen => {
+                    *bg = BackgroundColor(if fs_now {
+                        COLOR_ACCENT_TEAL
+                    } else {
+                        Color::srgba(0.10, 0.14, 0.22, 0.90)
+                    });
                     if let Some(children) = children_opt {
                         for &child in children {
                             if let Ok(mut tc) = text_colors.get_mut(child) {

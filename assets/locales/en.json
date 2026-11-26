@@ -826,5 +826,14 @@
   "city.ascension.locked": "Max all 6 Fjord buildings to Tier 3 to sail to the next Realm.",
   "city.ascension.sail_button": "Sail to Next Realm",
   "city.ascension.confirm_button": "Confirm Ascension (Tap Again)",
-  "city.ascension.celebration": "Arrived in {realm} (Era {era})! (+{glory} Glory)"
+  "city.ascension.celebration": "Arrived in {realm} (Era {era})! (+{glory} Glory)",
+  "app.display.fullscreen": "Fullscreen",
+  "app.display.windowed": "Exit Fullscreen",
+  "match3.hud.tools_drawer": "Tools ({count})",
+  "match3.hud.menu_drawer": "Menu",
+  "match3.hud.drawer_actions_title": "Battle Menu",
+  "match3.hud.drawer_tools_title": "Runic Tools",
+  "match3.hud.undo_short": "Undo",
+  "match3.hud.pause_short": "Pause & Guide",
+  "city.quick.rewards_summary": "Rewards ({count})"
 }

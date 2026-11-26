@@ -232,7 +232,7 @@ pub(super) enum InspectorTab {
 #[derive(Resource)]
 pub struct CityLayoutMode {
     pub is_portrait: bool,
-    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+    #[cfg(not(target_os = "android"))]
     pub last_fullscreen: bool,
     pub active_drawer: CityDrawer,
     pub inspector_open: bool,
@@ -260,7 +260,7 @@ pub(crate) struct CityTopBarPanel;
 #[derive(Component)]
 pub(crate) struct CityRightDrawerPanel;
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub enum CityAction {
     SelectBuilding(String),
     CloseInspector,
@@ -323,7 +323,7 @@ pub enum CityAction {
     ImportBackup,
     ToggleLanguage,
     ToggleAudio,
-    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+    #[cfg(not(target_os = "android"))]
     ToggleFullscreen,
     BackToTitle,
 }
@@ -343,9 +343,11 @@ pub fn setup_city_ui(
     let (win_w, win_h, _is_fullscreen) = windows
         .get_single()
         .map(|w| {
+            #[cfg(target_arch = "wasm32")]
+            let fs = crate::platform::is_web_fullscreen();
             #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
             let fs = !matches!(w.mode, WindowMode::Windowed);
-            #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+            #[cfg(target_os = "android")]
             let fs = true;
             (w.width(), w.height(), fs)
         })
@@ -380,7 +382,7 @@ pub fn setup_city_ui(
     let ready_harvests = count_ready_harvests(&ctx, now_unix_secs());
     commands.insert_resource(CityLayoutMode {
         is_portrait,
-        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+        #[cfg(not(target_os = "android"))]
         last_fullscreen: _is_fullscreen,
         active_drawer: CityDrawer::None,
         inspector_open,
@@ -407,7 +409,7 @@ pub fn setup_city_ui(
         &sound_bank,
         &scroll_mem,
         is_portrait,
-        #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+        #[cfg(not(target_os = "android"))]
         _is_fullscreen,
         win_w,
         win_h,
@@ -551,7 +553,7 @@ fn spawn_city_tree(
     sound_bank: &SoundBank,
     scroll_mem: &UiScrollMemory,
     is_portrait: bool,
-    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] is_fullscreen: bool,
+    #[cfg(not(target_os = "android"))] is_fullscreen: bool,
     win_w: f32,
     win_h: f32,
     safe: SafeAreaInsets,
@@ -877,7 +879,7 @@ fn spawn_city_tree(
                                 justify_content: JustifyContent::SpaceBetween,
                                 align_items: AlignItems::Center,
                                 padding: if is_portrait {
-                                    UiRect::axes(Val::Px(8.0), Val::Px(6.0))
+                                    UiRect::axes(Val::Px(6.0), Val::Px(4.0))
                                 } else {
                                     UiRect::axes(Val::Px(12.0), Val::Px(6.0))
                                 },
@@ -1408,7 +1410,7 @@ fn spawn_city_tree(
                                         column_gap: Val::Px(6.0),
                                         row_gap: Val::Px(4.0),
                                         max_width: if is_portrait {
-                                            Val::Percent(64.0)
+                                            Val::Percent(92.0)
                                         } else {
                                             Val::Percent(100.0)
                                         },
@@ -1416,8 +1418,33 @@ fn spawn_city_tree(
                                     },
                                 ))
                                 .with_children(|qrow| {
-                                    for (lbl, bg, fg, act) in quick_items {
-                                        spawn_small_button_colored(qrow, &lbl, act, bg, fg, true);
+                                    if is_portrait && quick_items.len() > 1 {
+                                        let has_clan_ready =
+                                            claimable_cols + claimable_bounties + claimable_feats
+                                                > 0;
+                                        let summary_act = if has_clan_ready {
+                                            CityAction::ToggleDrawer(CityDrawer::Clan)
+                                        } else {
+                                            quick_items[0].3.clone()
+                                        };
+                                        let summary_lbl = i18n.t_fmt(
+                                            "city.quick.rewards_summary",
+                                            &[("count", quick_items.len().to_string())],
+                                        );
+                                        spawn_small_button_colored(
+                                            qrow,
+                                            &summary_lbl,
+                                            summary_act,
+                                            COLOR_ACCENT_GOLD,
+                                            COLOR_TEXT_DARK,
+                                            true,
+                                        );
+                                    } else {
+                                        for (lbl, bg, fg, act) in quick_items {
+                                            spawn_small_button_colored(
+                                                qrow, &lbl, act, bg, fg, true,
+                                            );
+                                        }
                                     }
                                 });
                         }
@@ -1434,7 +1461,7 @@ fn spawn_city_tree(
                         bottom: Val::Px(PORTRAIT_BOTTOM_NAV_HEIGHT_PX + 10.0 + safe.bottom),
                         justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::Center,
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                         column_gap: Val::Px(8.0),
                         border: UiRect::all(Val::Px(1.5)),
                         ..default()
@@ -1474,19 +1501,21 @@ fn spawn_city_tree(
                                 ..default()
                             })
                             .with_children(|left| {
-                                if let Some(portrait) = fjord_art.portrait(&quest.speaker) {
-                                    left.spawn((
-                                        ImageNode::new(portrait),
-                                        Node {
-                                            width: Val::Px(38.0),
-                                            height: Val::Px(38.0),
-                                            flex_shrink: 0.0,
-                                            border: UiRect::all(Val::Px(1.5)),
-                                            ..default()
-                                        },
-                                        BorderColor(COLOR_ACCENT_GOLD),
-                                        BorderRadius::all(Val::Px(6.0)),
-                                    ));
+                                if !is_portrait {
+                                    if let Some(portrait) = fjord_art.portrait(&quest.speaker) {
+                                        left.spawn((
+                                            ImageNode::new(portrait),
+                                            Node {
+                                                width: Val::Px(38.0),
+                                                height: Val::Px(38.0),
+                                                flex_shrink: 0.0,
+                                                border: UiRect::all(Val::Px(1.5)),
+                                                ..default()
+                                            },
+                                            BorderColor(COLOR_ACCENT_GOLD),
+                                            BorderRadius::all(Val::Px(6.0)),
+                                        ));
+                                    }
                                 }
                                 left.spawn(Node {
                                     flex_direction: FlexDirection::Column,
@@ -1612,19 +1641,21 @@ fn spawn_city_tree(
                                 ..default()
                             })
                             .with_children(|left| {
-                                if let Some(portrait) = fjord_art.portrait("odin") {
-                                    left.spawn((
-                                        ImageNode::new(portrait),
-                                        Node {
-                                            width: Val::Px(38.0),
-                                            height: Val::Px(38.0),
-                                            flex_shrink: 0.0,
-                                            border: UiRect::all(Val::Px(1.5)),
-                                            ..default()
-                                        },
-                                        BorderColor(COLOR_ACCENT_GOLD),
-                                        BorderRadius::all(Val::Px(6.0)),
-                                    ));
+                                if !is_portrait {
+                                    if let Some(portrait) = fjord_art.portrait("odin") {
+                                        left.spawn((
+                                            ImageNode::new(portrait),
+                                            Node {
+                                                width: Val::Px(38.0),
+                                                height: Val::Px(38.0),
+                                                flex_shrink: 0.0,
+                                                border: UiRect::all(Val::Px(1.5)),
+                                                ..default()
+                                            },
+                                            BorderColor(COLOR_ACCENT_GOLD),
+                                            BorderRadius::all(Val::Px(6.0)),
+                                        ));
+                                    }
                                 }
                                 left.spawn(Node {
                                     flex_direction: FlexDirection::Column,
@@ -1736,6 +1767,24 @@ fn spawn_city_tree(
 
             // 4. Unified Slide-Out Drawer (Modes / Clan / Burger Menu / Building Inspector)
             if right_panel_open {
+                if is_portrait && ctx.active_modal == ActiveModal::None {
+                    viewport.spawn((
+                        Button,
+                        NoButtonScale,
+                        CityAction::FocusFjordMap,
+                        FocusPolicy::Block,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.56)),
+                        ZIndex(38),
+                    ));
+                }
                 let drawer_node = if is_portrait {
                     Node {
                         position_type: PositionType::Absolute,
@@ -1803,10 +1852,7 @@ fn spawn_city_tree(
                                 fjord_art,
                                 sound_bank,
                                 scroll_mem.inspector_offset_y,
-                                #[cfg(all(
-                                    not(target_os = "android"),
-                                    not(target_arch = "wasm32")
-                                ))]
+                                #[cfg(not(target_os = "android"))]
                                 is_fullscreen,
                             );
                         }
@@ -2027,7 +2073,7 @@ fn spawn_city_tree(
                     sound_bank,
                     safe,
                     m_scroll,
-                    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+                    #[cfg(not(target_os = "android"))]
                     is_fullscreen,
                 ),
                 ActiveModal::Help => {
@@ -4527,9 +4573,15 @@ pub fn handle_city_buttons(
                 toggle_mute(&mut ctx, &mut sound_bank, &mut bgm_sinks);
                 rebuild = true;
             }
-            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+            #[cfg(not(target_os = "android"))]
             CityAction::ToggleFullscreen => {
                 ctx.confirm_import_backup = false;
+                #[cfg(target_arch = "wasm32")]
+                {
+                    crate::platform::toggle_web_fullscreen();
+                    layout_mode.last_fullscreen = crate::platform::is_web_fullscreen();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Ok(mut win) = windows.get_single_mut() {
                     let next_mode = match win.mode {
                         WindowMode::Windowed => {
@@ -4693,9 +4745,15 @@ pub fn handle_city_buttons(
         rebuild = true;
     }
 
-    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
-    if let Ok(win) = windows.get_single() {
-        let is_fs = !matches!(win.mode, WindowMode::Windowed);
+    #[cfg(not(target_os = "android"))]
+    {
+        #[cfg(target_arch = "wasm32")]
+        let is_fs = crate::platform::is_web_fullscreen();
+        #[cfg(not(target_arch = "wasm32"))]
+        let is_fs = windows
+            .get_single()
+            .map(|win| !matches!(win.mode, WindowMode::Windowed))
+            .unwrap_or(layout_mode.last_fullscreen);
         if is_fs != layout_mode.last_fullscreen {
             layout_mode.last_fullscreen = is_fs;
             rebuild = true;
@@ -4718,7 +4776,7 @@ pub fn handle_city_buttons(
             &sound_bank,
             &scroll_mem,
             layout_mode.is_portrait,
-            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+            #[cfg(not(target_os = "android"))]
             layout_mode.last_fullscreen,
             layout_mode.window_size.x,
             layout_mode.window_size.y,

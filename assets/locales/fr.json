@@ -826,5 +826,14 @@
   "city.ascension.locked": "Montez les 6 bâtiments au Niv. 3 pour naviguer vers le monde suivant.",
   "city.ascension.sail_button": "Naviguer vers le Monde suivant",
   "city.ascension.confirm_button": "Confirmer l'Ascension",
-  "city.ascension.celebration": "Arrivée à {realm} (Ère {era}) ! (+{glory} Gloire)"
+  "city.ascension.celebration": "Arrivée à {realm} (Ère {era}) ! (+{glory} Gloire)",
+  "app.display.fullscreen": "Plein écran",
+  "app.display.windowed": "Quitter plein écran",
+  "match3.hud.tools_drawer": "Outils ({count})",
+  "match3.hud.menu_drawer": "Menu",
+  "match3.hud.drawer_actions_title": "Menu du raid",
+  "match3.hud.drawer_tools_title": "Outils Runiques",
+  "match3.hud.undo_short": "Annuler",
+  "match3.hud.pause_short": "Pause et Guide",
+  "city.quick.rewards_summary": "Récompenses ({count})"
 }

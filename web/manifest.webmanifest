@@ -1,0 +1,19 @@
+{
+  "name": "Wyrdstone",
+  "short_name": "Wyrdstone",
+  "description": "Norse mythology Match-3 and Fjord village reconstruction game.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "./app_icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -869,7 +869,7 @@ pub(super) fn spawn_menu_drawer(
     fjord_art: &FjordTextures,
     sound_bank: &SoundBank,
     scroll_offset_y: f32,
-    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))] is_fullscreen: bool,
+    #[cfg(not(target_os = "android"))] is_fullscreen: bool,
 ) {
     let i18n = &ctx.data.i18n;
     let tribute_ready = ctx.city.is_login_tribute_available(today_day_index());
@@ -950,12 +950,19 @@ pub(super) fn spawn_menu_drawer(
                 );
             });
 
-            #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
-            {
+            #[cfg(not(target_os = "android"))]
+            if crate::platform::is_fullscreen_supported() {
+                #[cfg(target_arch = "wasm32")]
+                let (on_key, off_key) = ("app.display.windowed", "app.display.fullscreen");
+                #[cfg(not(target_arch = "wasm32"))]
+                let (on_key, off_key) = (
+                    "city.settings.display_windowed",
+                    "city.settings.display_fullscreen",
+                );
                 let fs_label = if is_fullscreen {
-                    i18n.t("city.settings.display_windowed")
+                    i18n.t(on_key)
                 } else {
-                    i18n.t("city.settings.display_fullscreen")
+                    i18n.t(off_key)
                 };
                 spawn_small_button(
                     body,

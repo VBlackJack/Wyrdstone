@@ -114,6 +114,83 @@ pub fn handle_haptic_events(mut events: EventReader<HapticEvent>) {
     }
 }
 
+/// True when the current platform supports toggling fullscreen mode from in-game UI.
+pub fn is_fullscreen_supported() -> bool {
+    #[cfg(target_os = "android")]
+    {
+        false
+    }
+    #[cfg(all(not(target_os = "android"), not(target_arch = "wasm32")))]
+    {
+        true
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(win) = web_sys::window() {
+            if let Ok(func) =
+                js_sys::Reflect::get(&win, &JsValue::from_str("wyrdstoneFullscreenSupported"))
+            {
+                if let Ok(callable) = func.dyn_into::<js_sys::Function>() {
+                    if let Ok(res) = callable.call0(&win) {
+                        if let Some(supported) = res.as_bool() {
+                            return supported;
+                        }
+                    }
+                }
+            }
+            if let Some(doc) = win.document() {
+                return doc.fullscreen_enabled();
+            }
+        }
+        false
+    }
+}
+
+/// True when the browser document is currently in fullscreen mode on WASM32.
+#[cfg(target_arch = "wasm32")]
+pub fn is_web_fullscreen() -> bool {
+    if let Some(win) = web_sys::window() {
+        if let Ok(func) = js_sys::Reflect::get(&win, &JsValue::from_str("wyrdstoneIsFullscreen")) {
+            if let Ok(callable) = func.dyn_into::<js_sys::Function>() {
+                if let Ok(res) = callable.call0(&win) {
+                    if let Some(active) = res.as_bool() {
+                        return active;
+                    }
+                }
+            }
+        }
+        if let Some(doc) = win.document() {
+            return doc.fullscreen_element().is_some();
+        }
+    }
+    false
+}
+
+/// Toggles browser fullscreen mode via the `web/index.html` Fullscreen API bridge on WASM32.
+#[cfg(target_arch = "wasm32")]
+pub fn toggle_web_fullscreen() {
+    if let Some(win) = web_sys::window() {
+        if let Ok(func) =
+            js_sys::Reflect::get(&win, &JsValue::from_str("wyrdstoneToggleFullscreen"))
+        {
+            if let Ok(callable) = func.dyn_into::<js_sys::Function>() {
+                let _ = callable.call0(&win);
+                return;
+            }
+        }
+        if let Some(doc) = win.document() {
+            if doc.fullscreen_element().is_some() {
+                doc.exit_fullscreen();
+            } else if let Some(el) = doc.document_element() {
+                let _ = el.request_fullscreen();
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use web_sys::wasm_bindgen::{JsCast, JsValue};
+
 #[cfg(test)]
 mod tests {
     use super::*;

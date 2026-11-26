@@ -52,7 +52,7 @@ bevy = { version = "=0.15.2", default-features = false, features = ["webgl2"] }
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Storage"] }
+web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "Element"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
