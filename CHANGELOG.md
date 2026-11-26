@@ -5,6 +5,7 @@ All notable changes to Wyrdstone are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Mobile Fullscreen Portrait/Landscape, Drawers & PhoneLandscape Layout**: Added selectable Web fullscreen orientation locking (Portrait / Landscape via Fullscreen API and screen orientation lock with automatic resize/orientation syncing), a dedicated `PhoneLandscape` layout with slim Match-3 side rails and non-overlapping Fjord map pins, scrollable Match-3 mobile drawers (Objectives, Runes/Tools, Pause), compact mobile HUD/inspector/modals across Title, City, Match-3, and Result screens, and a standalone PWA web manifest (`web/manifest.webmanifest`).
 - **Web (WASM32 / WebGL2) & GitHub Pages**: Added full `wasm32-unknown-unknown` browser support (`web/index.html`, responsive PC and smartphone canvas with safe-area padding and touch-scroll lock, browser `localStorage` primary/backup saves via `SaveData`, `js_sys::Date` wall-clock regen, WebAudio gesture unlock, `.github/workflows/pages.yml`, and CI `check-web` job).
 - **True Endgame Loop (Cyclic Skald Pass, Endless Decrees, Yggdrasil Wonder & Nine Realms Ascension)**: Added infinite **Cyclic Skald's Path** resets (+15% reward scaling per cycle up to +150% with preserved overflow XP), infinite **Endless Jarl's Decrees** after Saga quests (bonus tool every 5th decree), the **10-stage Yggdrasil World-Tree Wonder** monument on the Fjord map (+harvest & Boss damage bonuses), and **Nine Realms Ascension** (Midgard -> Jotunheim -> Nidavellir -> Vanaheim -> Asgard with distinct realm atmospheres, scaled enemies/rewards, and preserved permanent unlocks).
 - **Building Mastery 5-Star, Repeatable Collections, Valkyrie's Aid & Quick-Claim Bar**: Extended building progression to 5-Star Mastery with passive perks, made Realm Collections repeatedly chargeable for Glory and resources, added **Valkyrie's Aid** defeat recovery tiers, and added a one-tap **Quick-Claim** Fjord reward strip.
@@ -34,6 +35,7 @@ All notable changes to Wyrdstone are documented in this file.
 - **Externalized RON Data**: Moved Skalds' Feats (`achievements.ron`), Clan Rank thresholds (`balance.ron`), and per-building passive harvest yields (`buildings.ron`) out of Rust code.
 
 ### Changed
+- **Dependabot & Dependencies**: Grouped weekly Dependabot updates by ecosystem (Cargo and GitHub Actions) with ignore rules for pinned `bevy`/`bevy_winit` (`=0.15.2`) and `rand >= 0.9.0`; updated `ron` to `0.12`, `directories` to `6.0`, and GitHub Actions workflow pins (`actions/checkout` v7, `actions/upload-artifact` v7, `actions/download-artifact` v8, `softprops/action-gh-release` v3).
 - **Single Turn Engine**: Match-3 turn resolution (swaps, tools, Divine Fury, cascades, relic drops, end-of-turn hooks, victory boosters) now runs through one step machine in `wyrdstone_core`; the animation layer only plays its steps. A differential fuzz against the previous behaviour proves the move changed no rule. Clear order is now deterministic.
 
 ### Fixed
