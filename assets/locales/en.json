@@ -36,7 +36,6 @@
   "city.panel.quests.title": "Clan Saga",
   "city.panel.quests.tag": "[Saga]",
   "city.panel.quests.complete": "Claim Reward",
-  "city.panel.quests.done": "Saga Complete!",
   "city.panel.amulets.title": "Nordic Amulets",
   "city.panel.amulets.button": "Amulets",
   "city.panel.amulets.close": "Close",
@@ -773,5 +772,15 @@
   "match3.hud.hint": "Hint",
   "city.drawer.clan.action_open": "Open",
   "city.drawer.clan.action_claim": "Claim ({count})",
-  "city.skald_pass.claimed_all_toast": "Claimed {count} Path tiers: {reward}"
+  "city.skald_pass.claimed_all_toast": "Claimed {count} Path tiers: {reward}",
+  "city.skald_pass.cycle_badge": "Cycle {cycle} (+{bonus}%)",
+  "city.skald_pass.advance_cycle": "Start Cycle {next}",
+  "city.skald_pass.cycle_started": "Skald's Path Cycle {cycle} begun (+{bonus}% rewards)!",
+  "city.decree.banner": "Jarl's Decree #{num}",
+  "decree.kind.win_raids": "Win {target} Match-3 raids",
+  "decree.kind.clear_runes": "Clear {target} Runes",
+  "decree.kind.boosters_fury": "Trigger {target} Boosters or Divine Fury",
+  "decree.kind.defeat_bosses": "Defeat {target} Mythic Bosses",
+  "decree.kind.expedition_waves": "Clear {target} Expedition waves",
+  "decree.kind.earn_score": "Score {target} points in Match-3"
 }

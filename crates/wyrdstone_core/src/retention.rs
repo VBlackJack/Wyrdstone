@@ -42,12 +42,32 @@ pub const OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER: u64 = 2;
 pub const SKALD_PASS_TIERS: u8 = 10;
 /// Skald XP required per tier.
 pub const SKALD_PASS_XP_PER_TIER: u32 = 100;
+/// Bonus percentage added to Skald's Path resources & glory per prestige cycle (`+15%` per cycle).
+pub const SKALD_PASS_CYCLE_BONUS_PCT: u32 = 15;
+/// Maximum cumulative cycle bonus percentage on the cyclic Skald's Path (`+150%`).
+pub const SKALD_PASS_CYCLE_MAX_BONUS_PCT: u32 = 150;
 /// Skald XP awarded on a standard board victory.
 pub const SKALD_XP_BOARD_WIN: u32 = 15;
 /// Skald XP awarded on a Daily Trial victory.
 pub const SKALD_XP_DAILY_WIN: u32 = 30;
 /// Skald XP awarded on a Boss Raid or Gauntlet victory.
 pub const SKALD_XP_BOSS_WIN: u32 = 35;
+
+/// Bonus percentage added to Endless Jarl's Decree rewards per 6-decree cycle (`+10%`).
+pub const ENDLESS_DECREE_CYCLE_BONUS_PCT: u32 = 10;
+/// Maximum cumulative cycle bonus percentage on Endless Jarl's Decrees (`+150%`).
+pub const ENDLESS_DECREE_MAX_BONUS_PCT: u32 = 150;
+/// Cadence at which Endless Jarl's Decrees grant a bonus Runic Tool (every 5th decree).
+pub const ENDLESS_DECREE_TOOL_CADENCE: u32 = 5;
+/// Base Glory awarded for claiming an Endless Jarl's Decree.
+pub const ENDLESS_DECREE_BASE_GLORY: u32 = 35;
+/// Base resource bundle awarded for claiming an Endless Jarl's Decree.
+pub const ENDLESS_DECREE_BASE_REWARD: ResourceBundle = ResourceBundle {
+    wood: 110,
+    stone: 110,
+    gold: 150,
+    mead: 28,
+};
 
 /// Maximum Devotion upgrade tier per Norse Patron deity.
 pub const MAX_PATRON_DEVOTION_TIER: u8 = 5;
@@ -420,6 +440,18 @@ impl DailyBountyBoard {
 pub struct SkaldPassState {
     pub xp: u32,
     pub claimed_tiers: Vec<u8>,
+    #[serde(default)]
+    pub cycle: u32,
+}
+
+const fn scale_reward_pct(base: ResourceBundle, bonus_pct: u32) -> ResourceBundle {
+    let mult = 100u32.saturating_add(bonus_pct);
+    ResourceBundle {
+        wood: base.wood.saturating_mul(mult) / 100,
+        stone: base.stone.saturating_mul(mult) / 100,
+        gold: base.gold.saturating_mul(mult) / 100,
+        mead: base.mead.saturating_mul(mult) / 100,
+    }
 }
 
 /// Returns `(resources, optional_tool, glory)` for tier `1..=10` of the free Skald's Path.
@@ -528,10 +560,31 @@ pub const fn skald_pass_tier_reward(tier: u8) -> (ResourceBundle, Option<ActiveT
     }
 }
 
+/// Returns `(resources, optional_tool, glory)` for tier `1..=10` scaled by Skald's Path `cycle`.
+pub const fn skald_pass_tier_reward_for_cycle(
+    tier: u8,
+    cycle: u32,
+) -> (ResourceBundle, Option<ActiveTool>, u32) {
+    let (res, tool, glory) = skald_pass_tier_reward(tier);
+    let raw_pct = cycle.saturating_mul(SKALD_PASS_CYCLE_BONUS_PCT);
+    let bonus_pct = if raw_pct > SKALD_PASS_CYCLE_MAX_BONUS_PCT {
+        SKALD_PASS_CYCLE_MAX_BONUS_PCT
+    } else {
+        raw_pct
+    };
+    let scaled_res = scale_reward_pct(res, bonus_pct);
+    let scaled_glory = glory.saturating_mul(100u32.saturating_add(bonus_pct)) / 100;
+    (scaled_res, tool, scaled_glory)
+}
+
 impl SkaldPassState {
+    pub const fn cycle_xp_cap() -> u32 {
+        (SKALD_PASS_TIERS as u32) * SKALD_PASS_XP_PER_TIER
+    }
+
     pub fn add_xp(&mut self, amount: u32) {
-        let cap = u32::from(SKALD_PASS_TIERS) * SKALD_PASS_XP_PER_TIER;
-        self.xp = self.xp.saturating_add(amount).min(cap);
+        let overflow_cap = Self::cycle_xp_cap().saturating_mul(2);
+        self.xp = self.xp.saturating_add(amount).min(overflow_cap);
     }
 
     pub fn current_tier(&self) -> u8 {
@@ -545,6 +598,23 @@ impl SkaldPassState {
     pub fn claimable_count(&self) -> usize {
         let unlocked = self.current_tier();
         (1..=unlocked).filter(|t| !self.is_tier_claimed(*t)).count()
+    }
+
+    /// True once all 10 tiers of the active cycle are unlocked and claimed.
+    pub fn can_advance_cycle(&self) -> bool {
+        self.current_tier() >= SKALD_PASS_TIERS
+            && self.claimed_tiers.len() >= usize::from(SKALD_PASS_TIERS)
+    }
+
+    /// Advances to the next Skald's Path cycle, subtracting one full track of XP while keeping any overflow.
+    pub fn try_advance_cycle(&mut self) -> bool {
+        if !self.can_advance_cycle() {
+            return false;
+        }
+        self.xp = self.xp.saturating_sub(Self::cycle_xp_cap());
+        self.claimed_tiers.clear();
+        self.cycle = self.cycle.saturating_add(1);
+        true
     }
 
     pub fn try_claim_tier(
@@ -561,7 +631,7 @@ impl SkaldPassState {
         {
             return None;
         }
-        let (res, tool, gl) = skald_pass_tier_reward(tier);
+        let (res, tool, gl) = skald_pass_tier_reward_for_cycle(tier, self.cycle);
         resources.add(&res);
         if let Some(t) = tool {
             tools.grant_one(t);
@@ -572,12 +642,145 @@ impl SkaldPassState {
     }
 
     pub fn sanitize(&mut self) {
-        let cap = u32::from(SKALD_PASS_TIERS) * SKALD_PASS_XP_PER_TIER;
-        self.xp = self.xp.min(cap);
+        let overflow_cap = Self::cycle_xp_cap().saturating_mul(2);
+        self.xp = self.xp.min(overflow_cap);
         self.claimed_tiers
             .retain(|&t| (1..=SKALD_PASS_TIERS).contains(&t));
         self.claimed_tiers.sort_unstable();
         self.claimed_tiers.dedup();
+    }
+}
+
+/// Repeating endgame objectives issued after all scripted Saga quests are claimed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EndlessDecreeKind {
+    WinRaids,
+    ClearRunes,
+    TriggerBoostersOrFury,
+    DefeatBosses,
+    CompleteExpeditionWaves,
+    EarnScore,
+}
+
+impl EndlessDecreeKind {
+    pub const fn from_index(index: u32) -> Self {
+        match index % 6 {
+            0 => Self::WinRaids,
+            1 => Self::ClearRunes,
+            2 => Self::TriggerBoostersOrFury,
+            3 => Self::DefeatBosses,
+            4 => Self::CompleteExpeditionWaves,
+            _ => Self::EarnScore,
+        }
+    }
+
+    pub const fn desc_key(self) -> &'static str {
+        match self {
+            Self::WinRaids => "decree.kind.win_raids",
+            Self::ClearRunes => "decree.kind.clear_runes",
+            Self::TriggerBoostersOrFury => "decree.kind.boosters_fury",
+            Self::DefeatBosses => "decree.kind.defeat_bosses",
+            Self::CompleteExpeditionWaves => "decree.kind.expedition_waves",
+            Self::EarnScore => "decree.kind.earn_score",
+        }
+    }
+
+    pub fn target_for_index(self, index: u32) -> u32 {
+        let cycle = index / 6;
+        match self {
+            Self::WinRaids => (2 + cycle).min(6),
+            Self::ClearRunes => (180 + cycle * 30).min(480),
+            Self::TriggerBoostersOrFury => (6 + cycle * 2).min(18),
+            Self::DefeatBosses => (1 + cycle / 2).min(3),
+            Self::CompleteExpeditionWaves => (2 + cycle / 2).min(5),
+            Self::EarnScore => (2_500 + cycle * 500).min(7_500),
+        }
+    }
+}
+
+/// Persistent progress on the currently active Endless Jarl's Decree.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EndlessDecreeState {
+    #[serde(default)]
+    pub index: u32,
+    #[serde(default)]
+    pub progress: u32,
+}
+
+impl EndlessDecreeState {
+    pub const fn kind(&self) -> EndlessDecreeKind {
+        EndlessDecreeKind::from_index(self.index)
+    }
+
+    pub const fn decree_number(&self) -> u32 {
+        self.index.saturating_add(1)
+    }
+
+    pub fn target(&self) -> u32 {
+        self.kind().target_for_index(self.index)
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.progress >= self.target()
+    }
+
+    /// Returns `(resources, optional_tool, glory)` scaled by the 6-decree cycle count.
+    pub fn reward(&self) -> (ResourceBundle, Option<ActiveTool>, u32) {
+        let cycle = self.index / 6;
+        let bonus_pct = cycle
+            .saturating_mul(ENDLESS_DECREE_CYCLE_BONUS_PCT)
+            .min(ENDLESS_DECREE_MAX_BONUS_PCT);
+        let res = scale_reward_pct(ENDLESS_DECREE_BASE_REWARD, bonus_pct);
+        let glory =
+            ENDLESS_DECREE_BASE_GLORY.saturating_mul(100u32.saturating_add(bonus_pct)) / 100;
+        let num = self.decree_number();
+        let tool = if num.is_multiple_of(ENDLESS_DECREE_TOOL_CADENCE) {
+            let tools = [
+                ActiveTool::Mjolnir,
+                ActiveTool::ThorBolt,
+                ActiveTool::SurtrEmber,
+                ActiveTool::DrakkarCharge,
+                ActiveTool::BifrostPrism,
+            ];
+            let slot = ((num / ENDLESS_DECREE_TOOL_CADENCE) - 1) as usize % tools.len();
+            Some(tools[slot])
+        } else {
+            None
+        };
+        (res, tool, glory)
+    }
+
+    pub fn record(&mut self, kind: EndlessDecreeKind, amount: u32) {
+        if amount == 0 || self.kind() != kind {
+            return;
+        }
+        let target = self.target();
+        self.progress = self.progress.saturating_add(amount).min(target);
+    }
+
+    pub fn try_claim(
+        &mut self,
+        resources: &mut ResourceBundle,
+        tools: &mut ToolInventory,
+        glory: &mut u32,
+    ) -> Option<(ResourceBundle, Option<ActiveTool>, u32)> {
+        if !self.is_ready() {
+            return None;
+        }
+        let reward = self.reward();
+        resources.add(&reward.0);
+        if let Some(tool) = reward.1 {
+            tools.grant_one(tool);
+        }
+        *glory = glory.saturating_add(reward.2);
+        self.index = self.index.saturating_add(1);
+        self.progress = 0;
+        Some(reward)
+    }
+
+    pub fn sanitize(&mut self) {
+        let target = self.target();
+        self.progress = self.progress.min(target);
     }
 }
 

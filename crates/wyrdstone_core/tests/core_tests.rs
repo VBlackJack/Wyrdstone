@@ -3618,3 +3618,103 @@ fn claim_all_skald_tiers_claims_only_unlocked_tiers_once() {
     assert_eq!(second_count, 0);
     assert_eq!(second_glory, 0);
 }
+
+#[test]
+fn skald_pass_cycles_scale_rewards_and_preserve_overflow_xp() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    assert!(!city.try_advance_skald_cycle());
+
+    let cap = wyrdstone_core::SkaldPassState::cycle_xp_cap();
+    city.skald_pass.add_xp(cap + 240);
+    assert_eq!(
+        city.skald_pass.current_tier(),
+        wyrdstone_core::SKALD_PASS_TIERS
+    );
+    assert_eq!(city.skald_pass.xp, cap + 240);
+
+    city.sanitize(&data.buildings, &data.balance);
+    assert_eq!(
+        city.skald_pass.xp,
+        cap + 240,
+        "sanitize must preserve overflow XP up to 2x cap"
+    );
+
+    let (claimed, _, _, cycle0_glory) = city.try_claim_all_skald_tiers();
+    assert_eq!(claimed, usize::from(wyrdstone_core::SKALD_PASS_TIERS));
+    assert!(city.skald_pass.can_advance_cycle());
+    assert_eq!(city.claimable_bounties_and_pass_count(), 1);
+    assert!(city.try_advance_skald_cycle());
+    assert_eq!(city.skald_pass.cycle, 1);
+    assert_eq!(city.skald_pass.xp, 240);
+    assert_eq!(city.skald_pass.current_tier(), 2);
+
+    let (_, _, tier1_cycle1_glory) = city
+        .try_claim_skald_tier(1)
+        .expect("tier 1 already unlocked via overflow XP");
+    let (_, _, tier1_cycle0_glory) = wyrdstone_core::skald_pass_tier_reward(1);
+    assert!(tier1_cycle1_glory > tier1_cycle0_glory);
+    assert!(cycle0_glory > 0);
+}
+
+#[test]
+fn endless_decree_activates_after_saga_scales_and_persists_compatibly() {
+    let data = GameDataBundle::load_bundled(Language::En).expect("data");
+    let mut city = CityState::new(&data.balance);
+    assert!(!city.is_endless_decree_active(&data.quests));
+
+    for q in &data.quests {
+        city.claimed_quests.insert(q.id.clone());
+    }
+    assert!(city.is_endless_decree_active(&data.quests));
+    assert_eq!(city.endless_decree.decree_number(), 1);
+    assert_eq!(
+        city.endless_decree.kind(),
+        wyrdstone_core::EndlessDecreeKind::WinRaids
+    );
+    let target0 = city.endless_decree.target();
+    city.record_endless_decree_progress(
+        &data.quests,
+        wyrdstone_core::EndlessDecreeKind::ClearRunes,
+        50,
+    );
+    assert_eq!(city.endless_decree.progress, 0);
+
+    city.record_endless_decree_progress(
+        &data.quests,
+        wyrdstone_core::EndlessDecreeKind::WinRaids,
+        target0,
+    );
+    assert!(city.is_endless_decree_ready(&data.quests));
+    let (res, tool_opt, glory) = city
+        .try_claim_endless_decree(&data.quests)
+        .expect("ready decree must claim");
+    assert!(res.gold > 0 && glory > 0);
+    assert!(tool_opt.is_none());
+    assert_eq!(city.endless_decree.decree_number(), 2);
+
+    // Every 5th decree awards a bonus Runic Tool.
+    city.endless_decree.index = 4;
+    let fifth_target = city.endless_decree.target();
+    city.endless_decree.progress = fifth_target;
+    let (_, fifth_tool, _) = city
+        .try_claim_endless_decree(&data.quests)
+        .expect("5th decree claims");
+    assert!(fifth_tool.is_some());
+
+    // Legacy v5 saves without `endless_decree` or `skald_pass.cycle` still load cleanly.
+    let save = SaveData::new_game(&data.balance, Language::En);
+    let mut val = serde_json::to_value(&save).expect("serialize");
+    let city_obj = val["city"].as_object_mut().expect("city obj");
+    city_obj.remove("endless_decree");
+    if let Some(sp) = city_obj
+        .get_mut("skald_pass")
+        .and_then(|v| v.as_object_mut())
+    {
+        sp.remove("cycle");
+    }
+    let loaded: SaveData =
+        serde_json::from_str(&serde_json::to_string(&val).expect("str")).expect("compat load");
+    assert_eq!(loaded.city.endless_decree.index, 0);
+    assert_eq!(loaded.city.skald_pass.cycle, 0);
+}

@@ -279,7 +279,7 @@ fn spawn_result_ui(
                             .city
                             .active_quest(&ctx.data.quests)
                             .map(|q| ctx.city.is_quest_ready(q))
-                            .unwrap_or(false);
+                            .unwrap_or_else(|| ctx.city.is_endless_decree_ready(&ctx.data.quests));
                         let claimable_feats = ctx.city.claimable_achievement_count(
                             &ctx.data.achievements,
                             &ctx.data.buildings,

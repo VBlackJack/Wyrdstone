@@ -36,7 +36,6 @@
   "city.panel.quests.title": "Saga du Clan",
   "city.panel.quests.tag": "[Saga]",
   "city.panel.quests.complete": "Réclamer",
-  "city.panel.quests.done": "Saga terminée !",
   "city.panel.amulets.title": "Amulettes Nordiques",
   "city.panel.amulets.button": "Amulettes",
   "city.panel.amulets.close": "Fermer",
@@ -773,5 +772,15 @@
   "match3.hud.hint": "Indice",
   "city.drawer.clan.action_open": "Ouvrir",
   "city.drawer.clan.action_claim": "Réclamer ({count})",
-  "city.skald_pass.claimed_all_toast": "{count} paliers réclamés : {reward}"
+  "city.skald_pass.claimed_all_toast": "{count} paliers réclamés : {reward}",
+  "city.skald_pass.cycle_badge": "Cycle {cycle} (+{bonus}%)",
+  "city.skald_pass.advance_cycle": "Lancer Cycle {next}",
+  "city.skald_pass.cycle_started": "Cycle {cycle} du Sentier lancé (+{bonus}% butin) !",
+  "city.decree.banner": "Décret du Jarl #{num}",
+  "decree.kind.win_raids": "Gagnez {target} raids Match-3",
+  "decree.kind.clear_runes": "Éliminez {target} Runes",
+  "decree.kind.boosters_fury": "Activez {target} Bonus ou Fureurs Divines",
+  "decree.kind.defeat_bosses": "Vainquez {target} Boss Mythiques",
+  "decree.kind.expedition_waves": "Passez {target} vagues d'Expédition",
+  "decree.kind.earn_score": "Marquez {target} points en Match-3"
 }

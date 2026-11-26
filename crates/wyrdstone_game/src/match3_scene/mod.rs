@@ -1316,6 +1316,12 @@ fn execute_patron_fury(
         .city
         .daily_bounties
         .record_progress(DailyBountyKind::TriggerFury, 1);
+    let s = &mut *ctx_ref;
+    s.city.record_endless_decree_progress(
+        &s.data.quests,
+        wyrdstone_core::EndlessDecreeKind::TriggerBoostersOrFury,
+        1,
+    );
     input_state.undo_snapshot = None;
     input_state.clear_hint();
     play_sfx(commands, sound_bank, SfxKind::FuryUnleash);

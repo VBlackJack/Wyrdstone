@@ -26,10 +26,11 @@ use crate::boss::{BossDef, GAUNTLET_CLEAR_GLORY, GAUNTLET_STAGE_PARTIAL_GLORY};
 use crate::level::LevelDef;
 use crate::patron::PatronGod;
 use crate::retention::{
-    patron_devotion_upgrade_cost, DailyBountyBoard, OfflineVaultSummary, PlayMode, SkaldPassState,
-    ValhallaFlameTier, ValkyrieAidTier, WeeklyChallengeState, LEGEND_RANK_GLORY_STEP,
-    LEGEND_SPOILS_MAX_BONUS_PCT, LEGEND_SPOILS_PCT_PER_LEVEL, MAX_PATRON_DEVOTION_TIER,
-    MAX_VALKYRIE_FAIL_STREAK, OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
+    patron_devotion_upgrade_cost, DailyBountyBoard, EndlessDecreeKind, EndlessDecreeState,
+    OfflineVaultSummary, PlayMode, SkaldPassState, ValhallaFlameTier, ValkyrieAidTier,
+    WeeklyChallengeState, LEGEND_RANK_GLORY_STEP, LEGEND_SPOILS_MAX_BONUS_PCT,
+    LEGEND_SPOILS_PCT_PER_LEVEL, MAX_PATRON_DEVOTION_TIER, MAX_VALKYRIE_FAIL_STREAK,
+    OFFLINE_VAULT_BASE_MAX_HOURS, OFFLINE_VAULT_CYCLE_SECS,
     OFFLINE_VAULT_EXTRA_HOURS_PER_HALL_TIER, OFFLINE_VAULT_MIN_ABSENCE_SECS,
 };
 use crate::trials::{TrialDef, TRIAL_PAR_BONUS_GLORY};
@@ -513,6 +514,8 @@ pub struct CityState {
     pub weekly_challenge: WeeklyChallengeState,
     #[serde(default)]
     pub level_fail_streaks: HashMap<String, u8>,
+    #[serde(default)]
+    pub endless_decree: EndlessDecreeState,
 }
 
 impl CityState {
@@ -563,6 +566,7 @@ impl CityState {
             patron_devotion: HashMap::new(),
             weekly_challenge: WeeklyChallengeState::default(),
             level_fail_streaks: HashMap::new(),
+            endless_decree: EndlessDecreeState::default(),
         }
     }
 
@@ -612,6 +616,7 @@ impl CityState {
             *tier = (*tier).min(MAX_PATRON_DEVOTION_TIER);
         }
         self.weekly_challenge.sanitize();
+        self.endless_decree.sanitize();
         for fails in self.level_fail_streaks.values_mut() {
             *fails = (*fails).min(MAX_VALKYRIE_FAIL_STREAK);
         }
@@ -1166,11 +1171,51 @@ impl CityState {
         (count, total_res, tools, total_glory)
     }
 
-    /// Total claimable Daily Bounties and Skald's Path tiers.
+    /// Advances the free Skald's Path to the next prestige cycle once all 10 tiers are claimed.
+    pub fn try_advance_skald_cycle(&mut self) -> bool {
+        self.skald_pass.try_advance_cycle()
+    }
+
+    /// True once every scripted Saga quest has been claimed and Endless Jarl's Decrees take over.
+    pub fn is_endless_decree_active(&self, quests: &[QuestDef]) -> bool {
+        self.active_quest(quests).is_none()
+    }
+
+    /// True when Endless Jarl's Decrees are active and the current decree target has been met.
+    pub fn is_endless_decree_ready(&self, quests: &[QuestDef]) -> bool {
+        self.is_endless_decree_active(quests) && self.endless_decree.is_ready()
+    }
+
+    /// Records progress toward the current Endless Jarl's Decree when scripted Saga quests are done.
+    pub fn record_endless_decree_progress(
+        &mut self,
+        quests: &[QuestDef],
+        kind: EndlessDecreeKind,
+        amount: u32,
+    ) {
+        if self.is_endless_decree_active(quests) {
+            self.endless_decree.record(kind, amount);
+        }
+    }
+
+    /// Claims the completed Endless Jarl's Decree and rolls the next one.
+    pub fn try_claim_endless_decree(
+        &mut self,
+        quests: &[QuestDef],
+    ) -> Option<(ResourceBundle, Option<ActiveTool>, u32)> {
+        if !self.is_endless_decree_active(quests) {
+            return None;
+        }
+        self.endless_decree
+            .try_claim(&mut self.resources, &mut self.tools, &mut self.glory)
+    }
+
+    /// Total claimable Daily Bounties, Skald's Path tiers, and Skald cycle rollover action.
     pub fn claimable_bounties_and_pass_count(&self) -> usize {
         self.daily_bounties
             .claimable_count()
             .saturating_add(self.skald_pass.claimable_count())
+            .saturating_add(usize::from(self.skald_pass.can_advance_cycle()))
     }
 
     /// Returns effective max endurance including Great Hall bonus.

@@ -32,10 +32,11 @@ use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use wyrdstone_core::{
     achievement_progress, format_achievement_desc, format_boon_desc, format_boss_desc,
-    format_patron_desc, patron_devotion_upgrade_cost, skald_pass_tier_reward, AmuletEffect,
-    CityState, ClanRank, I18nCatalog, PatronGod, ResourceBundle, MAX_DAILY_STREAK_CYCLE,
-    MAX_PATRON_DEVOTION_TIER, PATRON_DEVOTION_FURY_PCT_PER_TIER,
-    PATRON_DEVOTION_SCORE_PCT_PER_TIER, SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
+    format_patron_desc, patron_devotion_upgrade_cost, skald_pass_tier_reward_for_cycle,
+    AmuletEffect, CityState, ClanRank, I18nCatalog, PatronGod, ResourceBundle,
+    MAX_DAILY_STREAK_CYCLE, MAX_PATRON_DEVOTION_TIER, PATRON_DEVOTION_FURY_PCT_PER_TIER,
+    PATRON_DEVOTION_SCORE_PCT_PER_TIER, SKALD_PASS_CYCLE_BONUS_PCT, SKALD_PASS_CYCLE_MAX_BONUS_PCT,
+    SKALD_PASS_TIERS, SKALD_PASS_XP_PER_TIER,
 };
 
 pub(super) fn format_reward_summary(i18n: &I18nCatalog, res: ResourceBundle, glory: u32) -> String {
@@ -3440,6 +3441,9 @@ pub(super) fn spawn_bounties_modal(
 
             let cur_tier = ctx.city.skald_pass.current_tier();
             let xp_cap = u32::from(SKALD_PASS_TIERS) * SKALD_PASS_XP_PER_TIER;
+            let xp_shown = ctx.city.skald_pass.xp.min(xp_cap);
+            let pass_cycle = ctx.city.skald_pass.cycle;
+            let can_advance = ctx.city.skald_pass.can_advance_cycle();
             let claimable_tiers = ctx.city.skald_pass.claimable_count();
             modal
                 .spawn(Node {
@@ -3457,14 +3461,42 @@ pub(super) fn spawn_bounties_modal(
                             &[
                                 ("tier", cur_tier.to_string()),
                                 ("max", SKALD_PASS_TIERS.to_string()),
-                                ("xp", ctx.city.skald_pass.xp.to_string()),
+                                ("xp", xp_shown.to_string()),
                                 ("xp_cap", xp_cap.to_string()),
                             ],
                         )),
                         display_font(fjord_art, FONT_HEADING),
                         TextColor(COLOR_ACCENT_GOLD),
                     ));
-                    if claimable_tiers > 1 {
+                    if pass_cycle > 0 {
+                        let bonus_pct = pass_cycle
+                            .saturating_mul(SKALD_PASS_CYCLE_BONUS_PCT)
+                            .min(SKALD_PASS_CYCLE_MAX_BONUS_PCT);
+                        spawn_resource_pill(
+                            hdr,
+                            &i18n.t_fmt(
+                                "city.skald_pass.cycle_badge",
+                                &[
+                                    ("cycle", (pass_cycle + 1).to_string()),
+                                    ("bonus", bonus_pct.to_string()),
+                                ],
+                            ),
+                            COLOR_ACCENT_TEAL_TEXT,
+                        );
+                    }
+                    if can_advance {
+                        spawn_small_button_colored(
+                            hdr,
+                            &i18n.t_fmt(
+                                "city.skald_pass.advance_cycle",
+                                &[("next", (pass_cycle + 2).to_string())],
+                            ),
+                            CityAction::AdvanceSkaldCycle,
+                            COLOR_ACCENT_GOLD,
+                            COLOR_TEXT_DARK,
+                            true,
+                        );
+                    } else if claimable_tiers > 1 {
                         spawn_small_button_colored(
                             hdr,
                             &i18n.t_fmt(
@@ -3497,7 +3529,7 @@ pub(super) fn spawn_bounties_modal(
                 let unlocked = cur_tier >= tier;
                 let claimed = ctx.city.skald_pass.is_tier_claimed(tier);
                 let claimable = unlocked && !claimed;
-                let (res, tool_opt, glory) = skald_pass_tier_reward(tier);
+                let (res, tool_opt, glory) = skald_pass_tier_reward_for_cycle(tier, pass_cycle);
                 let mut reward_text = format_reward_summary(i18n, res, glory);
                 if let Some(tool) = tool_opt {
                     if let Some(recipe) = ctx.data.tool_shop.iter().find(|r| r.tool == tool) {

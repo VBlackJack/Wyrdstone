@@ -1350,6 +1350,14 @@ pub fn tick_board_animation(
                         ctx.anim_duration(0.58),
                     );
                 }
+                if !preview.fired_boosters.is_empty() {
+                    let s = &mut *ctx;
+                    s.city.record_endless_decree_progress(
+                        &s.data.quests,
+                        wyrdstone_core::EndlessDecreeKind::TriggerBoostersOrFury,
+                        preview.fired_boosters.len() as u32,
+                    );
+                }
                 if !input_state.reduced_motion {
                     if !preview.prepared.converted_boosters.is_empty()
                         || preview.fired_boosters.len() >= 2
@@ -1418,6 +1426,17 @@ pub fn tick_board_animation(
                     ctx.city
                         .daily_bounties
                         .record_progress(DailyBountyKind::EarnScore, report.score_awarded);
+                    let s = &mut *ctx;
+                    s.city.record_endless_decree_progress(
+                        &s.data.quests,
+                        wyrdstone_core::EndlessDecreeKind::ClearRunes,
+                        report.stats.runes_cleared as u32,
+                    );
+                    s.city.record_endless_decree_progress(
+                        &s.data.quests,
+                        wyrdstone_core::EndlessDecreeKind::EarnScore,
+                        report.score_awarded,
+                    );
                 }
                 if report.step.ice_broken > 0
                     || report.step.chains_broken > 0
@@ -2261,6 +2280,11 @@ fn finalize_level_transition(
                     run.advance_after_stage(moves_left, fury, overdrive_turns, score, rewards)
                 });
                 if has_next {
+                    ctx.city.record_endless_decree_progress(
+                        &ctx.data.quests,
+                        wyrdstone_core::EndlessDecreeKind::DefeatBosses,
+                        1,
+                    );
                     if let Ok(next_boss_key) = ctx.advance_gauntlet_stage() {
                         let (stage_num, total_stages, cols, rows) = (
                             ctx.active_gauntlet
@@ -2325,9 +2349,30 @@ fn finalize_level_transition(
                 let wave = ctx.active_expedition.as_ref().map(|r| r.wave).unwrap_or(1);
                 ctx.city
                     .record_expedition_wave(wave, &rewards, &ctx.data.balance);
+                ctx.city.record_endless_decree_progress(
+                    &ctx.data.quests,
+                    wyrdstone_core::EndlessDecreeKind::CompleteExpeditionWaves,
+                    1,
+                );
+                ctx.city.record_endless_decree_progress(
+                    &ctx.data.quests,
+                    wyrdstone_core::EndlessDecreeKind::WinRaids,
+                    1,
+                );
                 if boss_def.is_some() {
                     ctx.city.glory = ctx.city.glory.saturating_add(25);
+                    ctx.city.record_endless_decree_progress(
+                        &ctx.data.quests,
+                        wyrdstone_core::EndlessDecreeKind::DefeatBosses,
+                        1,
+                    );
                 }
+                let exp_xp = if boss_def.is_some() {
+                    SKALD_XP_BOSS_WIN
+                } else {
+                    SKALD_XP_BOARD_WIN
+                };
+                ctx.city.skald_pass.add_xp(exp_xp);
                 if ctx
                     .active_expedition
                     .as_ref()
@@ -2346,9 +2391,9 @@ fn finalize_level_transition(
                 ctx.persist();
                 next_state.set(AppState::FjordCity);
                 return false;
-            } else if let Some(boss) = boss_def {
+            } else if let Some(ref boss) = boss_def {
                 ctx.last_glory_reward = boss.glory_reward;
-                ctx.city.record_boss_victory_with_rewards(&boss, &rewards);
+                ctx.city.record_boss_victory_with_rewards(boss, &rewards);
                 ctx.last_rewards = rewards;
             } else if building_id == wyrdstone_core::BLITZ_BUILDING_ID {
                 let (medal, glory, is_new_best) =
@@ -2405,6 +2450,18 @@ fn finalize_level_transition(
             ctx.city
                 .daily_bounties
                 .record_progress(DailyBountyKind::WinBoards, 1);
+            ctx.city.record_endless_decree_progress(
+                &ctx.data.quests,
+                wyrdstone_core::EndlessDecreeKind::WinRaids,
+                1,
+            );
+            if boss_def.is_some() || building_id == wyrdstone_core::GAUNTLET_BUILDING_ID {
+                ctx.city.record_endless_decree_progress(
+                    &ctx.data.quests,
+                    wyrdstone_core::EndlessDecreeKind::DefeatBosses,
+                    1,
+                );
+            }
             let skald_xp = if building_id == wyrdstone_core::GAUNTLET_BUILDING_ID
                 || building_id == wyrdstone_core::BOSS_RAID_BUILDING_ID
             {

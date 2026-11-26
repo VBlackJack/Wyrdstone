@@ -42,8 +42,8 @@ use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode, WindowResized};
 #[cfg(target_os = "android")]
 use bevy::window::{PrimaryWindow, WindowResized};
 use wyrdstone_core::{
-    format_building_bonus, format_rank_perk, ActiveTool, BuildingDef, I18nCatalog, PatronGod,
-    PlayMode, QuestCondition,
+    format_building_bonus, format_rank_perk, ActiveTool, BuildingDef, EndlessDecreeKind,
+    I18nCatalog, PatronGod, PlayMode, QuestCondition,
 };
 
 const CELEBRATION_DURATION_SECS: f32 = 3.2;
@@ -285,6 +285,7 @@ pub enum CityAction {
     UpgradeBuilding(String),
     DrinkMead,
     ClaimQuest(String),
+    ClaimEndlessDecree,
     FocusActiveQuest,
     FocusFjordMap,
     FocusResourceSource(wyrdstone_core::ResourceKind),
@@ -294,6 +295,7 @@ pub enum CityAction {
     ClaimAllBounties,
     ClaimSkaldTier(u8),
     ClaimAllSkaldTiers,
+    AdvanceSkaldCycle,
     ShowFlameInfo,
     ToggleDrawer(CityDrawer),
     ToggleModal(ActiveModal),
@@ -1524,14 +1526,137 @@ fn spawn_city_tree(
                                 );
                             }
                         } else {
-                            qbar.spawn((
-                                Text::new(i18n.t("city.panel.quests.done")),
-                                TextFont {
-                                    font_size: FONT_SMALL,
+                            let decree = &ctx.city.endless_decree;
+                            let d_target = decree.target();
+                            let d_cur = decree.progress.min(d_target);
+                            let d_ready = decree.is_ready();
+                            let d_pct =
+                                ((d_cur as f32 / d_target.max(1) as f32) * 100.0).clamp(0.0, 100.0);
+                            qbar.spawn(Node {
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(8.0),
+                                flex_shrink: 1.0,
+                                ..default()
+                            })
+                            .with_children(|left| {
+                                if let Some(portrait) = fjord_art.portrait("odin") {
+                                    left.spawn((
+                                        ImageNode::new(portrait),
+                                        Node {
+                                            width: Val::Px(38.0),
+                                            height: Val::Px(38.0),
+                                            flex_shrink: 0.0,
+                                            border: UiRect::all(Val::Px(1.5)),
+                                            ..default()
+                                        },
+                                        BorderColor(COLOR_ACCENT_GOLD),
+                                        BorderRadius::all(Val::Px(6.0)),
+                                    ));
+                                }
+                                left.spawn(Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(1.0),
+                                    flex_shrink: 1.0,
                                     ..default()
-                                },
-                                TextColor(COLOR_ACCENT_GOLD),
-                            ));
+                                })
+                                .with_children(|info| {
+                                    info.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            "city.decree.banner",
+                                            &[("num", decree.decree_number().to_string())],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_SMALL,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_ACCENT_GOLD),
+                                    ));
+                                    info.spawn((
+                                        Text::new(i18n.t_fmt(
+                                            decree.kind().desc_key(),
+                                            &[("target", d_target.to_string())],
+                                        )),
+                                        TextFont {
+                                            font_size: FONT_SMALL - 1.0,
+                                            ..default()
+                                        },
+                                        TextColor(COLOR_TEXT_PRIMARY),
+                                    ));
+                                    info.spawn(Node {
+                                        flex_direction: FlexDirection::Row,
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(6.0),
+                                        margin: UiRect::top(Val::Px(2.0)),
+                                        width: Val::Percent(100.0),
+                                        ..default()
+                                    })
+                                    .with_children(|prow| {
+                                        prow.spawn((
+                                            Node {
+                                                flex_grow: 1.0,
+                                                min_width: Val::Px(110.0),
+                                                height: Val::Px(5.0),
+                                                overflow: Overflow::clip(),
+                                                ..default()
+                                            },
+                                            BackgroundColor(COLOR_PANEL_DARK),
+                                            BorderRadius::all(Val::Px(3.0)),
+                                        ))
+                                        .with_children(
+                                            |track| {
+                                                track.spawn((
+                                                    Node {
+                                                        width: Val::Percent(d_pct),
+                                                        height: Val::Percent(100.0),
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(if d_ready {
+                                                        COLOR_ACCENT_GREEN
+                                                    } else {
+                                                        COLOR_ACCENT_TEAL
+                                                    }),
+                                                ));
+                                            },
+                                        );
+                                        prow.spawn((
+                                            Text::new(i18n.t_fmt(
+                                                "city.panel.quests.progress",
+                                                &[
+                                                    ("cur", d_cur.to_string()),
+                                                    ("target", d_target.to_string()),
+                                                ],
+                                            )),
+                                            TextFont {
+                                                font_size: FONT_SMALL - 1.5,
+                                                ..default()
+                                            },
+                                            TextColor(if d_ready {
+                                                COLOR_ACCENT_GOLD
+                                            } else {
+                                                COLOR_TEXT_MUTED
+                                            }),
+                                        ));
+                                    });
+                                });
+                            });
+
+                            if d_ready {
+                                spawn_small_button(
+                                    qbar,
+                                    i18n.t("city.panel.quests.complete"),
+                                    CityAction::ClaimEndlessDecree,
+                                    COLOR_ACCENT_GREEN,
+                                    true,
+                                );
+                            } else {
+                                spawn_small_button(
+                                    qbar,
+                                    i18n.t("city.panel.quests.go"),
+                                    CityAction::FocusActiveQuest,
+                                    COLOR_ACCENT_TEAL,
+                                    true,
+                                );
+                            }
                         }
                     });
             }
@@ -1635,15 +1760,18 @@ fn spawn_city_tree(
                 let modes_badge = usize::from(daily_ready);
                 let menu_badge = usize::from(tribute_ready);
                 let active_quest = ctx.city.active_quest(&ctx.data.quests);
-                let quest_ready = active_quest.is_some_and(|q| ctx.city.is_quest_ready(q));
+                let quest_ready = active_quest.is_some_and(|q| ctx.city.is_quest_ready(q))
+                    || ctx.city.is_endless_decree_ready(&ctx.data.quests);
                 let quest_action = if let Some(q) = active_quest {
-                    if quest_ready {
+                    if ctx.city.is_quest_ready(q) {
                         CityAction::ClaimQuest(q.id.clone())
                     } else {
                         CityAction::FocusActiveQuest
                     }
+                } else if ctx.city.is_endless_decree_ready(&ctx.data.quests) {
+                    CityAction::ClaimEndlessDecree
                 } else {
-                    CityAction::FocusFjordMap
+                    CityAction::FocusActiveQuest
                 };
                 viewport
                     .spawn((
@@ -1725,13 +1853,11 @@ fn spawn_city_tree(
                             quest_action,
                             if quest_ready {
                                 COLOR_ACCENT_GREEN
-                            } else if active_quest.is_some() {
-                                COLOR_PANEL_CARD
                             } else {
-                                COLOR_BUTTON_DISABLED
+                                COLOR_PANEL_CARD
                             },
                             COLOR_TEXT_PRIMARY,
-                            active_quest.is_some(),
+                            true,
                             None,
                             1.0,
                         );
@@ -2819,32 +2945,40 @@ pub fn handle_city_buttons(
             }
         }
         if keys.just_pressed(KeyCode::KeyQ) {
-            if let Some(quest) = ctx.city.active_quest(&ctx.data.quests).cloned() {
-                if ctx.city.is_quest_ready(&quest) {
-                    if claim_quest_by_id(&mut commands, &mut ctx, &sound_bank, &quest.id) {
-                        haptics.send(HapticEvent(HapticKind::Victory));
+            let ready_quest_id = ctx
+                .city
+                .active_quest(&ctx.data.quests)
+                .filter(|q| ctx.city.is_quest_ready(q))
+                .map(|q| q.id.clone());
+            if let Some(quest_id) = ready_quest_id {
+                if claim_quest_by_id(&mut commands, &mut ctx, &sound_bank, &quest_id) {
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            } else if ctx.city.is_endless_decree_ready(&ctx.data.quests) {
+                if claim_endless_decree_action(&mut commands, &mut ctx, &sound_bank) {
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            } else {
+                match focus_active_quest(
+                    &mut commands,
+                    &mut ctx,
+                    &sound_bank,
+                    &mut layout_mode,
+                    &mut scroll_mem,
+                    &mut next_state,
+                ) {
+                    FocusQuestResult::LaunchedMatch3 => return,
+                    FocusQuestResult::UpdatedHub(ok) => {
+                        if !ok {
+                            haptics.send(HapticEvent(HapticKind::Error));
+                        } else {
+                            haptics.send(HapticEvent(HapticKind::LightTap));
+                        }
                         rebuild = true;
                     }
-                } else {
-                    match focus_active_quest(
-                        &mut commands,
-                        &mut ctx,
-                        &sound_bank,
-                        &mut layout_mode,
-                        &mut scroll_mem,
-                        &mut next_state,
-                    ) {
-                        FocusQuestResult::LaunchedMatch3 => return,
-                        FocusQuestResult::UpdatedHub(ok) => {
-                            if !ok {
-                                haptics.send(HapticEvent(HapticKind::Error));
-                            } else {
-                                haptics.send(HapticEvent(HapticKind::LightTap));
-                            }
-                            rebuild = true;
-                        }
-                        FocusQuestResult::NoQuest => {}
-                    }
+                    FocusQuestResult::NoQuest => {}
                 }
             }
         }
@@ -3627,6 +3761,12 @@ pub fn handle_city_buttons(
                     rebuild = true;
                 }
             }
+            CityAction::ClaimEndlessDecree => {
+                if claim_endless_decree_action(&mut commands, &mut ctx, &sound_bank) {
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            }
             CityAction::FocusActiveQuest => {
                 match focus_active_quest(
                     &mut commands,
@@ -4180,6 +4320,30 @@ pub fn handle_city_buttons(
                     rebuild = true;
                 }
             }
+            CityAction::AdvanceSkaldCycle => {
+                if ctx.city.try_advance_skald_cycle() {
+                    let cycle_num = ctx.city.skald_pass.cycle + 1;
+                    let bonus_pct = ctx
+                        .city
+                        .skald_pass
+                        .cycle
+                        .saturating_mul(wyrdstone_core::retention::SKALD_PASS_CYCLE_BONUS_PCT)
+                        .min(wyrdstone_core::retention::SKALD_PASS_CYCLE_MAX_BONUS_PCT);
+                    ctx.celebration_message = Some(ctx.data.i18n.t_fmt(
+                        "city.skald_pass.cycle_started",
+                        &[
+                            ("cycle", cycle_num.to_string()),
+                            ("bonus", bonus_pct.to_string()),
+                        ],
+                    ));
+                    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+                    ctx.status_notice_key = None;
+                    ctx.persist();
+                    play_sfx(&mut commands, &sound_bank, SfxKind::Victory);
+                    haptics.send(HapticEvent(HapticKind::Victory));
+                    rebuild = true;
+                }
+            }
             CityAction::ShowFlameInfo => {
                 let flame = ctx.city.valhalla_flame_tier();
                 if flame != wyrdstone_core::ValhallaFlameTier::None {
@@ -4286,6 +4450,41 @@ fn claim_quest_by_id(
     false
 }
 
+fn claim_endless_decree_action(
+    commands: &mut Commands,
+    ctx: &mut GameContext,
+    sound_bank: &SoundBank,
+) -> bool {
+    let decree_num = ctx.city.endless_decree.decree_number();
+    let claimed = {
+        let s = &mut *ctx;
+        s.city.try_claim_endless_decree(&s.data.quests)
+    };
+    let Some((res, tool_opt, glory)) = claimed else {
+        return false;
+    };
+    let mut summary = modals::format_reward_summary(&ctx.data.i18n, res, glory);
+    if let Some(tool) = tool_opt {
+        if let Some(recipe) = ctx.data.tool_shop.iter().find(|r| r.tool == tool) {
+            let tool_lbl = ctx
+                .data
+                .i18n
+                .t_fmt(&recipe.name_key, &[("count", "+1".to_string())]);
+            summary.push_str(&format!(" + {tool_lbl}"));
+        }
+    }
+    let title = ctx
+        .data
+        .i18n
+        .t_fmt("city.decree.banner", &[("num", decree_num.to_string())]);
+    ctx.celebration_message = Some(celebration_claim_line(&ctx.data.i18n, title, summary));
+    ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
+    ctx.status_notice_key = None;
+    ctx.persist();
+    play_sfx(commands, sound_bank, SfxKind::Victory);
+    true
+}
+
 fn focus_active_quest(
     commands: &mut Commands,
     ctx: &mut GameContext,
@@ -4295,7 +4494,58 @@ fn focus_active_quest(
     next_state: &mut NextState<AppState>,
 ) -> FocusQuestResult {
     let Some(quest) = ctx.city.active_quest(&ctx.data.quests).cloned() else {
-        return FocusQuestResult::NoQuest;
+        ctx.status_notice_key = None;
+        ctx.shortage_guidance = None;
+        match ctx.city.endless_decree.kind() {
+            EndlessDecreeKind::DefeatBosses => {
+                if !ctx.city.is_mode_unlocked(PlayMode::BossRaids) {
+                    layout_mode.inspector_open = false;
+                    layout_mode.active_drawer = CityDrawer::None;
+                    ctx.status_notice_key = Some(PlayMode::BossRaids.unlock_hint_key().to_string());
+                    play_sfx(commands, sound_bank, SfxKind::Invalid);
+                    return FocusQuestResult::UpdatedHub(false);
+                }
+                ctx.active_modal = ActiveModal::Raids;
+                scroll_mem.modal_offset_y = 0.0;
+                play_sfx(commands, sound_bank, SfxKind::Swap);
+                return FocusQuestResult::UpdatedHub(true);
+            }
+            EndlessDecreeKind::CompleteExpeditionWaves => {
+                if !ctx.city.is_mode_unlocked(PlayMode::Expedition) {
+                    layout_mode.inspector_open = false;
+                    layout_mode.active_drawer = CityDrawer::None;
+                    ctx.status_notice_key =
+                        Some(PlayMode::Expedition.unlock_hint_key().to_string());
+                    play_sfx(commands, sound_bank, SfxKind::Invalid);
+                    return FocusQuestResult::UpdatedHub(false);
+                }
+                layout_mode.inspector_open = false;
+                layout_mode.active_drawer = CityDrawer::Modes;
+                scroll_mem.inspector_offset_y = 0.0;
+                play_sfx(commands, sound_bank, SfxKind::Swap);
+                return FocusQuestResult::UpdatedHub(true);
+            }
+            EndlessDecreeKind::WinRaids
+            | EndlessDecreeKind::ClearRunes
+            | EndlessDecreeKind::TriggerBoostersOrFury
+            | EndlessDecreeKind::EarnScore => {
+                let target_bldg = ctx
+                    .data
+                    .buildings
+                    .iter()
+                    .find(|b| ctx.city.is_building_unlocked(b))
+                    .map(|b| b.id.clone())
+                    .unwrap_or_else(|| wyrdstone_core::HUB_BUILDING_ID.to_string());
+                ctx.selected_building_id = target_bldg;
+                ctx.selected_difficulty = 0;
+                layout_mode.active_drawer = CityDrawer::None;
+                layout_mode.inspector_open = true;
+                layout_mode.inspector_tab = InspectorTab::Raid;
+                scroll_mem.inspector_offset_y = 0.0;
+                play_sfx(commands, sound_bank, SfxKind::Swap);
+                return FocusQuestResult::UpdatedHub(true);
+            }
+        }
     };
     ctx.status_notice_key = None;
     ctx.shortage_guidance = None;
