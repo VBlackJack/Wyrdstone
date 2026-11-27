@@ -6,7 +6,7 @@
 
 ## Jouer dans le navigateur (PC & Smartphone)
 
-Lancez le jeu directement sans installation sur ordinateur ou mobile (affichage adaptatif Portrait et Paysage mobile, mode plein écran Portrait ou Paysage, tiroirs Match-3 sur smartphone, gestes tactiles, manifeste PWA et sauvegarde locale automatique dans `localStorage`) :
+Lancez le jeu directement sans installation sur ordinateur ou mobile (zone de jeu maximisée en Portrait et Paysage mobile y compris grands smartphones, mode plein écran Portrait ou Paysage avec synchronisation `visualViewport`, tiroirs Match-3 défilables sur smartphone, gestes tactiles, manifeste PWA et sauvegarde locale automatique dans `localStorage`) :
 
 - **GitHub Pages (Version Web de test)** : <https://vblackjack.github.io/Wyrdstone/>
 
@@ -20,7 +20,7 @@ Lancez le jeu directement sans installation sur ordinateur ou mobile (affichage 
 
 - `crates/wyrdstone_core` : logique pure en Rust (plateau Match-3, gravité, portails, givre rampant, cascades, boosters, Dieux Patrons, Surcharge Ragnarok, Raids Boss, Gantelet, Valhalla Blitz, Épreuves d'Yggdrasil, Expédition 2.0, Sentier du Skalde cyclique, Décrets sans fin, Merveille d'Yggdrasil, Ascension des Neuf Royaumes, Doubles Amulettes & Synergies, i18n EN/FR, sauvegarde JSON atomique).
 - `crates/wyrdstone_game` : couche graphique Bevy 2D avec illustrations nordiques peintes, modules `city_ui/` et `match3_scene/`, défilement molette + tactile, audio WAV procédural (avec BGM dédiée Boss Raid), contrôles souris et tactile, intégration Android `NativeActivity` (`cargo-apk`), et cible Web WASM32 WebGL2 avec persistance `localStorage`.
-- `web/` : enveloppe navigateur réactive (`web/index.html`) et manifeste PWA (`web/manifest.webmanifest`) adaptés aux écrans PC larges et smartphones avec plein écran Portrait/Paysage, gestion des zones sûres et verrouillage du scroll tactile.
+- `web/` : enveloppe navigateur auto-localisée FR/EN (`web/index.html`) et manifeste PWA (`web/manifest.webmanifest`) adaptés aux écrans PC larges et smartphones avec plein écran Portrait/Paysage, synchronisation `visualViewport` / `:fullscreen`, zones sûres et verrouillage du scroll tactile.
 - `assets/locales/` : fichiers de traduction anglais (`en.json`) et français (`fr.json`).
 - `assets/data/` : données de jeu externalisées au format RON (`balance.ron`, `buildings.ron`, `levels.ron`, `quests.ron`, `amulets.ron`, `collections.ron`, `tool_shop.ron`, `bosses.ron`, `achievements.ron`, `trials.ron`).
 

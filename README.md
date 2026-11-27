@@ -6,7 +6,7 @@
 
 ## Play in Browser (PC & Smartphone)
 
-Play directly without installing anything on desktop or mobile (adaptive Portrait and PhoneLandscape layouts, selectable Portrait/Landscape fullscreen mode, collapsible mobile Match-3 drawers, touch gestures, standalone PWA support, and automatic browser `localStorage` progression):
+Play directly without installing anything on desktop or mobile (maximized Portrait and PhoneLandscape board layouts including wide smartphones, selectable Portrait/Landscape fullscreen mode with `visualViewport` sync, collapsible scrollable mobile Match-3 drawers, touch gestures, standalone PWA support, and automatic browser `localStorage` progression):
 
 - **GitHub Pages (Live Test Build)**: <https://vblackjack.github.io/Wyrdstone/>
 
@@ -20,7 +20,7 @@ Play directly without installing anything on desktop or mobile (adaptive Portrai
 
 - `crates/wyrdstone_core`: Pure Rust game logic (Match-3 board, gravity, portals, frost spread, cascades, boosters, Patron Gods, Ragnarok Overdrive, Boss Raids, Ragnarok Gauntlet, Valhalla Blitz, Yggdrasil Trials, Endless Expedition 2.0, Cyclic Skald Pass, Endless Decrees, Yggdrasil Wonder, Nine Realms Ascension, Dual Amulets & Synergies, i18n EN/FR, atomic JSON save).
 - `crates/wyrdstone_game`: Bevy 2D presentation layer with painted Norse artwork, modular `city_ui/` and `match3_scene/` scenes, mouse-wheel + touch scrolling, procedural WAV audio (with dedicated Boss Raid BGM), responsive mouse + touch input, Android `NativeActivity` integration (`cargo-apk`), and WASM32 WebGL2 browser support with `localStorage` persistence.
-- `web/`: Responsive browser shell (`web/index.html`) and PWA manifest (`web/manifest.webmanifest`) supporting PC widescreen and mobile Portrait/Landscape fullscreen orientation lock with safe-area padding and touch-scroll lock.
+- `web/`: EN/FR auto-localized browser shell (`web/index.html`) and PWA manifest (`web/manifest.webmanifest`) supporting PC widescreen and mobile Portrait/Landscape fullscreen orientation lock with `visualViewport` / `:fullscreen` sync, safe-area padding, and touch-scroll lock.
 - `assets/locales/`: English (`en.json`) and French (`fr.json`) localization tables.
 - `assets/data/`: Externalized RON data (`balance.ron`, `buildings.ron`, `levels.ron`, `quests.ron`, `amulets.ron`, `collections.ron`, `tool_shop.ron`, `bosses.ron`, `achievements.ron`, `trials.ron`).
 

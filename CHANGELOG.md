@@ -40,6 +40,7 @@ All notable changes to Wyrdstone are documented in this file.
 - **Single Turn Engine**: Match-3 turn resolution (swaps, tools, Divine Fury, cascades, relic drops, end-of-turn hooks, victory boosters) now runs through one step machine in `wyrdstone_core`; the animation layer only plays its steps. A differential fuzz against the previous behaviour proves the move changed no rule. Clear order is now deterministic.
 
 ### Fixed
+- **Web Fullscreen, Contrast & Mobile Layout Alignment**: Cleaned up pending fullscreen tap listeners on entry/exit and auto-localized Web loader/error copy (EN/FR), fixed Title teal `Windowed` button WCAG AA contrast on spawn and unhover, routed PhoneLandscape flying orbs into side rails, centered victory banners on `board_center_y`, preserved Gauntlet stage geometry across transitions, eliminated 16:9 Fjord backdrop stretch in Portrait, and wrapped narrow PhoneLandscape top bars cleanly.
 - **Fjord Map Buildings**: Buildings fill their sprite box again and stay anchored to their terrain spot on every window size; rebuilt buildings show their tier stars and the chapter dialogue opens after the rise animation.
 - **Board Clearance**: More space is reserved under the Match-3 board so the tool bar no longer overlaps it.
 - **Unwinnable Content**: `meadery_1` now targets a rune that actually spawns; Expedition wave 1 only targets runes inside its pool; Daily Trial relics never land on blocked cells. Data-feasibility tests cover every bundled level, a full year of dailies, and Expedition waves.
