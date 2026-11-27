@@ -194,6 +194,7 @@ pub fn run_app() {
     .add_systems(
         Update,
         (
+            city_ui::handle_portrait_map_pan,
             city_ui::handle_city_buttons,
             city_ui::update_city_hover_tooltip,
             city_ui::sync_map_building_layout,
@@ -364,6 +365,7 @@ mod system_param_tests {
 
         // Fjord City systems
         assert_system_valid(city_ui::setup_city_ui);
+        assert_system_valid(city_ui::handle_portrait_map_pan);
         assert_system_valid(city_ui::handle_city_buttons);
         assert_system_valid(city_ui::update_city_hover_tooltip);
         assert_system_valid(city_ui::sync_map_building_layout);

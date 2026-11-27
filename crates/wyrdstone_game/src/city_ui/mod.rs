@@ -58,10 +58,12 @@ const MIN_CITY_TOP_BAR_HEIGHT_PX: f32 = 24.0;
 /// Keeping the interactive Fjord map locked to this exact ratio guarantees identical
 /// normalized building positions across every landscape resolution.
 const FJORD_MAP_ASPECT: f32 = 1280.0 / 720.0;
+const PORTRAIT_MAP_HUD_RESERVE_PX: f32 = 156.0;
+const PORTRAIT_MAP_MIN_HEIGHT_PX: f32 = 420.0;
+const PORTRAIT_MAP_MAX_HEIGHT_PX: f32 = 560.0;
+const MAP_PAN_DEADZONE_PX: f32 = 6.0;
 const WONDER_MAP_X_PCT: f32 = 35.0;
 const WONDER_MAP_Y_PCT: f32 = 36.0;
-const WONDER_PORTRAIT_LEFT_PCT: f32 = 34.5;
-const WONDER_PORTRAIT_TOP_PCT: f32 = 56.0;
 
 #[derive(Component)]
 pub struct CityRoot;
@@ -86,14 +88,30 @@ pub struct FjordHarvestOrb {
 pub struct FjordMapBackdrop;
 
 /// Computes exact `(width, height)` for the interactive `FjordMapContainer`.
-/// Landscape mode always preserves the exact 16:9 `fjord_map.png` ratio centered inside the viewport.
+/// Both landscape and portrait lock `fjord_map.png` to its native 16:9 ratio so every
+/// building pin stays anchored directly on its painted terrain spot without distortion.
+/// In portrait mode the 16:9 map expands horizontally past `win_w` and pans via touch drag.
 pub(crate) fn compute_fjord_canvas_size(win_w: f32, win_h: f32, is_portrait: bool) -> (f32, f32) {
     if is_portrait {
-        return (win_w.max(1.0), win_h.max(1.0));
+        let target_h = (win_h - PORTRAIT_MAP_HUD_RESERVE_PX)
+            .clamp(PORTRAIT_MAP_MIN_HEIGHT_PX, PORTRAIT_MAP_MAX_HEIGHT_PX)
+            .min(win_h.max(1.0));
+        let w = (target_h * FJORD_MAP_ASPECT).max(win_w.max(1.0));
+        let h = (w / FJORD_MAP_ASPECT).max(1.0);
+        return (w, h);
     }
     let w = win_w.min(win_h * FJORD_MAP_ASPECT).max(1.0);
     let h = (w / FJORD_MAP_ASPECT).max(1.0);
     (w, h)
+}
+
+fn compute_portrait_map_top_px(win_h: f32, canvas_h: f32) -> f32 {
+    ((win_h - canvas_h) * 0.5).max(0.0)
+}
+
+fn compute_portrait_pan_for_x_pct(canvas_w: f32, win_w: f32, focus_x_pct: f32) -> f32 {
+    let max_pan = (canvas_w - win_w).max(0.0);
+    ((focus_x_pct / 100.0) * canvas_w - win_w * 0.5).clamp(0.0, max_pan)
 }
 
 fn compute_backdrop_cover_size(win_w: f32, win_h: f32) -> (f32, f32) {
@@ -106,13 +124,15 @@ fn compute_backdrop_cover_size(win_w: f32, win_h: f32) -> (f32, f32) {
 #[derive(Component)]
 pub struct FjordMapContainer;
 
+/// Horizontal scroll thumb displayed along the bottom of the Portrait 16:9 Fjord map.
+#[derive(Component)]
+pub struct PortraitPanThumb;
+
 /// Stores normalized terrain anchor coordinates (`0..=100%`) and tier scale for resolution-independent placement.
 #[derive(Component)]
 pub struct MapBuildingPin {
     pub map_x_pct: f32,
     pub map_y_pct: f32,
-    pub portrait_left_pct: Option<f32>,
-    pub portrait_top_pct: Option<f32>,
     pub tier_scale: f32,
 }
 
@@ -257,6 +277,10 @@ pub struct CityLayoutMode {
     pub last_canvas_window_size: Vec2,
     pub last_top_bar_height: f32,
     pub window_size: Vec2,
+    pub pan_touch_id: Option<u64>,
+    pub pan_last_x: f32,
+    pub pan_dragging: bool,
+    pub pan_mouse_last_x: Option<f32>,
 }
 
 #[derive(Component)]
@@ -411,6 +435,10 @@ pub fn setup_city_ui(
         last_canvas_window_size: Vec2::new(win_w, win_h),
         last_top_bar_height: 0.0,
         window_size: Vec2::new(win_w, win_h),
+        pan_touch_id: None,
+        pan_last_x: 0.0,
+        pan_dragging: false,
+        pan_mouse_last_x: None,
     });
     spawn_city_tree(
         &mut commands,
@@ -644,16 +672,12 @@ fn spawn_city_tree(
                     PickingBehavior::IGNORE,
                 ))
                 .with_children(|bg_wrap| {
-                    let backdrop_tint = if is_portrait {
-                        map_tint
-                    } else {
-                        match ctx.city.realm_theme() {
-                            RealmTheme::Midgard => Color::srgba(0.28, 0.34, 0.44, 1.0),
-                            RealmTheme::Jotunheim => Color::srgba(0.20, 0.34, 0.50, 1.0),
-                            RealmTheme::Nidavellir => Color::srgba(0.38, 0.24, 0.22, 1.0),
-                            RealmTheme::Vanaheim => Color::srgba(0.20, 0.36, 0.28, 1.0),
-                            RealmTheme::Asgard => Color::srgba(0.30, 0.26, 0.46, 1.0),
-                        }
+                    let backdrop_tint = match ctx.city.realm_theme() {
+                        RealmTheme::Midgard => Color::srgba(0.28, 0.34, 0.44, 1.0),
+                        RealmTheme::Jotunheim => Color::srgba(0.20, 0.34, 0.50, 1.0),
+                        RealmTheme::Nidavellir => Color::srgba(0.38, 0.24, 0.22, 1.0),
+                        RealmTheme::Vanaheim => Color::srgba(0.20, 0.36, 0.28, 1.0),
+                        RealmTheme::Asgard => Color::srgba(0.30, 0.26, 0.46, 1.0),
                     };
                     bg_wrap.spawn((
                         FjordMapBackdrop,
@@ -668,7 +692,23 @@ fn spawn_city_tree(
                     ));
                 });
 
-            // 1. Centered 16:9 Interactive Fjord Map Canvas (pins stay pixel-locked across resolutions).
+            let selected_x_pct = ctx
+                .data
+                .building_by_id(&ctx.selected_building_id)
+                .map(|b| b.map_x_pct)
+                .unwrap_or(49.0);
+            let max_pan_x = if is_portrait {
+                (canvas_w - win_w).max(0.0)
+            } else {
+                0.0
+            };
+            let portrait_pan_x = scroll_mem
+                .portrait_map_pan_x
+                .unwrap_or_else(|| compute_portrait_pan_for_x_pct(canvas_w, win_w, selected_x_pct))
+                .clamp(0.0, max_pan_x);
+            let portrait_map_top = compute_portrait_map_top_px(win_h, canvas_h);
+
+            // 1. Exact 16:9 Interactive Fjord Map Canvas (pins stay terrain-locked across every resolution).
             viewport
                 .spawn((
                     Node {
@@ -679,17 +719,26 @@ fn spawn_city_tree(
                         bottom: Val::Px(0.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
+                        overflow: Overflow::clip(),
                         ..default()
                     },
                     ZIndex(5),
                     PickingBehavior::IGNORE,
                 ))
                 .with_children(|stage| {
-                    let mut map_cmd = stage.spawn((
-                        FjordMapContainer,
-                        Button,
-                        NoButtonScale,
-                        CityAction::CloseInspector,
+                    let map_node = if is_portrait {
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(-portrait_pan_x),
+                            top: Val::Px(portrait_map_top),
+                            width: Val::Px(canvas_w),
+                            height: Val::Px(canvas_h),
+                            flex_shrink: 0.0,
+                            border: UiRect::vertical(Val::Px(1.5)),
+                            overflow: Overflow::clip(),
+                            ..default()
+                        }
+                    } else {
                         Node {
                             width: Val::Px(canvas_w),
                             height: Val::Px(canvas_h),
@@ -697,18 +746,20 @@ fn spawn_city_tree(
                             border: UiRect::all(Val::Px(if is_mobile { 0.0 } else { 1.5 })),
                             overflow: Overflow::clip(),
                             ..default()
-                        },
+                        }
+                    };
+                    let mut map_cmd = stage.spawn((
+                        FjordMapContainer,
+                        Button,
+                        NoButtonScale,
+                        CityAction::CloseInspector,
+                        ImageNode::new(fjord_art.fjord_map.clone()).with_color(map_tint),
+                        map_node,
                         BorderColor(Color::srgba(0.93, 0.74, 0.29, 0.28)),
                         BorderRadius::all(Val::Px(if is_mobile { 0.0 } else { 10.0 })),
+                        panel_shadow(),
                     ));
-                    if is_portrait {
-                        map_cmd.insert(BackgroundColor(Color::NONE));
-                    } else {
-                        map_cmd.insert((
-                            ImageNode::new(fjord_art.fjord_map.clone()).with_color(map_tint),
-                            panel_shadow(),
-                        ));
-                    }
+                    let _ = &mut map_cmd;
                     map_cmd.with_children(|map| {
                         // Animated Aurora Borealis ribbons glowing brighter with Clan Glory.
                         let aurora_intensity = (0.14 + (ctx.city.glory as f32 / 1200.0)).min(0.38);
@@ -880,6 +931,42 @@ fn spawn_city_tree(
                             );
                         }
                     });
+                    if is_portrait && max_pan_x > 1.0 {
+                        let thumb_w_pct = ((win_w / canvas_w) * 100.0).clamp(18.0, 92.0);
+                        let thumb_left_pct =
+                            (portrait_pan_x / max_pan_x).clamp(0.0, 1.0) * (100.0 - thumb_w_pct);
+                        stage
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Px(32.0 + safe.left),
+                                    right: Val::Px(32.0 + safe.right),
+                                    top: Val::Px(portrait_map_top + canvas_h - 8.0),
+                                    height: Val::Px(4.0),
+                                    overflow: Overflow::clip(),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.06, 0.09, 0.14, 0.78)),
+                                BorderRadius::all(Val::Px(2.0)),
+                                PickingBehavior::IGNORE,
+                            ))
+                            .with_children(|track| {
+                                track.spawn((
+                                    PortraitPanThumb,
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: Val::Percent(thumb_left_pct),
+                                        top: Val::Px(0.0),
+                                        width: Val::Percent(thumb_w_pct),
+                                        height: Val::Percent(100.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(0.93, 0.74, 0.29, 0.85)),
+                                    BorderRadius::all(Val::Px(2.0)),
+                                    PickingBehavior::IGNORE,
+                                ));
+                            });
+                    }
                 });
 
             // 2. Slim Floating Top HUD Bar + Contextual Banners (pass-through column wrapper).
@@ -2323,8 +2410,6 @@ fn spawn_wonder_map_pin(
     let pin_data = MapBuildingPin {
         map_x_pct: WONDER_MAP_X_PCT,
         map_y_pct: WONDER_MAP_Y_PCT,
-        portrait_left_pct: Some(WONDER_PORTRAIT_LEFT_PCT),
-        portrait_top_pct: Some(WONDER_PORTRAIT_TOP_PCT),
         tier_scale,
     };
     let (init_left, init_top, pin_w, sprite_w, sprite_h) =
@@ -2518,8 +2603,6 @@ fn spawn_map_building_pin(
     let pin_data = MapBuildingPin {
         map_x_pct: b.map_x_pct,
         map_y_pct: b.map_y_pct,
-        portrait_left_pct: b.portrait_left_pct,
-        portrait_top_pct: b.portrait_top_pct,
         tier_scale,
     };
     let (init_left, init_top, pin_w, sprite_w, sprite_h) =
@@ -3394,6 +3477,133 @@ type CityInputParams<'w, 's> = (
     Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
 );
 
+/// Syncs the Portrait Fjord pan position to keep `building_id` centered horizontally.
+fn sync_portrait_pan_for_building(
+    ctx: &GameContext,
+    layout_mode: &CityLayoutMode,
+    scroll_mem: &mut UiScrollMemory,
+    building_id: &str,
+) {
+    if !layout_mode.is_portrait {
+        return;
+    }
+    if let Some(b) = ctx.data.building_by_id(building_id) {
+        let (win_w, win_h) = (layout_mode.window_size.x, layout_mode.window_size.y);
+        let (canvas_w, _) = compute_fjord_canvas_size(win_w, win_h, true);
+        scroll_mem.portrait_map_pan_x =
+            Some(compute_portrait_pan_for_x_pct(canvas_w, win_w, b.map_x_pct));
+    }
+}
+
+/// Pans the 16:9 Portrait Fjord map horizontally via touch swipe or desktop mouse drag.
+#[allow(clippy::too_many_arguments)]
+pub fn handle_portrait_map_pan(
+    touches: Res<Touches>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    ctx: Res<GameContext>,
+    mut layout_mode: ResMut<CityLayoutMode>,
+    mut scroll_mem: ResMut<UiScrollMemory>,
+    mut map_nodes: Query<&mut Node, (With<FjordMapContainer>, Without<PortraitPanThumb>)>,
+    mut thumb_nodes: Query<&mut Node, (With<PortraitPanThumb>, Without<FjordMapContainer>)>,
+) {
+    let win_w = layout_mode.window_size.x;
+    let win_h = layout_mode.window_size.y;
+    let (canvas_w, _) = compute_fjord_canvas_size(win_w, win_h, layout_mode.is_portrait);
+    let max_pan = (canvas_w - win_w).max(0.0);
+    let can_pan = layout_mode.is_portrait
+        && max_pan > 1.0
+        && ctx.active_modal == ActiveModal::None
+        && !layout_mode.inspector_open
+        && layout_mode.active_drawer == CityDrawer::None;
+
+    if !can_pan {
+        layout_mode.pan_touch_id = None;
+        layout_mode.pan_dragging = false;
+        layout_mode.pan_mouse_last_x = None;
+        return;
+    }
+
+    let mut applied_dx = 0.0f32;
+    if let Some(touch) = touches.iter_just_pressed().next() {
+        layout_mode.pan_touch_id = Some(touch.id());
+        layout_mode.pan_last_x = touch.position().x;
+        layout_mode.pan_dragging = false;
+    } else if let Some(tid) = layout_mode.pan_touch_id {
+        if let Some(touch) = touches.get_pressed(tid) {
+            let x = touch.position().x;
+            let dx = x - layout_mode.pan_last_x;
+            if !layout_mode.pan_dragging && dx.abs() >= MAP_PAN_DEADZONE_PX {
+                layout_mode.pan_dragging = true;
+            }
+            if layout_mode.pan_dragging && dx.abs() > f32::EPSILON {
+                layout_mode.pan_last_x = x;
+                applied_dx = dx;
+                scroll_mem.suppress_touch_clicks();
+            }
+        } else {
+            if layout_mode.pan_dragging {
+                scroll_mem.suppress_touch_clicks();
+            }
+            layout_mode.pan_touch_id = None;
+            layout_mode.pan_dragging = false;
+        }
+    } else if mouse_buttons.just_pressed(MouseButton::Left) {
+        layout_mode.pan_mouse_last_x = windows
+            .get_single()
+            .ok()
+            .and_then(|w| w.cursor_position())
+            .map(|p| p.x);
+        layout_mode.pan_dragging = false;
+    } else if mouse_buttons.pressed(MouseButton::Left) {
+        if let (Some(prev_x), Some(cur_x)) = (
+            layout_mode.pan_mouse_last_x,
+            windows
+                .get_single()
+                .ok()
+                .and_then(|w| w.cursor_position())
+                .map(|p| p.x),
+        ) {
+            let dx = cur_x - prev_x;
+            if !layout_mode.pan_dragging && dx.abs() >= MAP_PAN_DEADZONE_PX {
+                layout_mode.pan_dragging = true;
+            }
+            if layout_mode.pan_dragging && dx.abs() > f32::EPSILON {
+                layout_mode.pan_mouse_last_x = Some(cur_x);
+                applied_dx = dx;
+                scroll_mem.suppress_touch_clicks();
+            }
+        }
+    } else {
+        if layout_mode.pan_dragging {
+            scroll_mem.suppress_touch_clicks();
+        }
+        layout_mode.pan_mouse_last_x = None;
+        layout_mode.pan_dragging = false;
+    }
+
+    if applied_dx.abs() > f32::EPSILON {
+        let selected_x_pct = ctx
+            .data
+            .building_by_id(&ctx.selected_building_id)
+            .map(|b| b.map_x_pct)
+            .unwrap_or(49.0);
+        let cur = scroll_mem
+            .portrait_map_pan_x
+            .unwrap_or_else(|| compute_portrait_pan_for_x_pct(canvas_w, win_w, selected_x_pct));
+        let next_pan = (cur - applied_dx).clamp(0.0, max_pan);
+        scroll_mem.portrait_map_pan_x = Some(next_pan);
+        for mut map_node in &mut map_nodes {
+            map_node.left = Val::Px(-next_pan);
+        }
+        let thumb_w_pct = ((win_w / canvas_w) * 100.0).clamp(18.0, 92.0);
+        let thumb_left_pct = (next_pan / max_pan).clamp(0.0, 1.0) * (100.0 - thumb_w_pct);
+        for mut thumb_node in &mut thumb_nodes {
+            thumb_node.left = Val::Percent(thumb_left_pct);
+        }
+    }
+}
+
 /// Processes button presses, passive harvest checks, and Escape modal-close shortcut.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_city_buttons(
@@ -3854,6 +4064,7 @@ pub fn handle_city_buttons(
                 layout_mode.inspector_open = true;
                 layout_mode.inspector_tab = InspectorTab::Raid;
                 scroll_mem.inspector_offset_y = 0.0;
+                sync_portrait_pan_for_building(&ctx, &layout_mode, &mut scroll_mem, id);
                 play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
                 haptics.send(HapticEvent(HapticKind::LightTap));
                 rebuild = true;
@@ -3952,9 +4163,41 @@ pub fn handle_city_buttons(
                         ctx.celebration_timer_secs = CELEBRATION_DURATION_SECS;
                         layout_mode.last_ready_harvests = count_ready_harvests(&ctx, now);
                         if !ctx.reduced_motion {
+                            let (canvas_w, canvas_h) = compute_fjord_canvas_size(
+                                layout_mode.window_size.x,
+                                layout_mode.window_size.y,
+                                layout_mode.is_portrait,
+                            );
+                            let (canvas_left, canvas_top) = if layout_mode.is_portrait {
+                                let max_pan = (canvas_w - layout_mode.window_size.x).max(0.0);
+                                let pan_x = scroll_mem
+                                    .portrait_map_pan_x
+                                    .unwrap_or_else(|| {
+                                        compute_portrait_pan_for_x_pct(
+                                            canvas_w,
+                                            layout_mode.window_size.x,
+                                            def.map_x_pct,
+                                        )
+                                    })
+                                    .clamp(0.0, max_pan);
+                                (
+                                    -pan_x,
+                                    compute_portrait_map_top_px(
+                                        layout_mode.window_size.y,
+                                        canvas_h,
+                                    ),
+                                )
+                            } else {
+                                (
+                                    (layout_mode.window_size.x - canvas_w) * 0.5,
+                                    (layout_mode.window_size.y - canvas_h) * 0.5,
+                                )
+                            };
                             let origin = Vec2::new(
-                                def.map_x_pct / 100.0 * layout_mode.window_size.x,
-                                def.map_y_pct / 100.0 * layout_mode.window_size.y,
+                                (canvas_left + def.map_x_pct / 100.0 * canvas_w)
+                                    .clamp(24.0, (layout_mode.window_size.x - 24.0).max(24.0)),
+                                (canvas_top + def.map_y_pct / 100.0 * canvas_h)
+                                    .clamp(48.0, (layout_mode.window_size.y - 48.0).max(48.0)),
                             );
                             let target = Vec2::new(layout_mode.window_size.x * 0.42, 26.0);
                             spawn_fjord_harvest_orbs(&mut commands, &vfx, origin, target, rewards);
@@ -4498,6 +4741,7 @@ pub fn handle_city_buttons(
                 if let Some((bldg_id, diff, amount)) = source {
                     ctx.selected_building_id = bldg_id.clone();
                     ctx.selected_difficulty = diff;
+                    sync_portrait_pan_for_building(&ctx, &layout_mode, &mut scroll_mem, &bldg_id);
                     ctx.shortage_guidance = Some((*kind, bldg_id, diff, amount));
                     layout_mode.inspector_open = true;
                     layout_mode.inspector_tab = InspectorTab::Raid;
@@ -4543,8 +4787,9 @@ pub fn handle_city_buttons(
                     }
                     rebuild = true;
                 } else if let Some(b) = ctx.data.building_by_id(source_id).cloned() {
-                    ctx.selected_building_id = b.id;
+                    ctx.selected_building_id = b.id.clone();
                     ctx.selected_difficulty = 0;
+                    sync_portrait_pan_for_building(&ctx, &layout_mode, &mut scroll_mem, &b.id);
                     layout_mode.inspector_open = true;
                     layout_mode.inspector_tab = InspectorTab::Raid;
                     play_sfx(&mut commands, &sound_bank, SfxKind::Swap);
@@ -5243,6 +5488,7 @@ fn focus_active_quest(
                     .find(|b| ctx.city.is_building_unlocked(b))
                     .map(|b| b.id.clone())
                     .unwrap_or_else(|| wyrdstone_core::HUB_BUILDING_ID.to_string());
+                sync_portrait_pan_for_building(ctx, layout_mode, scroll_mem, &target_bldg);
                 ctx.selected_building_id = target_bldg;
                 ctx.selected_difficulty = 0;
                 layout_mode.active_drawer = CityDrawer::None;
@@ -5259,6 +5505,7 @@ fn focus_active_quest(
     match &quest.condition {
         QuestCondition::WinBuildingLevel { building_id, .. }
         | QuestCondition::ReachBuildingTier { building_id, .. } => {
+            sync_portrait_pan_for_building(ctx, layout_mode, scroll_mem, building_id);
             ctx.selected_building_id = building_id.clone();
             ctx.selected_difficulty = 0;
             layout_mode.active_drawer = CityDrawer::None;
@@ -5285,7 +5532,8 @@ fn focus_active_quest(
                     }
                 })
                 .unwrap_or(0);
-            ctx.selected_building_id = level.building_id;
+            ctx.selected_building_id = level.building_id.clone();
+            sync_portrait_pan_for_building(ctx, layout_mode, scroll_mem, &level.building_id);
             ctx.selected_difficulty = diff;
             layout_mode.active_drawer = CityDrawer::None;
             layout_mode.inspector_open = true;
@@ -5800,20 +6048,15 @@ pub fn animate_city_ambience(
     }
 }
 
-/// Vertical padding reserved below each building sprite for its nameplate + optional harvest button.
-const PIN_NAMEPLATE_RESERVE_PX: f32 = 96.0;
-
-fn compute_pin_unit(map_w: f32, map_h: f32, is_portrait: bool) -> f32 {
-    if is_portrait {
-        (map_w * 0.19).min(map_h * 0.11).clamp(44.0, 76.0)
-    } else if map_h < 500.0 {
+fn compute_pin_unit(map_w: f32, map_h: f32, _is_portrait: bool) -> f32 {
+    if map_h < 500.0 {
         (map_w * 0.095).min(map_h * 0.165).clamp(36.0, 62.0)
     } else {
         (map_w * 0.115).min(map_h * 0.205).max(44.0)
     }
 }
 
-/// Computes responsive `(left, top, pin_w, sprite_w, sprite_h)` in map pixels for a `MapBuildingPin`.
+/// Computes responsive `(left, top, pin_w, sprite_w, sprite_h)` in 16:9 map pixels for a `MapBuildingPin`.
 pub(crate) fn compute_pin_layout(
     pin: &MapBuildingPin,
     map_w: f32,
@@ -5821,30 +6064,8 @@ pub(crate) fn compute_pin_layout(
     is_portrait: bool,
 ) -> (f32, f32, f32, f32, f32) {
     let unit = compute_pin_unit(map_w, map_h, is_portrait);
-    if is_portrait {
-        let pin_w = (map_w * 0.295).clamp(96.0, 120.0);
-        let sprite_w = unit * pin.tier_scale;
-        let sprite_h = sprite_w * 0.88;
-        let left = match pin.portrait_left_pct {
-            Some(pct) => (pct / 100.0) * map_w,
-            None => (pin.map_x_pct / 100.0) * map_w - pin_w * 0.5,
-        };
-        let top = match pin.portrait_top_pct {
-            Some(pct) => (pct / 100.0) * map_h,
-            None => (pin.map_y_pct / 100.0) * map_h - sprite_h,
-        };
-        let max_left = (map_w - pin_w - 4.0).max(4.0);
-        let max_top = (map_h - sprite_h - PIN_NAMEPLATE_RESERVE_PX).max(4.0);
-        return (
-            left.clamp(4.0, max_left),
-            top.clamp(4.0, max_top),
-            pin_w,
-            sprite_w,
-            sprite_h,
-        );
-    }
-    let phone_landscape = map_h < 500.0;
-    let pin_w = if phone_landscape {
+    let compact_16_9 = map_h < 500.0;
+    let pin_w = if compact_16_9 {
         (unit * 1.40).clamp(86.0, 104.0)
     } else {
         (unit * 1.06).clamp(108.0, 210.0)
@@ -5853,12 +6074,17 @@ pub(crate) fn compute_pin_layout(
     let sprite_h = sprite_w * 0.88;
     let anchor_x = (pin.map_x_pct / 100.0) * map_w;
     let anchor_y = (pin.map_y_pct / 100.0) * map_h;
-    let nameplate_reserve = if phone_landscape {
+    let nameplate_reserve = if compact_16_9 {
         46.0
     } else {
         (map_h * 0.11).clamp(52.0, 96.0)
     };
-    let min_top = if phone_landscape { 48.0 } else { 4.0 };
+    // Portrait places its top HUD outside the 16:9 canvas; PhoneLandscape overlaps the top 48px band.
+    let min_top = if !is_portrait && compact_16_9 {
+        48.0
+    } else {
+        4.0
+    };
     let max_left = (map_w - pin_w - 4.0).max(4.0);
     let max_top = (map_h - sprite_h - nameplate_reserve).max(min_top);
     (
@@ -5916,6 +6142,7 @@ type CityRightDrawerQuery<'w, 's> = Query<
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn sync_map_building_layout(
     mut layout_mode: ResMut<CityLayoutMode>,
+    mut scroll_mem: ResMut<UiScrollMemory>,
     windows: Query<&Window, With<PrimaryWindow>>,
     safe_area: Res<SafeAreaInsets>,
     mut backdrop_q: CityBackdropNodeQuery,
@@ -5993,6 +6220,16 @@ pub fn sync_map_building_layout(
             for (_, mut map_node) in &mut map_q {
                 map_node.width = Val::Px(canvas_w);
                 map_node.height = Val::Px(canvas_h);
+                if layout_mode.is_portrait {
+                    let max_pan = (canvas_w - win_w).max(0.0);
+                    let pan_x = scroll_mem
+                        .portrait_map_pan_x
+                        .unwrap_or(0.0)
+                        .clamp(0.0, max_pan);
+                    scroll_mem.portrait_map_pan_x = Some(pan_x);
+                    map_node.left = Val::Px(-pan_x);
+                    map_node.top = Val::Px(compute_portrait_map_top_px(win_h, canvas_h));
+                }
             }
         }
     }
@@ -6041,8 +6278,6 @@ mod tests {
     use super::*;
     use wyrdstone_core::{GameDataBundle, Language};
 
-    const MIN_PORTRAIT_MAP_WIDTH_PX: f32 = 336.0;
-    const MIN_PORTRAIT_MAP_HEIGHT_PX: f32 = 560.0;
     const MIN_LANDSCAPE_MAP_WIDTH_PX: f32 = 1336.0;
     const MIN_LANDSCAPE_MAP_HEIGHT_PX: f32 = 500.0;
     const NAMEPLATE_HEIGHT_PX: f32 = 44.0;
@@ -6050,57 +6285,75 @@ mod tests {
     #[test]
     fn portrait_pins_never_overlap() {
         let data = GameDataBundle::load_bundled(Language::En).expect("bundled data must parse");
-        let boxes: Vec<(&str, f32, f32, f32, f32)> = data
-            .buildings
-            .iter()
-            .map(|b| {
-                let pin = MapBuildingPin {
-                    map_x_pct: b.map_x_pct,
-                    map_y_pct: b.map_y_pct,
-                    portrait_left_pct: b.portrait_left_pct,
-                    portrait_top_pct: b.portrait_top_pct,
-                    tier_scale: 1.20,
-                };
-                let (left, top, pin_w, _, sprite_h) = compute_pin_layout(
-                    &pin,
-                    MIN_PORTRAIT_MAP_WIDTH_PX,
-                    MIN_PORTRAIT_MAP_HEIGHT_PX,
-                    true,
-                );
-                assert!(
-                    left >= 4.0 && left + pin_w <= MIN_PORTRAIT_MAP_WIDTH_PX,
-                    "portrait pin {} leaves map horizontally (left={left}, w={pin_w})",
-                    b.id
-                );
-                assert!(
-                    top >= 4.0
-                        && top + sprite_h + NAMEPLATE_HEIGHT_PX <= MIN_PORTRAIT_MAP_HEIGHT_PX,
-                    "portrait pin {} leaves map vertically (top={top}, h={})",
-                    b.id,
-                    sprite_h + NAMEPLATE_HEIGHT_PX
-                );
-                (
-                    b.id.as_str(),
-                    left,
-                    top,
-                    pin_w,
-                    sprite_h + NAMEPLATE_HEIGHT_PX,
-                )
-            })
-            .collect();
+        for &(win_w, win_h) in &[
+            (360.0_f32, 560.0_f32),
+            (360.0, 640.0),
+            (390.0, 844.0),
+            (412.0, 915.0),
+            (700.0, 900.0),
+        ] {
+            let (map_w, map_h) = compute_fjord_canvas_size(win_w, win_h, true);
+            assert!(
+                ((map_w / map_h) - FJORD_MAP_ASPECT).abs() < 0.02,
+                "portrait canvas at {win_w}x{win_h} must keep 16:9 ratio, got {map_w}x{map_h}"
+            );
+            let boxes: Vec<(&str, f32, f32, f32, f32)> = data
+                .buildings
+                .iter()
+                .map(|b| {
+                    let pin = MapBuildingPin {
+                        map_x_pct: b.map_x_pct,
+                        map_y_pct: b.map_y_pct,
+                        tier_scale: 1.20,
+                    };
+                    let (left, top, pin_w, _, sprite_h) =
+                        compute_pin_layout(&pin, map_w, map_h, true);
+                    let anchor_x = (b.map_x_pct / 100.0) * map_w;
+                    let anchor_y = (b.map_y_pct / 100.0) * map_h;
+                    assert!(
+                        ((left + pin_w * 0.5) - anchor_x).abs() <= 1.0,
+                        "portrait pin {} drifted horizontally on {win_w}x{win_h}",
+                        b.id
+                    );
+                    assert!(
+                        ((top + sprite_h) - anchor_y).abs() <= 1.0,
+                        "portrait pin {} drifted vertically on {win_w}x{win_h}",
+                        b.id
+                    );
+                    assert!(
+                        left >= 4.0 && left + pin_w <= map_w,
+                        "portrait pin {} leaves map horizontally (left={left}, w={pin_w})",
+                        b.id
+                    );
+                    assert!(
+                        top >= 4.0 && top + sprite_h + NAMEPLATE_HEIGHT_PX <= map_h,
+                        "portrait pin {} leaves map vertically (top={top}, h={})",
+                        b.id,
+                        sprite_h + NAMEPLATE_HEIGHT_PX
+                    );
+                    (
+                        b.id.as_str(),
+                        left,
+                        top,
+                        pin_w,
+                        sprite_h + NAMEPLATE_HEIGHT_PX,
+                    )
+                })
+                .collect();
 
-        for (i, a) in boxes.iter().enumerate() {
-            for b in &boxes[i + 1..] {
-                let separated_x = a.1 + a.3 <= b.1 || b.1 + b.3 <= a.1;
-                let separated_y = a.2 + a.4 <= b.2 || b.2 + b.4 <= a.2;
-                assert!(
-                    separated_x || separated_y,
-                    "portrait Tier-3 pins {} and {} overlap: {:?} vs {:?}",
-                    a.0,
-                    b.0,
-                    a,
-                    b
-                );
+            for (i, a) in boxes.iter().enumerate() {
+                for b in &boxes[i + 1..] {
+                    let separated_x = a.1 + a.3 <= b.1 || b.1 + b.3 <= a.1;
+                    let separated_y = a.2 + a.4 <= b.2 || b.2 + b.4 <= a.2;
+                    assert!(
+                        separated_x || separated_y,
+                        "portrait {win_w}x{win_h} Tier-3 pins {} and {} overlap: {:?} vs {:?}",
+                        a.0,
+                        b.0,
+                        a,
+                        b
+                    );
+                }
             }
         }
     }
@@ -6115,8 +6368,6 @@ mod tests {
                 let pin = MapBuildingPin {
                     map_x_pct: b.map_x_pct,
                     map_y_pct: b.map_y_pct,
-                    portrait_left_pct: b.portrait_left_pct,
-                    portrait_top_pct: b.portrait_top_pct,
                     tier_scale: 1.20,
                 };
                 let (left, top, pin_w, _, sprite_h) = compute_pin_layout(
@@ -6186,8 +6437,6 @@ mod tests {
             let pin = MapBuildingPin {
                 map_x_pct: b.map_x_pct,
                 map_y_pct: b.map_y_pct,
-                portrait_left_pct: b.portrait_left_pct,
-                portrait_top_pct: b.portrait_top_pct,
                 tier_scale: 1.20,
             };
             let (l1, t1, pw1, sw1, sh1) = compute_pin_layout(&pin, base_w, base_h, false);
@@ -6232,10 +6481,9 @@ mod tests {
         let wonder_pin = MapBuildingPin {
             map_x_pct: WONDER_MAP_X_PCT,
             map_y_pct: WONDER_MAP_Y_PCT,
-            portrait_left_pct: Some(WONDER_PORTRAIT_LEFT_PCT),
-            portrait_top_pct: Some(WONDER_PORTRAIT_TOP_PCT),
             tier_scale: 1.20,
         };
+        let (pmw, pmh) = compute_fjord_canvas_size(390.0, 844.0, true);
 
         for &(map_w, map_h, is_portrait) in &[
             (
@@ -6246,7 +6494,7 @@ mod tests {
             (1280.0, 720.0, false),
             (1920.0, 1080.0, false),
             (2560.0, 1440.0, false),
-            (MIN_PORTRAIT_MAP_WIDTH_PX, MIN_PORTRAIT_MAP_HEIGHT_PX, true),
+            (pmw, pmh, true),
         ] {
             let (wl, wt, wpw, _, wsh) = compute_pin_layout(&wonder_pin, map_w, map_h, is_portrait);
             let wh = wsh + NAMEPLATE_HEIGHT_PX;
@@ -6263,8 +6511,6 @@ mod tests {
                 let b_pin = MapBuildingPin {
                     map_x_pct: b.map_x_pct,
                     map_y_pct: b.map_y_pct,
-                    portrait_left_pct: b.portrait_left_pct,
-                    portrait_top_pct: b.portrait_top_pct,
                     tier_scale: 1.20,
                 };
                 let (bl, bt, bpw, _, bsh) = compute_pin_layout(&b_pin, map_w, map_h, is_portrait);
@@ -6286,8 +6532,6 @@ mod tests {
         let wonder_pin = MapBuildingPin {
             map_x_pct: WONDER_MAP_X_PCT,
             map_y_pct: WONDER_MAP_Y_PCT,
-            portrait_left_pct: Some(WONDER_PORTRAIT_LEFT_PCT),
-            portrait_top_pct: Some(WONDER_PORTRAIT_TOP_PCT),
             tier_scale: 1.20,
         };
 
@@ -6316,8 +6560,6 @@ mod tests {
                 let pin = MapBuildingPin {
                     map_x_pct: b.map_x_pct,
                     map_y_pct: b.map_y_pct,
-                    portrait_left_pct: b.portrait_left_pct,
-                    portrait_top_pct: b.portrait_top_pct,
                     tier_scale: 1.20,
                 };
                 let (bl, bt, bpw, _, bsh) = compute_pin_layout(&pin, map_w, map_h, false);

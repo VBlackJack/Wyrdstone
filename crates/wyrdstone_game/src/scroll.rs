@@ -114,6 +114,7 @@ pub struct UiScrollMemory {
     pub inspector_offset_y: f32,
     pub left_rail_offset_y: f32,
     pub right_rail_offset_y: f32,
+    pub portrait_map_pan_x: Option<f32>,
     touch_id: Option<u64>,
     touch_panel: Option<ScrollPanelKind>,
     touch_last_y: f32,
@@ -135,6 +136,11 @@ impl UiScrollMemory {
     /// so UI button handlers ignore accidental taps caused by releasing a scroll drag.
     pub fn is_touch_scrolling(&self) -> bool {
         self.touch_scrolling || self.suppress_clicks_frames > 0
+    }
+
+    /// Suppresses accidental button releases right after a map pan gesture.
+    pub fn suppress_touch_clicks(&mut self) {
+        self.suppress_clicks_frames = self.suppress_clicks_frames.max(2);
     }
 }
 
